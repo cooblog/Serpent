@@ -474,8 +474,55 @@ type CommandAggregate = {
   roundTripMs: TimingSummary;
 };
 
+/**
+ * One end-to-end browse navigation, assembled from the `performance.navigation`
+ * spans Main already emits plus the Worker's `worker.cmd` line for the same
+ * navigation id. Serpent-217028 asks for exactly this chain:
+ * click -> Main -> Worker browse -> Main post-processing -> IPC/commit.
+ *
+ * The raw navigation id never reaches the report: entries carry an ordinal
+ * `label` (`nav-1`, ...) and the epoch of the Main entry point, which is what
+ * the harness needs to join a recorded click to its navigation.
+ */
+export type NavigationStageRecord = {
+  label: string;
+  mainEnteredAtEpochMs: number | null;
+  /** Epoch of the Main `main-return` line: the last Main-side stage. */
+  mainReturnedAtEpochMs: number | null;
+  /** Click/press -> Main receipt, as stamped by the renderer's own clock. */
+  rendererToMainMs: number | null;
+  /** Main -> Worker -> Main round trip for the browse command. */
+  workerRoundTripMs: number | null;
+  /** Worker admission wait for that same command (queue + scheduler). */
+  workerSchedulerWaitMs: number | null;
+  workerQueueMs: number | null;
+  workerRunMs: number | null;
+  mainElapsedMs: number | null;
+  /** Worker returned -> response ready: Main's own post-processing. */
+  mainPostProcessMs: number | null;
+  /** Worker returned -> IPC return. */
+  mainToIpcReturnMs: number | null;
+  mainTotalMs: number | null;
+};
+
+export type NavigationSummary = {
+  count: number;
+  stages: NavigationStageRecord[];
+  aggregates: {
+    rendererToMainMs: TimingSummary;
+    workerRoundTripMs: TimingSummary;
+    workerSchedulerWaitMs: TimingSummary;
+    workerRunMs: TimingSummary;
+    mainElapsedMs: TimingSummary;
+    mainPostProcessMs: TimingSummary;
+    mainToIpcReturnMs: TimingSummary;
+    mainTotalMs: TimingSummary;
+  };
+};
+
 export type BenchLogSummary = {
   commands: CommandAggregate[];
+  navigations: NavigationSummary;
   unmatchedRoundTripCount: number;
   lagEvents: { count: number; maxDriftMs: number; activities: Record<string, number> };
   mainLagEvents: { count: number; maxDriftMs: number };
@@ -586,6 +633,123 @@ function stableDiagnosticLabel(value: unknown): string {
     .replace(/:[0-9a-f]{8}-[0-9a-f-]{27,}/gi, "")
     .replace(/[^a-zA-Z0-9._:-]/g, "")
     .slice(0, 96) || "unknown";
+}
+
+function epochMsOf(line: Record<string, unknown>): number | null {
+  const context = (line.context ?? {}) as Record<string, unknown>;
+  const parsed = Date.parse(String(context.timestamp ?? line.timestamp ?? ""));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function finiteNumber(value: unknown): number | null {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+type PartialNavigation = {
+  mainEnteredAtEpochMs: number | null;
+  mainReturnedAtEpochMs: number | null;
+  rendererToMainMs: number | null;
+  workerRoundTripMs: number | null;
+  workerSchedulerWaitMs: number | null;
+  workerQueueMs: number | null;
+  workerRunMs: number | null;
+  mainElapsedMs: number | null;
+  mainPostProcessMs: number | null;
+  mainToIpcReturnMs: number | null;
+  mainTotalMs: number | null;
+};
+
+function emptyPartialNavigation(): PartialNavigation {
+  return {
+    mainEnteredAtEpochMs: null,
+    mainReturnedAtEpochMs: null,
+    rendererToMainMs: null,
+    workerRoundTripMs: null,
+    workerSchedulerWaitMs: null,
+    workerQueueMs: null,
+    workerRunMs: null,
+    mainElapsedMs: null,
+    mainPostProcessMs: null,
+    mainToIpcReturnMs: null,
+    mainTotalMs: null,
+  };
+}
+
+/**
+ * Assemble the click -> Main -> Worker -> Main post-processing chain per
+ * navigation. Main emits `performance.navigation` stages (`main-enter`,
+ * `worker-returned`, `main-response-ready`, `main-return`) and the Worker echoes
+ * the same navigation id on its `worker.cmd` line; joining on that id is what
+ * removes the previous "correlate by time window" guesswork.
+ *
+ * Raw ids stay out of the output: records are labelled `nav-<n>` in log order.
+ */
+export function summarizeNavigations(lines: Array<Record<string, unknown>>): NavigationSummary {
+  const byNavigationId = new Map<string, PartialNavigation>();
+  const order: string[] = [];
+  const entryFor = (navigationId: string): PartialNavigation => {
+    const existing = byNavigationId.get(navigationId);
+    if (existing) return existing;
+    const created = emptyPartialNavigation();
+    byNavigationId.set(navigationId, created);
+    order.push(navigationId);
+    return created;
+  };
+
+  for (const line of lines) {
+    const context = (line.context ?? {}) as Record<string, unknown>;
+    if (line.scope === "performance.navigation") {
+      const navigationId = typeof context.navigationId === "string" ? context.navigationId : "";
+      if (!navigationId) continue;
+      const entry = entryFor(navigationId);
+      const stage = String(context.stage ?? "");
+      if (stage === "main-enter") {
+        entry.mainEnteredAtEpochMs ??= epochMsOf(line);
+        entry.rendererToMainMs ??= finiteNumber(context.rendererToMainMs);
+      } else if (stage === "worker-returned") {
+        entry.workerRoundTripMs ??= finiteNumber(context.workerRoundTripMs);
+        entry.mainElapsedMs ??= finiteNumber(context.mainElapsedMs);
+      } else if (stage === "main-response-ready") {
+        entry.mainPostProcessMs ??= finiteNumber(context.mainPostProcessMs);
+        entry.mainTotalMs ??= finiteNumber(context.mainTotalMs);
+      } else if (stage === "main-return") {
+        entry.mainToIpcReturnMs ??= finiteNumber(context.mainToIpcReturnMs);
+        entry.mainReturnedAtEpochMs ??= epochMsOf(line);
+      }
+    } else if (line.scope === "worker.cmd") {
+      const navigationId = typeof context.navigationId === "string" ? context.navigationId : "";
+      if (!navigationId) continue;
+      // Main logs `main-enter` before it dispatches the command, so this only
+      // creates an entry when a log was truncated mid-navigation.
+      const entry = entryFor(navigationId);
+      entry.workerSchedulerWaitMs ??= finiteNumber(context.schedulerWaitMs);
+      entry.workerQueueMs ??= finiteNumber(context.queueMs);
+      entry.workerRunMs ??= finiteNumber(context.runMs);
+    }
+  }
+
+  const stages: NavigationStageRecord[] = order.map((navigationId, index) => ({
+    label: `nav-${index + 1}`,
+    ...byNavigationId.get(navigationId)!,
+  }));
+  const collect = (pick: (stage: NavigationStageRecord) => number | null): TimingSummary =>
+    summarizeTimings(stages.map(pick).filter((value): value is number => value !== null));
+
+  return {
+    count: stages.length,
+    stages,
+    aggregates: {
+      rendererToMainMs: collect((stage) => stage.rendererToMainMs),
+      workerRoundTripMs: collect((stage) => stage.workerRoundTripMs),
+      workerSchedulerWaitMs: collect((stage) => stage.workerSchedulerWaitMs),
+      workerRunMs: collect((stage) => stage.workerRunMs),
+      mainElapsedMs: collect((stage) => stage.mainElapsedMs),
+      mainPostProcessMs: collect((stage) => stage.mainPostProcessMs),
+      mainToIpcReturnMs: collect((stage) => stage.mainToIpcReturnMs),
+      mainTotalMs: collect((stage) => stage.mainTotalMs),
+    },
+  };
 }
 
 /**
@@ -718,6 +882,7 @@ export function summarizeBenchLog(logText: string): BenchLogSummary {
 
   return {
     commands,
+    navigations: summarizeNavigations(lines),
     unmatchedRoundTripCount: [...roundTripByRequestId.keys()]
       .filter((requestId) => !commandByRequestId.has(requestId)).length,
     lagEvents: { count: lagEvents.length, maxDriftMs, activities: lagActivities },

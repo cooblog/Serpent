@@ -455,3 +455,83 @@ preview-cache: 281 miss / 281 store，其中 15:29:37 → 15:30:19 有 42 秒完
 不是单一提交；报结论时必须写明这一点，必要时只作定向复现。
 
 本轮已取得的定向证据（均在清醒宿主上单跑，见 §14.3）仍然有效，因为它们不受该强杀影响。
+
+## 15. P0A 实施：端到端导航观测（`Serpent-217028`）
+
+计划 §4 顺序的第一项是「先修正 profile 判据并加入 Renderer → Main → Worker → Main 后处理 →
+Renderer commit 的相关 span」。Main 一侧的四段 `performance.navigation` 阶段（`main-enter`、
+`worker-returned`、`main-response-ready`、`main-return`）与 preload 的 `navigationId` 已由并行轨道加入，
+但 **benchmark 从未解析它们**：报告里没有任何 Main 后处理数据，点击与导航只能靠时间窗猜。本轮补齐两侧的接缝。
+
+### 15.1 改动
+
+| 文件 | 改动 |
+| --- | --- |
+| `src/worker/index.ts` | `worker.cmd` 诊断行携带命令上的 `navigationId`（仅 `SERPENT_WORKER_CMD_LOG=1` 时输出，不进入生产日志） |
+| `tests/e2e/perf-bench-helpers.ts` | 新增 `summarizeNavigations()`：按 `navigationId` 把 Main 四阶段与 Worker 命令 span 组装成一条链；`BenchLogSummary` 增加 `navigations.{count,stages,aggregates}`。**报告只出现匿名标签 `nav-1…`**，原始 id / requestId 一律不落盘 |
+| `tests/e2e/navigation-profile.test.ts` | ① 每次切换记录真实 DOM 点击时刻，运行后与导航记录缝合，产出 `rendererDispatchMs`/`mainReceiveMs`/`mainWorkerMs`/`workerRoundTripMs`/`workerSchedulerWaitMs`/`workerRunMs`/`mainPostProcessMs`/`mainToIpcReturnMs`/`mainReturnToCommitMs`；② 可见缩略图新增 `firstThumbnailMs`、`thumbnails90Ms`（原来只有 100% 一个数）；③ 跳转判据改成显式五选一结论；④ 新增断言：每个被测切换都必须能对上一条 Main/Worker 导航 span |
+| `tests/unit/perf-bench-helpers.test.ts` | 新增 2 例：阶段组装与聚合（缺失阶段不得当成 0 ms）、隐私（序列化结果不含原始 navigationId） |
+
+### 15.2 实测（真实 4.3 万资产库，4 次切换 + 6 s 滚轮 + 3 次跳转）
+
+`chainMatched 4 / misses 0`——每次切换都按 id 对上了 Main 与 Worker 的 span。四段拆解（p50，ms）：
+
+| 段 | p50 | 读法 |
+| --- | ---: | --- |
+| `rendererDispatchMs` | 16.2 | DOM 点击 → 渲染端发出浏览请求 |
+| `mainReceiveMs` | 0 | preload → Main 接收 |
+| `workerSchedulerWaitMs` | 0.11 | Worker 准入等待（本轮已不再排队） |
+| `workerRunMs` | 3.33 | Worker 执行（p95 7.77） |
+| `mainPostProcessMs` | 0.46 | **此前完全缺失**：Main 从 Worker 返回到响应就绪 |
+| `mainToIpcReturnMs` | 0.61 | Worker 返回 → IPC 返回 |
+| `mainReturnToCommitMs` | 77 | Main 返回 → 渲染端内容提交 |
+
+用户可见侧：内容变化 p50 138.1 ms、首张缩略图 p50 1,841 ms、90% 解码 p50 1,841 ms、100% 解码 p50 1,841 ms
+（4 次全部 100% 覆盖，无 timeout；本例 11 张可见图几乎是同时解码，所以 90% 与 100% 重合）。
+跳转（滚轮驱动）：3 次真实样本 3,000 / 3,676 / 4,009 ms，另有 1 次 `no-scroll` skip。
+
+结论：这条路径上 **Main 后处理不是瓶颈**（<1 ms），波动来自 Worker 执行与页面查询（`mainWorkerMs` p95 216 ms），
+而渲染端从收到响应到内容提交稳定在 55–116 ms 量级；首图到全解码之间还差约 100 ms。有了这条链，
+后续任何改动都能直接看「变慢的是哪一段」，不再靠 p50 总分位猜。
+
+### 15.3 判据修正：跳转必须给出明确结论
+
+原判据把「跳转后可见集合 30 s 没变」一律记为 timeout。实测第一跳：滚动位移 318,883 px、
+scope 未变、可见卡数 20→20，而同轮另两次跳转 270 ms / 1,105 ms 正常——位移确实发生、基线也不含占位卡，
+所以这个 timeout 既不是「滚动没生效」也不是「基线是脏的」。继续定位发现更深一层：
+**`element.scrollTop = …` 直接赋值不是用户手势**，应用的滚动恢复把它当作无需保留的位置而在约 1 s 内放回原位
+（三次尝试全部 `restored`）。这本身是符合产品的行为，却让「跳转延迟」永远测不到。
+
+现在的 `measureScrollJump()` 改为**用真实滚轮输入驱动**（指针移到画布中心后 `mouse.wheel(±Δ)`，Δ 交替方向），
+并在位移稳定后给出五个结论之一：
+
+- `changed`：内容提交，计入延迟样本；
+- `restored`：位移发生过但视口被应用放回原位——没有导航请求，记 skip；
+- `no-scroll`：滚轮完全没推动（位移 < 8 px），记 skip，并用下一个 Δ 重试（首次输入常落在应用仍在收敛的窗口里）；
+- `unsettled`：基线一直含占位卡，记 skip；
+- `no-commit`：位移稳定保持、内容在整个预算内始终没到——**唯一记 timeout 的分支**。
+
+并新增断言：只要库级 scope 可滚动，跳转必须至少产出 1 个真实样本——「全部 skip」不能算绿。
+注意口径变化：滚轮驱动的跳转包含平滑滚动动画，因此 `jump.changedMs` 与旧的直接赋值样本（270–1,105 ms）
+不可直接比较，它不是「变慢了」，而是测量对象从「赋值到重绘」变成「用户滚动输入到新卡片提交」。
+
+### 15.4 环境事实（本轮测量口径）
+
+本轮 profile 在**仓库外的隔离工作副本**上完成，原因是主工作树当时的两个状态都无法测量，两者都只存在于未提交状态，
+不是产品缺陷：
+
+1. 已提交的 `acb03678` 在 `src/worker/library-service.ts` 里缺少一处 `import {`，该提交本身不可解析（构建直接报错）；
+2. 主工作树的 preload 在 **sandbox preload** 里 `import { randomUUID } from 'node:crypto'`，
+   沙箱 preload 不提供该模块 → `Unable to load preload script` → 渲染端没有 `serpent` 桥 → 界面停在
+   「没有活动资源库」且全部控件 disabled。库其实是打开成功的（同一份日志里 `recent-library.restored`）。
+
+第 2 条已作为评论记录在 `Serpent-217028` 上（含修法建议：preload 用 Web Crypto、或把 id 生成放到 Renderer/Main）。
+隔离副本 = 该提交 + 上述两处就地修复（仅存在于副本内，未进仓库）+ 本轮改动；这样基线可复现，
+也不会再被并行轨道的中间状态打断。**本节的数字只对这条隔离基线成立**，主工作树修好后需原样复跑一次确认。
+
+### 15.5 验证
+
+- `npx tsc --noEmit`：0 error；`npx eslint`（改动文件）：0 error；
+- `npx vitest run tests/unit/perf-bench-helpers.test.ts`：6 passed；
+- 真实库 profile（最终一轮）：`1 passed (46.8s)`、`timeouts {}`、`chainMatched 4 / misses 0`、
+  `jumpMeasured 3`（另 1 次 `no-scroll` skip），切换与跳转均无 `no-commit`（见 §15.2）。

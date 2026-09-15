@@ -3674,7 +3674,10 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       };
     }
     case 'library.import-cancel':
-      libraryService.cancelImport(request.command.importId);
+      libraryService.cancelImport(
+        request.command.importId,
+        request.command.mode ?? 'abandon',
+      );
       return { ok: true, type: 'library.closed', libraryId: request.command.importId };
     case 'asset.delete-cancel':
       libraryService.cancelDiskDelete(request.command.operationId);
@@ -5039,6 +5042,12 @@ parentPort.on('message', async (event) => {
   try {
     const request = parseWorkerRequest(input);
     const performanceEnvelope = performanceEnvelopeForRequest(request);
+    // Serpent-217028: the renderer already stamps browse commands with a
+    // navigation id. Carry it onto the command diagnostic line so the benchmark
+    // can join this command's queue / admission / run spans to the click that
+    // caused it instead of guessing from time windows. Diagnostics only.
+    const cmdNavigationIdRaw = (request.command as { navigationId?: unknown }).navigationId;
+    const cmdLogNavigationId = typeof cmdNavigationIdRaw === 'string' ? cmdNavigationIdRaw : undefined;
     trackedLibraryId = performanceEnvelope.libraryId;
     trackedLibraryGeneration = performanceEnvelope.libraryGeneration
       ?? (trackedLibraryId === undefined
@@ -5198,6 +5207,7 @@ parentPort.on('message', async (event) => {
             ...(performanceEnvelope.libraryId === undefined
               ? {}
               : { libraryId: performanceEnvelope.libraryId }),
+            ...(cmdLogNavigationId === undefined ? {} : { navigationId: cmdLogNavigationId }),
             callbackAt,
             sentAt: performanceEnvelope.sentAtEpochMs,
             queueMs: Math.max(0, callbackAt - performanceEnvelope.sentAtEpochMs),

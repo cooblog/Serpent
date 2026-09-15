@@ -299,7 +299,14 @@ async function waitForScopeContentChange(
   before: string[],
   timeoutMs: number,
   startedAt = Date.now(),
-): Promise<{ elapsedMs: number; activeElapsedMs?: number; timedOut: boolean }> {
+): Promise<{
+  elapsedMs: number;
+  activeElapsedMs?: number;
+  timedOut: boolean;
+  /** What was actually on screen when the wait gave up, for failure evidence. */
+  observedScope: string;
+  observedCount: number;
+}> {
   let activeElapsedMs: number | undefined;
   for (;;) {
     const [activeScope, now] = await Promise.all([activeNavigationScope(window), visibleCardIds(window)]);
@@ -319,6 +326,8 @@ async function waitForScopeContentChange(
         elapsedMs: observedAt - startedAt,
         activeElapsedMs: activeElapsedMs ?? observedAt - startedAt,
         timedOut: false,
+        observedScope: activeScope,
+        observedCount: now.length,
       };
     }
     if (observedAt - startedAt >= timeoutMs) {
@@ -326,6 +335,8 @@ async function waitForScopeContentChange(
         elapsedMs: observedAt - startedAt,
         ...(activeElapsedMs === undefined ? {} : { activeElapsedMs }),
         timedOut: true,
+        observedScope: activeScope,
+        observedCount: now.length,
       };
     }
     await window.waitForTimeout(50);
@@ -337,10 +348,21 @@ async function waitForScopeContentChange(
 async function waitForAllVisibleThumbnails(
   window: Page,
   timeoutMs: number,
-): Promise<{ elapsedMs: number; imageCards: number; decoded: number; placeholders: number; timedOut: boolean }> {
+): Promise<{
+  elapsedMs: number;
+  imageCards: number;
+  decoded: number;
+  placeholders: number;
+  timedOut: boolean;
+  /** First visible image card that finished decoding, and the 90% milestone. */
+  firstDecodedMs: number | null;
+  decoded90Ms: number | null;
+}> {
   const startedAt = Date.now();
   let last: { imageCards: number; decoded: number; placeholders: number };
   let emptySamples = 0;
+  let firstDecodedMs: number | null = null;
+  let decoded90Ms: number | null = null;
   for (;;) {
     const sample = await window.evaluate(() => {
       const canvas = document.querySelector<HTMLElement>(".workspace-canvas");
@@ -362,23 +384,169 @@ async function waitForAllVisibleThumbnails(
       return { imageCards: imageCards.length, decoded, placeholders };
     });
     last = sample;
+    const observedAt = Date.now();
+    // The plan separates "first card on screen" from "90% decoded" from "all
+    // decoded": a single 100% number hides whether the tail is slow or the
+    // first paint is.
+    if (firstDecodedMs === null && sample.decoded > 0) firstDecodedMs = observedAt - startedAt;
+    if (
+      decoded90Ms === null
+      && sample.imageCards > 0
+      && sample.decoded >= Math.ceil(sample.imageCards * 0.9)
+    ) {
+      decoded90Ms = observedAt - startedAt;
+    }
     if (last.placeholders === 0 && last.imageCards > 0 && last.decoded === last.imageCards) {
-      return { ...last, elapsedMs: Date.now() - startedAt, timedOut: false };
+      return { ...last, elapsedMs: Date.now() - startedAt, timedOut: false, firstDecodedMs, decoded90Ms };
     }
     // 目标 scope 里没有可见图片卡（空文件夹/非图片）：没有等待对象，
     // 连续两次采样确认后立即返回，不能把这个当超时。
     if (last.imageCards === 0 && last.placeholders === 0) {
       emptySamples += 1;
       if (emptySamples >= 2) {
-        return { ...last, elapsedMs: Date.now() - startedAt, timedOut: false };
+        return { ...last, elapsedMs: Date.now() - startedAt, timedOut: false, firstDecodedMs, decoded90Ms };
       }
     } else {
       emptySamples = 0;
     }
     if (Date.now() - startedAt >= timeoutMs) {
-      return { ...last, elapsedMs: Date.now() - startedAt, timedOut: true };
+      return { ...last, elapsedMs: Date.now() - startedAt, timedOut: true, firstDecodedMs, decoded90Ms };
     }
     await window.waitForTimeout(100);
+  }
+}
+
+/** True when every visible card carries a real asset id (no browse placeholder). */
+async function visibleCardsSettled(window: Page): Promise<boolean> {
+  return window.evaluate(() => {
+    const canvas = document.querySelector<HTMLElement>(".workspace-canvas");
+    if (!canvas) return false;
+    const rect = canvas.getBoundingClientRect();
+    const visible = [...document.querySelectorAll<HTMLElement>(".asset-card:not(.is-layout-preview)")]
+      .filter((card) => {
+        const box = card.getBoundingClientRect();
+        return box.bottom > rect.top && box.top < rect.bottom && box.right > rect.left && box.left < rect.right;
+      });
+    if (visible.length === 0) return false;
+    return visible.every((card) =>
+      !card.classList.contains("is-browse-placeholder")
+      && !(card.dataset.assetId ?? "").startsWith("__pending:"));
+  });
+}
+
+async function waitForSettledVisibleCards(window: Page, timeoutMs: number): Promise<boolean> {
+  const startedAt = Date.now();
+  for (;;) {
+    if (await visibleCardsSettled(window)) return true;
+    if (Date.now() - startedAt >= timeoutMs) return false;
+    await window.waitForTimeout(100);
+  }
+}
+
+type ScrollJumpOutcome = "changed" | "restored" | "no-scroll" | "no-commit" | "unsettled";
+
+/**
+ * Measure one scroll jump and say explicitly what happened.
+ *
+ * A jump can end four ways, and only one of them is a product failure:
+ * - `changed`: the visible set committed — a latency sample.
+ * - `restored`: the app put the viewport back (virtualised re-anchoring or a
+ *   deliberate scroll restore). No navigation was requested, so it is not a
+ *   failed commit — the previous judge reported these as 30 s timeouts.
+ * - `no-scroll`: the assignment was clamped, so nothing could change.
+ * - `unsettled`: the viewport never reached a settled baseline to compare from.
+ * - `no-commit`: the position held but the content never arrived — a failure.
+ */
+async function measureScrollJump(
+  window: Page,
+  deltaPx: number,
+  timeoutMs: number,
+): Promise<{ outcome: ScrollJumpOutcome; elapsedMs: number; scrolledPx: number; observedCount: number }> {
+  if (!await waitForSettledVisibleCards(window, 15_000)) {
+    return { outcome: "unsettled", elapsedMs: 0, scrolledPx: 0, observedCount: 0 };
+  }
+  const canvas = window.locator(".workspace-canvas");
+  const box = await canvas.boundingBox();
+  if (!box) return { outcome: "no-scroll", elapsedMs: 0, scrolledPx: 0, observedCount: 0 };
+  const before = await visibleCardIds(window);
+  const expectedScope = await activeNavigationScope(window);
+  const startScrollTop = await canvas.evaluate((element) => element.scrollTop);
+  const startedAt = Date.now();
+  // Drive the jump with real wheel input over the canvas. Assigning
+  // `scrollTop` directly is not a user gesture: the app's scroll restoration
+  // treats it as nothing to preserve and snaps the viewport back, which is
+  // correct product behaviour and an unmeasurable jump.
+  await window.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await window.mouse.wheel(0, deltaPx);
+
+  // Phase 1: let the wheel (and any smooth scrolling) settle, then decide what
+  // the product did with the input.
+  let lastScrollTop = startScrollTop;
+  let stableSamples = 0;
+  let maxMovedPx = 0;
+  const settleDeadline = startedAt + 6_000;
+  for (;;) {
+    const [activeScope, now, scrollTop] = await Promise.all([
+      activeNavigationScope(window),
+      visibleCardIds(window),
+      canvas.evaluate((element) => element.scrollTop),
+    ]);
+    const observedAt = Date.now();
+    maxMovedPx = Math.max(maxMovedPx, Math.abs(scrollTop - startScrollTop));
+    if (
+      activeScope === expectedScope
+      && now.length > 0
+      && now.join("\u0000") !== before.join("\u0000")
+    ) {
+      return {
+        outcome: "changed",
+        elapsedMs: observedAt - startedAt,
+        scrolledPx: Math.abs(scrollTop - startScrollTop),
+        observedCount: now.length,
+      };
+    }
+    stableSamples = Math.abs(scrollTop - lastScrollTop) < 2 ? stableSamples + 1 : 0;
+    lastScrollTop = scrollTop;
+    if (stableSamples >= 5) {
+      if (maxMovedPx < 8) {
+        return { outcome: "no-scroll", elapsedMs: observedAt - startedAt, scrolledPx: maxMovedPx, observedCount: now.length };
+      }
+      if (Math.abs(scrollTop - startScrollTop) < 8) {
+        return { outcome: "restored", elapsedMs: observedAt - startedAt, scrolledPx: maxMovedPx, observedCount: now.length };
+      }
+      break;
+    }
+    if (observedAt >= settleDeadline) break;
+    await window.waitForTimeout(50);
+  }
+
+  // Phase 2: the position held. Now the product must commit the new window.
+  for (;;) {
+    const [activeScope, now, scrollTop] = await Promise.all([
+      activeNavigationScope(window),
+      visibleCardIds(window),
+      canvas.evaluate((element) => element.scrollTop),
+    ]);
+    const observedAt = Date.now();
+    if (
+      activeScope === expectedScope
+      && now.length > 0
+      && now.join("\u0000") !== before.join("\u0000")
+    ) {
+      return {
+        outcome: "changed",
+        elapsedMs: observedAt - startedAt,
+        scrolledPx: Math.abs(scrollTop - startScrollTop),
+        observedCount: now.length,
+      };
+    }
+    if (Math.abs(scrollTop - startScrollTop) < 8) {
+      return { outcome: "restored", elapsedMs: observedAt - startedAt, scrolledPx: maxMovedPx, observedCount: now.length };
+    }
+    if (observedAt - startedAt >= timeoutMs) {
+      return { outcome: "no-commit", elapsedMs: observedAt - startedAt, scrolledPx: maxMovedPx, observedCount: now.length };
+    }
+    await window.waitForTimeout(50);
   }
 }
 
@@ -539,6 +707,15 @@ test("profile navigation hotspots on a real library", async () => {
   const timings: Record<string, number[]> = {};
   const timeouts: Record<string, number> = {};
   const skipped: Record<string, number> = {};
+  // Every measured folder switch records the real DOM click time here so the
+  // Main / Worker navigation spans can be joined to it after the run.
+  const navigationClicks: Array<{ prefix: string; clickEpochMs: number; commitEpochMs: number | null }> = [];
+  // Failure evidence for jumps that never changed the visible set.
+  const jumpDiagnostics: Array<Record<string, unknown>> = [];
+  // Jump attempts that produced a real sample, so "all attempts skipped" cannot
+  // pass as a green run.
+  let jumpMeasured = 0;
+  let jumpsScrollable = false;
   const record = (key: string, value: number): void => {
     (timings[key] ??= []).push(value);
   };
@@ -707,6 +884,12 @@ test("profile navigation hotspots on a real library", async () => {
           recordTimeout(`${metricPrefix}.clickNotObserved`);
           continue;
         }
+        const clickRecord = {
+          prefix: metricPrefix,
+          clickEpochMs: clickMarker.atEpochMs,
+          commitEpochMs: null as number | null,
+        };
+        navigationClicks.push(clickRecord);
         const changed = await waitForScopeContentChange(
           window,
           scope.identity,
@@ -718,6 +901,7 @@ test("profile navigation hotspots on a real library", async () => {
           recordTimeout(`${metricPrefix}.contentChanged`);
           continue;
         }
+        clickRecord.commitEpochMs = clickMarker.atEpochMs + changed.elapsedMs;
         const thumbnails = await waitForAllVisibleThumbnails(window, 90_000);
         if (thumbnails.timedOut) {
           recordTimeout(`${metricPrefix}.allThumbnails`);
@@ -728,6 +912,12 @@ test("profile navigation hotspots on a real library", async () => {
         record(`${metricPrefix}.totalMs`, Date.now() - clickMarker.atEpochMs);
         record(`${metricPrefix}.activeMs`, changed.activeElapsedMs ?? changed.elapsedMs);
         record(`${metricPrefix}.contentChangedMs`, changed.elapsedMs);
+        if (thumbnails.firstDecodedMs !== null) {
+          record(`${metricPrefix}.firstThumbnailMs`, thumbnails.firstDecodedMs);
+        }
+        if (thumbnails.decoded90Ms !== null) {
+          record(`${metricPrefix}.thumbnails90Ms`, thumbnails.decoded90Ms);
+        }
         record(`${metricPrefix}.thumbnailsLoadedMs`, thumbnails.elapsedMs);
         record(`${metricPrefix}.visibleImageCards`, thumbnails.imageCards);
         record(`${metricPrefix}.undecodedAtTimeout`, thumbnails.imageCards - thumbnails.decoded);
@@ -779,18 +969,40 @@ test("profile navigation hotspots on a real library", async () => {
       await window.locator(".navigation-pane button.nav-row").first().click();
       await window.waitForTimeout(1_000);
       const canvasIsScrollable = await canvas.evaluate((element) => element.scrollHeight > element.clientHeight + 1).catch(() => false);
-      for (let index = 0; canvasIsScrollable && index < 3; index += 1) {
-        const startedAt = Date.now();
-        const before = await visibleCardIds(window);
-        await canvas.evaluate((element, fraction) => {
-          element.scrollTop = element.scrollHeight * (fraction as number);
-        }, 0.15 + index * 0.3);
-        const changed = await waitForScopeContentChange(window, await activeNavigationScope(window), before, 30_000, startedAt);
-        if (changed.timedOut) recordTimeout("jump.contentChanged");
-        else {
-          record("jump.changedMs", changed.elapsedMs);
-          record("jump.totalMs", Date.now() - startedAt);
+      jumpsScrollable = canvasIsScrollable;
+      // Alternate direction and magnitude: a no-op wheel (app still settling,
+      // pointer over a covered region) is not evidence either way, so a
+      // `no-scroll` attempt is retried with the next delta instead of being
+      // counted as a failed jump.
+      const jumpDeltas = [6_000, -9_000, 12_000, -15_000];
+      for (const deltaPx of jumpDeltas) {
+        if (!canvasIsScrollable || jumpMeasured >= 3) break;
+        const jump = await measureScrollJump(window, deltaPx, 30_000);
+        if (jump.outcome === "changed") {
+          jumpMeasured += 1;
+          record("jump.changedMs", jump.elapsedMs);
+          record("jump.scrolledPx", jump.scrolledPx);
+          continue;
         }
+        jumpDiagnostics.push({
+          deltaPx,
+          outcome: jump.outcome,
+          scrolledPx: jump.scrolledPx,
+          observedCount: jump.observedCount,
+          elapsedMs: jump.elapsedMs,
+        });
+        if (jump.outcome === "no-commit") {
+          // The position held for the whole budget and the content never came:
+          // that is a real failure, not a harness precondition.
+          recordTimeout("jump.contentChanged");
+          continue;
+        }
+        const skipKey = jump.outcome === "unsettled"
+          ? "jumpsUnsettled"
+          : jump.outcome === "no-scroll"
+            ? "jumpsNoScroll"
+            : "jumpsRestored";
+        skipped[skipKey] = (skipped[skipKey] ?? 0) + 1;
       }
       if (!canvasIsScrollable) skipped.jumps = 3;
     }
@@ -809,6 +1021,45 @@ test("profile navigation hotspots on a real library", async () => {
       : [];
     const sessionLog = readSessionLog(userDataPath);
     const log = summarizeBenchLog(sessionLog);
+    // Serpent-217028: join each measured click to the navigation Main and the
+    // Worker actually ran. Both sides now log the same navigation id, so the
+    // renderer start is derived from Main's own clock stamp minus the measured
+    // renderer -> Main hop rather than assuming synchronised clocks.
+    const navigationChain = navigationClicks.map((click) => {
+      const candidates = log.navigations.stages
+        .filter((stage) => stage.mainEnteredAtEpochMs !== null && stage.rendererToMainMs !== null)
+        .map((stage) => ({
+          stage,
+          rendererStartEpochMs: stage.mainEnteredAtEpochMs! - stage.rendererToMainMs!,
+        }))
+        .filter(({ rendererStartEpochMs }) =>
+          Math.abs(rendererStartEpochMs - click.clickEpochMs) <= 10_000)
+        .sort((left, right) =>
+          Math.abs(left.rendererStartEpochMs - click.clickEpochMs)
+          - Math.abs(right.rendererStartEpochMs - click.clickEpochMs));
+      const match = candidates[0];
+      if (!match) return { prefix: click.prefix, matched: false as const };
+      const { stage, rendererStartEpochMs } = match;
+      const segments: Record<string, number> = {
+        // Click -> the renderer actually issuing the browse request.
+        rendererDispatchMs: Math.max(0, rendererStartEpochMs - click.clickEpochMs),
+      };
+      if (stage.rendererToMainMs !== null) segments.mainReceiveMs = stage.rendererToMainMs;
+      if (stage.mainElapsedMs !== null) segments.mainWorkerMs = stage.mainElapsedMs;
+      if (stage.workerRoundTripMs !== null) segments.workerRoundTripMs = stage.workerRoundTripMs;
+      if (stage.workerSchedulerWaitMs !== null) segments.workerSchedulerWaitMs = stage.workerSchedulerWaitMs;
+      if (stage.workerRunMs !== null) segments.workerRunMs = stage.workerRunMs;
+      if (stage.mainPostProcessMs !== null) segments.mainPostProcessMs = stage.mainPostProcessMs;
+      if (stage.mainToIpcReturnMs !== null) segments.mainToIpcReturnMs = stage.mainToIpcReturnMs;
+      if (click.commitEpochMs !== null && stage.mainReturnedAtEpochMs !== null) {
+        // Main returned the response -> the renderer committed the new cards.
+        segments.mainReturnToCommitMs = Math.max(0, click.commitEpochMs - stage.mainReturnedAtEpochMs);
+      }
+      for (const [key, value] of Object.entries(segments)) record(`${click.prefix}.${key}`, value);
+      return { prefix: click.prefix, matched: true as const, navigation: stage.label, segments };
+    });
+    const navigationChainMatched = navigationChain.filter((entry) => entry.matched).length;
+    const navigationChainMisses = navigationClicks.length - navigationChainMatched;
     if (pauseQueueBeforeNavigation) {
       const resumeCommand = log.commands.find((command) => command.commandType === "media.resume-jobs");
       expect(resumeCommand?.runMs.maxMs, "Resuming durable jobs must not synchronously refill the whole catalogue").toBeLessThan(2_000);
@@ -858,6 +1109,12 @@ test("profile navigation hotspots on a real library", async () => {
       rendererTop: rendererRows,
       workerTop: workerRows,
       workerProfilerAttached: workerProfile !== null,
+      navigationChain,
+      navigationChainMatched,
+      navigationChainMisses,
+      jumpDiagnostics,
+      jumpMeasured,
+      jumpsScrollable,
       log,
     };
     profileReport = report;
@@ -885,6 +1142,16 @@ test("profile navigation hotspots on a real library", async () => {
       // Diagnostics only.
     }
     expect(timeouts, "Navigation profile timeouts are failures and are excluded from latency percentiles").toEqual({});
+    expect(
+      navigationChainMisses,
+      "Every measured switch must be attributable to a Main/Worker navigation span (Serpent-217028 navigationId join)",
+    ).toBe(0);
+    if (includeJumps && jumpsScrollable) {
+      expect(
+        jumpMeasured,
+        "A scrollable library-wide scope must yield at least one real jump sample; skipped preconditions are not a green jump result",
+      ).toBeGreaterThan(0);
+    }
     if (switches > 0) {
       const contentChangedKey = pauseQueueBeforeNavigation
         ? "folderSwitch.paused.contentChangedMs"

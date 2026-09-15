@@ -140,3 +140,81 @@ describe("summarizeBenchLog", () => {
     });
   });
 });
+
+describe("summarizeNavigations", () => {
+  const navigationId = "11111111-1111-4111-8111-111111111111";
+
+  function navigationLine(
+    stage: string,
+    context: Record<string, unknown>,
+    timestamp: string,
+  ): string {
+    return JSON.stringify({
+      timestamp,
+      scope: "performance.navigation",
+      context: { navigationId, stage, ...context },
+    });
+  }
+
+  it("joins Main's navigation stages with the Worker command for the same id", () => {
+    const mainEnteredAt = "2026-09-15T00:00:10.000Z";
+    const log = [
+      navigationLine("main-enter", { rendererToMainMs: 4 }, mainEnteredAt),
+      line("worker.cmd", {
+        navigationId,
+        type: "browse.session.open",
+        queueMs: 2,
+        schedulerWaitMs: 0.5,
+        runMs: 90,
+      }),
+      navigationLine("worker-returned", { workerRoundTripMs: 96, mainElapsedMs: 96 }, "2026-09-15T00:00:10.100Z"),
+      navigationLine("main-response-ready", { mainPostProcessMs: 3, mainTotalMs: 99 }, "2026-09-15T00:00:10.103Z"),
+      navigationLine("main-return", { mainToIpcReturnMs: 100 }, "2026-09-15T00:00:10.104Z"),
+    ].join("\n");
+
+    const navigations = summarizeBenchLog(log).navigations;
+    expect(navigations.count).toBe(1);
+    expect(navigations.stages[0]).toMatchObject({
+      label: "nav-1",
+      mainEnteredAtEpochMs: Date.parse(mainEnteredAt),
+      mainReturnedAtEpochMs: Date.parse("2026-09-15T00:00:10.104Z"),
+      rendererToMainMs: 4,
+      workerRoundTripMs: 96,
+      workerSchedulerWaitMs: 0.5,
+      workerQueueMs: 2,
+      workerRunMs: 90,
+      mainElapsedMs: 96,
+      mainPostProcessMs: 3,
+      mainToIpcReturnMs: 100,
+      mainTotalMs: 99,
+    });
+    expect(navigations.aggregates.mainPostProcessMs).toMatchObject({ count: 1, p50Ms: 3 });
+    expect(navigations.aggregates.workerSchedulerWaitMs).toMatchObject({ count: 1, p50Ms: 0.5 });
+  });
+
+  it("keeps the raw navigation id out of the report and skips absent stages", () => {
+    const log = [
+      navigationLine("main-enter", { rendererToMainMs: 2 }, "2026-09-15T00:00:20.000Z"),
+      // A second navigation that never reached Main's later stages.
+      JSON.stringify({
+        timestamp: "2026-09-15T00:00:21.000Z",
+        scope: "performance.navigation",
+        context: {
+          navigationId: "22222222-2222-4222-8222-222222222222",
+          stage: "main-enter",
+          rendererToMainMs: 3,
+        },
+      }),
+    ].join("\n");
+
+    const navigations = summarizeBenchLog(log).navigations;
+    expect(navigations.stages.map((stage) => stage.label)).toEqual(["nav-1", "nav-2"]);
+    expect(navigations.stages[0]!.mainToIpcReturnMs).toBeNull();
+    expect(navigations.stages[1]!.mainPostProcessMs).toBeNull();
+    // Aggregates must not treat an absent stage as a 0 ms measurement.
+    expect(navigations.aggregates.mainPostProcessMs.count).toBe(0);
+    expect(navigations.aggregates.rendererToMainMs).toMatchObject({ count: 2, p50Ms: 2, p95Ms: 3 });
+    expect(JSON.stringify(navigations)).not.toContain(navigationId);
+    expect(JSON.stringify(navigations)).not.toContain("22222222-2222-4222-8222-222222222222");
+  });
+});
