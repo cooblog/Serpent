@@ -42,17 +42,21 @@ export function resolveBrowseCanvasBodyLayout(
 /**
  * Whether the browse canvas should still render direct child folder cards.
  *
- * Serpent-7a9e89: when 「递归显示子文件夹内容」(recursive browse) is on for a
- * folder scope, the browse semantics flatten child assets into the canvas, so
- * child folder cards conflict with that flattened view and must be hidden.
- * Non-folder scopes ("all" / "root" / trash / tag / collection / search) are
- * unaffected — recursive is only ever enabled for a managed/linked folder id.
+ * Recursive browse flattens descendant assets into the canvas. Direct child
+ * folder cards still appear at the top unless the user turns that off in
+ * Settings (`showCardsWhenRecursive`). Non-folder scopes ("all" / "root")
+ * keep their folder cards regardless — recursive is only enabled for a
+ * concrete managed/linked folder id.
  */
 export function shouldShowFolderBrowseCards(
   assetScope: string,
   folderRecursive: boolean,
+  showCardsWhenRecursive = true,
 ): boolean {
-  return !(folderRecursive && assetScope !== "all" && assetScope !== "root");
+  if (!folderRecursive || assetScope === "all" || assetScope === "root") {
+    return true;
+  }
+  return showCardsWhenRecursive;
 }
 
 /**

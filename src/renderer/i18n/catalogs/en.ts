@@ -934,7 +934,7 @@ export const en = {
       cover: "Cover asset",
       save: "Save details",
       currentCoverOffPage: "Current cover (not on this page)",
-      help: "Pick a cover from assets on this page; the collection tree supports same-level drag reorder."
+      help: "Pick a cover from assets on this page. Drop a collection onto another to nest it; drop on empty space to move it to the top level."
     },
     linkedRules: {
       enableRule: "Enable rule {index}",
@@ -1390,6 +1390,9 @@ export const en = {
     taskCompletionSoundHint: "Play a quiet sound only after imports, exports, or other eligible operations actually run longer than one minute.",
     featureHints: "Feature hints",
     featureHintsHint: "Show one-time hints that point out hidden ways to use the interface, such as expanding a folder's subfolders. Turning this off hides all hints.",
+    folderCardsWhenRecursive: "Show subfolders when expanding recursively",
+    folderCardsWhenRecursiveHint:
+      "When a folder includes its subfolders, those folders still appear at the top of the canvas. Turn this off to show only files.",
     languageHint: "Controls the interface language. Changes apply immediately.",
     imageSequenceAutoDetect: "Detect image sequences during import",
     imageSequenceAutoDetectHint:
@@ -1789,6 +1792,9 @@ export const en = {
     validatingBillfishLibrary: "Validating Billfish library…",
     cancelExport: "Cancel export",
     cancelImport: "Cancel import",
+    cancelImportHint: "Discard this import. Files already added are removed from the library.",
+    stopImport: "Stop import",
+    stopImportHint: "Keep files already added. Remaining files are skipped.",
     cancelDiskDelete: "Cancel delete",
     cancelOpen: "Cancel opening",
     loadingMore: "Loading more assets…"
@@ -1873,6 +1879,8 @@ export const en = {
     collectionDetailsUpdated: "Collection details updated.",
     collectionReorderSameLevelOnly: "This version only supports reordering collections within the same level.",
     collectionOrderUpdated: "Collection order updated.",
+    collectionNested: "Moved the collection into “{name}”.",
+    collectionNestFailed: "Could not move the collection into that collection.",
     collectionReorderFailed: "Failed to reorder collections.",
     collectionMemberDirectOnly: "Only direct members of the current collection can be reordered.",
     collectionMemberOrderUpdated: "Collection member order updated.",
@@ -2021,6 +2029,7 @@ export const en = {
     diskDeleteCancelled: "Delete cancelled.",
     cancelExportFailed: "Could not cancel export.",
     cancellingImport: "Cancelling import and cleaning up…",
+    stoppingImport: "Stopping import. Files already added will be kept.",
     cancelImportFailed: "Could not cancel import.",
     importValidateFailed: "Import validation failed.",
     importCancelled: "Import cancelled.",

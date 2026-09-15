@@ -19,6 +19,10 @@ import {
   saveTaskCompletionSoundPreferences,
 } from "./task-completion-sound-preferences";
 import {
+  loadFolderBrowseCardPreferences,
+  saveFolderBrowseCardPreferences,
+} from "./folder-browse-card-preferences";
+import {
   loadFeatureHintPreferences,
   saveFeatureHintPreferences,
 } from "./feature-hint-preferences";
@@ -510,6 +514,15 @@ export function BrowseSettingsPage({
   onToggleHoverVideoSound,
 }: BrowseSettingsPageProps): ReactNode {
   const t = useT();
+  const [showFolderCardsWhenRecursive, setShowFolderCardsWhenRecursive] =
+    useState(() => loadFolderBrowseCardPreferences().showWhenRecursive);
+
+  function toggleFolderCardsWhenRecursive(): void {
+    const showWhenRecursive = !showFolderCardsWhenRecursive;
+    saveFolderBrowseCardPreferences({ version: 1, showWhenRecursive });
+    setShowFolderCardsWhenRecursive(showWhenRecursive);
+  }
+
   return (
     <SettingsCard>
       <div className="app-settings-row app-settings-row-stack">
@@ -613,6 +626,13 @@ export function BrowseSettingsPage({
         hint={t("settings.hoverVideoSoundHint")}
         label={t("settings.hoverVideoSound")}
         onChange={onToggleHoverVideoSound}
+      />
+      <div className="app-settings-card-divider" />
+      <SettingsToggleRow
+        checked={showFolderCardsWhenRecursive}
+        hint={t("settings.folderCardsWhenRecursiveHint")}
+        label={t("settings.folderCardsWhenRecursive")}
+        onChange={toggleFolderCardsWhenRecursive}
       />
     </SettingsCard>
   );

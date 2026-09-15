@@ -1284,6 +1284,15 @@ describe('renderer request protocol', () => {
       type: 'library.import.cancel.request',
       importId: 'import-01',
     })).toEqual({ type: 'library.import.cancel.request', importId: 'import-01' });
+    expect(parseRendererRequest({
+      type: 'library.import.cancel.request',
+      importId: 'import-01',
+      mode: 'stop',
+    })).toEqual({
+      type: 'library.import.cancel.request',
+      importId: 'import-01',
+      mode: 'stop',
+    });
     expect(() => parseRendererRequest({
       type: 'library.export.cancel.request',
       exportId: 'export-01',

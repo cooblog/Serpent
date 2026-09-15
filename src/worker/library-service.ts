@@ -76,9 +76,14 @@ import {
   readImageDimensions,
   readImageDimensionsSync,
 } from './image-dimensions';
+import {
+  MediaJobStatusSummaryCache,
+  mediaJobCountTotal,
+  mediaJobCountsFromRows,
+} from './media-job-status-summary';
+import {
   countLinkedDirectoryAssets,
   countLinkedDirectoryChildren,
-import {
   collectLinkedDirectoryPrefixes,
   directChildLinkedDirectories,
   encodeLinkedVirtualFolderId,
@@ -2669,6 +2674,7 @@ const LINKED_FOLDER_PARENT_SCHEMA_SQL = `
 const LINKED_FOLDER_PARENT_SCHEMA_CHECKSUM = createHash('sha256')
   .update(LINKED_FOLDER_PARENT_SCHEMA_SQL)
   .digest('hex');
+
 // Migration v50 (Serpent-e97c00): the recent media-job list is ordered by
 // created_at/job_id for one library. The status/priority index cannot satisfy
 // that order, so a task-panel refresh otherwise sorts the full history before
@@ -2680,7 +2686,6 @@ const JOB_RECENT_LIST_INDEX_SCHEMA_SQL = `
 const JOB_RECENT_LIST_INDEX_SCHEMA_CHECKSUM = createHash('sha256')
   .update(JOB_RECENT_LIST_INDEX_SCHEMA_SQL)
   .digest('hex');
-
 
 function ensureLinkedFolderParentSchema(connection: DatabaseConnection): void {
   const columns = columnsFor(connection, 'linked_folders');
@@ -3309,11 +3314,11 @@ export const MIGRATIONS = [
     version: 49,
     sql: LINKED_FOLDER_PARENT_SCHEMA_SQL,
     checksum: LINKED_FOLDER_PARENT_SCHEMA_CHECKSUM,
+  },
   {
     version: 50,
     sql: JOB_RECENT_LIST_INDEX_SCHEMA_SQL,
     checksum: JOB_RECENT_LIST_INDEX_SCHEMA_CHECKSUM,
-  },
   },
 ] as const;
 export const SUPPORTED_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
@@ -3453,8 +3458,8 @@ type DiscoveredSourceEntry = {
 
 interface RefreshManagedAssetsDiscovery {
   linkedEntriesByFolder: Map<string, DiscoveredSourceEntry[]>;
-  scopedLinkedFolderIds?: ReadonlySet<string>;
   managedEntries: DiscoveredSourceEntry[];
+  scopedLinkedFolderIds?: ReadonlySet<string>;
   existingLinkedAssetIdsByFolder?: Map<string, Map<string, string>>;
   existingManagedAssetIdsByIdentity?: Map<string, string>;
   movedLinkedAssetsReconciled?: boolean;
@@ -3466,11 +3471,11 @@ interface OpenReconciliationTask {
   libraryId: string;
   openLibrary: OpenLibrary;
   promise: Promise<void>;
+  reason: 'open' | 'watcher' | 'network';
   triggerScope?: string;
   linkedFolderIds?: string[];
   /** Existing linked source paths proven by precise native file-change events. */
   linkedFilePathsByFolder?: Map<string, Set<string>>;
-  reason: 'open' | 'watcher' | 'network';
   /**
    * Serpent-be29a9: release the scheduler's background admission at a safe
    * point and take it back before the next batch. Supplied by the Worker, which
@@ -4304,6 +4309,20 @@ function runSharpDecoder<T>(
   );
 }
 const MEDIA_QUEUE_LOG = process.env.SERPENT_MEDIA_QUEUE_LOG === '1';
+// Serpent-e97c00：摘要命中/重算必须可观测，否则「面板关闭时不再全表扫描」无法作为
+// 验收证据。与其它命令级诊断共用同一个开关（benchmark 已默认打开）。
+const JOB_SUMMARY_LOG = process.env.SERPENT_WORKER_CMD_LOG === '1';
+// 诊断用开关：置 0 即回到「每次读取都重算」的旧行为，用于同树 A/B 归因（生产不设即启用缓存）。
+const JOB_SUMMARY_CACHE_ENABLED = process.env.SERPENT_JOB_SUMMARY_CACHE !== '0';
+
+function logMediaJobSummaryEvent(context: Record<string, unknown>): void {
+  if (!JOB_SUMMARY_LOG) return;
+  console.error(JSON.stringify({
+    timestamp: new Date().toISOString(),
+    scope: 'media.job-summary',
+    ...context,
+  }));
+}
 
 function logMediaQueueEvent(
   stage: string,
@@ -4557,23 +4576,23 @@ export interface RefreshManagedAssetsOptions {
 export interface AssetObserver {
   close(): void;
 }
+
 export interface AssetObserverEvent {
   eventType: 'change' | 'rename';
   filename: string | Buffer | null;
 }
-
 
 export type AssetObserverFactory = (
   assetsPath: string,
   onEvent: (event?: AssetObserverEvent) => void,
   onError: (error: unknown) => void,
 ) => AssetObserver;
+
 type LinkedWatcherChanges =
   | { kind: 'files'; pathsByFolder: Map<string, Set<string>> }
   | { kind: 'scope' };
 
 const MAX_LINKED_WATCHER_CHANGED_FILES = 64;
-
 
 export interface DebounceScheduler {
   cancel(handle: unknown): void;
@@ -4586,11 +4605,11 @@ interface LibraryWatch {
 
 interface WatchRefreshState {
   dirty: boolean;
+  reason: 'watcher' | 'network';
   triggerScope?: string;
   fullRefreshRequested?: boolean;
   linkedFolderIds?: Set<string>;
   linkedChanges?: LinkedWatcherChanges;
-  reason: 'watcher' | 'network';
   timer?: unknown;
   promise?: Promise<void>;
 }
@@ -4719,6 +4738,7 @@ function isMissingPathError(error: unknown): boolean {
     (error.code === 'ENOENT' || error.code === 'ENOTDIR')
   );
 }
+
 function normalizeWatcherRelativePath(filename: string | Buffer | null): string | undefined {
   if (filename === null) return undefined;
   const value = Buffer.isBuffer(filename) ? filename.toString('utf8') : filename;
@@ -4732,7 +4752,6 @@ function normalizeWatcherRelativePath(filename: string | Buffer | null): string 
     return undefined;
   }
 }
-
 
 function sourceIdentityKey(device: string | null | undefined, inode: string | null | undefined): string | undefined {
   if (
@@ -4894,6 +4913,8 @@ function copyFileExclusive(sourcePath: string, destinationPath: string): void {
 
 interface TransferCancelState {
   cancelled: boolean;
+  /** abandon = roll back this import; stop = keep files already staged. */
+  mode?: 'abandon' | 'stop';
   onCancel?: () => void;
   /** Keep maintenance snapshots inside the same small event-loop slice budget. */
   backupPageBatch?: number;
@@ -4907,11 +4928,15 @@ interface ActiveImportTransfer {
 
 /**
  * Give the UtilityProcess message loop a chance to receive a cancellation
- * command.  Transfer code uses this at file/entry boundaries, matching the
+ * command. Transfer code uses this at file/entry boundaries, matching the
  * cancellation granularity promised by the protocol.
+ *
+ * Use a zero-delay timer, not setImmediate: setImmediate can keep running in
+ * the same check phase and starve parentPort messages (the same reason
+ * navigationCheckpoint uses setTimeout).
  */
 function transferCheckpoint(): Promise<void> {
-  return new Promise((resolve) => setImmediate(resolve));
+  return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 function createProgressThrottle(minIntervalMs = 250): {
@@ -6283,6 +6308,13 @@ export class LibraryService {
    */
   private readonly artifactPathCache = new Map<string, ArtifactPathCacheEntry>();
   /**
+   * Serpent-e97c00：任务面板/状态栏读的是按状态分组的总数，而该查询要遍历整个媒体
+   * 任务历史（真实库中位约 110 ms）。`jobs` 的写入已经由 `library_change_on_jobs_*`
+   * 触发器 bump `library_change_sequence`，所以按序号校验 + 有界陈旧即可把它变成
+   * O(1) 读，不需要在每个任务写路径挂钩子。
+   */
+  private readonly mediaJobSummaryCache = new MediaJobStatusSummaryCache();
+  /**
    * The descriptor is tiny, but getPreviewArtifact/getExtractedMetadata can
    * ask for the same current row repeatedly while a card remounts. Entries
    * are fenced by the durable library change sequence, so artifact writes
@@ -6457,20 +6489,21 @@ export class LibraryService {
       const now = performance.now();
       console.error(JSON.stringify({
         scope: 'open.refresh-managed-assets.stage',
+        libraryId,
         generation: task.generation,
         reason: task.reason,
         triggerScope: task.triggerScope ?? diagnosticScope,
         diagnosticScope,
-        libraryId,
         stage,
-        ...details,
         durationMs: Math.round((now - stageMarkAt) * 100) / 100,
+        ...details,
       }));
       stageMarkAt = now;
     };
     try {
       this.assertReconciliationActive(task);
       const openLibrary = this.openById.get(libraryId);
+      if (!openLibrary || openLibrary.readOnly) return;
       const linkedFolderIds = task.reason === 'watcher' && task.linkedFolderIds?.length
         ? [...new Set(task.linkedFolderIds)]
         : undefined;
@@ -6511,7 +6544,6 @@ export class LibraryService {
       const linkedFolderFilter = linkedFolderIds === undefined
         ? ''
         : ` AND a.linked_folder_id IN (${linkedFolderIds.map(() => '?').join(',')})`;
-      if (!openLibrary || openLibrary.readOnly) return;
       const existingAssets = (openLibrary.connection
         .prepare(
           `SELECT a.asset_id, a.location_kind, a.linked_folder_id, a.relative_file_path,
@@ -6519,8 +6551,8 @@ export class LibraryService {
              FROM assets a
              LEFT JOIN revisions r ON r.revision_id = a.current_revision_id
             WHERE a.deleted_at IS NULL
-              ${linkedFolderFilter}
               AND ${this.explicitIgnoreSql(openLibrary.connection, 'a')}
+              ${linkedFolderFilter}
             ORDER BY a.relative_file_path`,
         )
         .all(...(linkedFolderIds ?? [])) as Array<{
@@ -6650,6 +6682,7 @@ export class LibraryService {
       );
     }
   }
+
   private async refreshLinkedWatcherFileChanges(
     task: OpenReconciliationTask,
     pathsByFolder: Map<string, Set<string>>,
@@ -6802,7 +6835,6 @@ export class LibraryService {
     return { changedCount, inspectedPathCount, missingCount };
   }
 
-
   /**
    * Relative paths identify catalog locations, not linked source files. A
    * same-volume move keeps the source device/inode, so claim an unclaimed new
@@ -6812,13 +6844,13 @@ export class LibraryService {
    */
   private reconcileMovedLinkedAssets(
     openLibrary: OpenLibrary,
-    linkedFolderIds = discovery.scopedLinkedFolderIds,
     discovery: RefreshManagedAssetsDiscovery,
+    linkedFolderIds = discovery.scopedLinkedFolderIds,
   ): void {
+    if (discovery.movedLinkedAssetsReconciled) return;
     const scopedLinkedFolderIds = linkedFolderIds?.size
       ? [...linkedFolderIds]
       : undefined;
-    if (discovery.movedLinkedAssetsReconciled) return;
     const rows = openLibrary.connection
       .prepare(
         `SELECT asset_id, linked_folder_id, source_device, source_inode
@@ -7285,12 +7317,13 @@ export class LibraryService {
   private scheduleWatcherRefresh(
     libraryId: string,
     diagnosticContext: Record<string, unknown>,
-    linkedChanges?: LinkedWatcherChanges,
     reason: 'watcher' | 'network' = 'watcher',
+    linkedChanges?: LinkedWatcherChanges,
   ): void {
     const state = this.watchRefreshByLibrary.get(libraryId);
     if (!state || !this.openById.has(libraryId)) return;
     const wasDirty = state.dirty;
+    state.dirty = true;
     state.triggerScope = String(
       diagnosticContext.scope ?? state.triggerScope ?? 'asset-watcher.schedule',
     );
@@ -7332,7 +7365,6 @@ export class LibraryService {
           : { kind: 'files', pathsByFolder };
       }
     }
-    state.dirty = true;
     // A native event is more specific than the periodic checkpoint. If both
     // arrive in one debounce window, retain the watcher reason so a changed
     // file is reconciled immediately instead of being fingerprint-only.
@@ -7348,13 +7380,13 @@ export class LibraryService {
         state.timer = undefined;
         if (!state.dirty || !this.openById.has(libraryId)) return;
         state.dirty = false;
+        const refreshReason = state.reason;
         const triggerScope = state.triggerScope;
         const fullRefresh = state.fullRefreshRequested === true || refreshReason === 'network';
         const linkedFolderIds = fullRefresh
           ? undefined
           : [...(state.linkedFolderIds ?? [])];
         const linkedChanges = fullRefresh ? undefined : state.linkedChanges;
-        const refreshReason = state.reason;
         state.reason = 'watcher';
         state.triggerScope = undefined;
         state.fullRefreshRequested = false;
@@ -7380,10 +7412,10 @@ export class LibraryService {
       }, this.options.debounceMs ?? 250);
     } catch (error) {
       state.timer = undefined;
+      this.diagnose(String(diagnosticContext.scope ?? 'asset-watcher.schedule'), error, diagnosticContext);
       if (state.reason === 'network') {
         this.scheduleNetworkScan(libraryId, this.networkScanIntervalMs());
       }
-      this.diagnose(String(diagnosticContext.scope ?? 'asset-watcher.schedule'), error, diagnosticContext);
       // Scheduler failures leave explicit/manual refresh available and must
       // never escape the native observer callback.
     }
@@ -7392,10 +7424,10 @@ export class LibraryService {
   private finishWatcherRefresh(libraryId: string, state: WatchRefreshState): void {
     if (this.watchRefreshByLibrary.get(libraryId) !== state) return;
     state.promise = undefined;
+    if (state.dirty && this.openById.has(libraryId)) {
       const fullRefresh = state.fullRefreshRequested === true || state.reason === 'network';
       const linkedFolderIds = fullRefresh ? undefined : [...(state.linkedFolderIds ?? [])];
       const linkedChanges = fullRefresh ? undefined : state.linkedChanges;
-    if (state.dirty && this.openById.has(libraryId)) {
       this.scheduleWatcherRefresh(
         libraryId,
         {
@@ -7407,13 +7439,13 @@ export class LibraryService {
               ? { linkedFolderIds }
               : {}),
         },
-        linkedChanges,
         state.reason,
+        linkedChanges,
+      );
       return;
     }
     if (this.openById.get(libraryId)?.summary.networkStorage) {
       this.scheduleNetworkScan(libraryId, this.networkScanIntervalMs());
-      );
     }
   }
 
@@ -7424,10 +7456,10 @@ export class LibraryService {
    */
   private async runWatcherReconciliation(
     libraryId: string,
+    reason: 'watcher' | 'network' = 'watcher',
     triggerScope?: string,
     linkedFolderIds?: string[],
     linkedFilePathsByFolder?: Map<string, Set<string>>,
-    reason: 'watcher' | 'network' = 'watcher',
   ): Promise<void> {
     const initialLibrary = this.openById.get(libraryId);
     if (!initialLibrary || initialLibrary.readOnly) return;
@@ -7452,10 +7484,10 @@ export class LibraryService {
       libraryId,
       openLibrary,
       promise: Promise.resolve(),
+      reason,
       ...(triggerScope === undefined ? {} : { triggerScope }),
       ...(linkedFolderIds === undefined ? {} : { linkedFolderIds }),
       ...(linkedFilePathsByFolder === undefined ? {} : { linkedFilePathsByFolder }),
-      reason,
     };
     this.reconciliationByLibrary.set(libraryId, task);
     task.promise = (async () => {
@@ -7568,6 +7600,7 @@ export class LibraryService {
   ): void {
     const key = this.linkedWatchKey(libraryId, folderId);
     const linkedWatch = this.linkedWatchByKey.get(key);
+    if (!linkedWatch || !this.openById.has(libraryId)) return;
     const relativePath = event?.eventType === 'change'
       ? normalizeWatcherRelativePath(event.filename ?? null)
       : undefined;
@@ -7577,7 +7610,6 @@ export class LibraryService {
           kind: 'files',
           pathsByFolder: new Map([[folderId, new Set([relativePath])]]),
         };
-    if (!linkedWatch || !this.openById.has(libraryId)) return;
     this.scheduleWatcherRefresh(libraryId, {
       scope: 'linked-watcher.schedule',
       libraryId,
@@ -15051,8 +15083,8 @@ export class LibraryService {
       : [];
     const prefixes = [...new Set([...assetPrefixes, ...diskPrefixes])].sort();
     const children = directChildLinkedDirectories(prefixes, resolved.relativePath);
-    const directoryChildCounts = countLinkedDirectoryChildren(prefixes);
     if (children.length === 0) return [];
+    const directoryChildCounts = countLinkedDirectoryChildren(prefixes);
 
     return children.map((relativePath) => {
       const folderId = encodeLinkedVirtualFolderId(resolved.linkedFolderId, relativePath);
@@ -17145,93 +17177,154 @@ export class LibraryService {
     }
 
     const folderId = randomUUID();
+    const importId = randomUUID();
     const defaultRules = DEFAULT_LINKED_FOLDER_RULES.map((rule) => ({ ...rule, ruleId: randomUUID() }));
-    const entries = this.enumerateLinkedSources(canonicalRoot, folderId, defaultRules);
-    const now = new Date().toISOString();
-    const sourceDeviceHintValue = sourceDeviceHint(rootStat.dev, rootStat.ino);
+    let lastProgressAt = 0;
+    const emitLinkedProgress = (
+      phase: ImportProgressEvent['phase'],
+      filesProcessed: number,
+      totalFiles: number,
+      bytesProcessed: number,
+      totalBytes: number,
+      force = false,
+    ): void => {
+      const now = Date.now();
+      if (!force && now - lastProgressAt < 200) return;
+      lastProgressAt = now;
+      this.emitLinkedFolderImportProgress(
+        importId,
+        phase,
+        filesProcessed,
+        totalFiles,
+        bytesProcessed,
+        totalBytes,
+      );
+    };
 
-    openLibrary.connection.transaction(() => {
-      openLibrary.connection
-        .prepare(
-          `INSERT INTO linked_folders
+    try {
+      emitLinkedProgress('validate', 0, 0, 0, 0, true);
+      let scannedBytes = 0;
+      const entries = this.enumerateLinkedSources(
+        canonicalRoot,
+        folderId,
+        defaultRules,
+        undefined,
+        (foundCount, entryBytes) => {
+          scannedBytes += entryBytes;
+          emitLinkedProgress('validate', foundCount, 0, scannedBytes, 0);
+        },
+      );
+      const totalBytes = scannedBytes;
+      emitLinkedProgress('copy', 0, entries.length, 0, totalBytes, true);
+      const now = new Date().toISOString();
+      const sourceDeviceHintValue = sourceDeviceHint(rootStat.dev, rootStat.ino);
+
+      openLibrary.connection.transaction(() => {
+        openLibrary.connection
+          .prepare(
+            `INSERT INTO linked_folders
              (folder_id, library_id, display_name, absolute_root_path, source_device_hint,
               status, path_identity, parent_folder_id, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?, 'available', ?, ?, ?, ?)`,
-        )
-        .run(
-          folderId,
-          openLibrary.summary.libraryId,
-          normalizedName,
-          canonicalRoot,
-          sourceDeviceHintValue,
-          pathIdentity,
-          parentFolderId,
-          now,
-          now,
-        );
-      const insertRule = openLibrary.connection.prepare(
-        `INSERT INTO linked_folder_rules(rule_id, folder_id, position, action, target, pattern, enabled)
+          )
+          .run(
+            folderId,
+            openLibrary.summary.libraryId,
+            normalizedName,
+            canonicalRoot,
+            sourceDeviceHintValue,
+            pathIdentity,
+            parentFolderId,
+            now,
+            now,
+          );
+        const insertRule = openLibrary.connection.prepare(
+          `INSERT INTO linked_folder_rules(rule_id, folder_id, position, action, target, pattern, enabled)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      );
-      defaultRules.forEach((rule, position) => insertRule.run(
-        rule.ruleId, folderId, position, rule.action, rule.target, rule.pattern, 1,
-      ));
-      const insertAsset = openLibrary.connection.prepare(
-        `INSERT INTO assets
+        );
+        defaultRules.forEach((rule, position) => insertRule.run(
+          rule.ruleId, folderId, position, rule.action, rule.target, rule.pattern, 1,
+        ));
+        const insertAsset = openLibrary.connection.prepare(
+          `INSERT INTO assets
            (asset_id, location_kind, managed_folder_id, linked_folder_id, relative_file_path,
             path_identity, current_revision_id, availability, source_device, source_inode,
             created_at, updated_at)
          VALUES (?, 'linked', NULL, ?, ?, ?, NULL, 'available', ?, ?, ?, ?)`,
-      );
-      const insertRevision = openLibrary.connection.prepare(
-        `INSERT INTO revisions
+        );
+        const insertRevision = openLibrary.connection.prepare(
+          `INSERT INTO revisions
            (revision_id, asset_id, parent_revision_id, byte_size, modified_at,
             original_filename, origin, accepted_at)
          VALUES (?, ?, NULL, ?, ?, ?, 'import', ?)`,
-      );
-      const setCurrentRevision = openLibrary.connection.prepare(
-        'UPDATE assets SET current_revision_id = ?, updated_at = ? WHERE asset_id = ?',
-      );
-      for (const entry of entries) {
-        const assetId = randomUUID();
-        const revisionId = randomUUID();
-        const assetPathIdentity = portablePathIdentity(entry.relativePath);
-        insertAsset.run(
-          assetId,
-          folderId,
-          entry.relativePath,
-          assetPathIdentity,
-          entry.sourceDevice,
-          entry.sourceInode,
-          now,
-          now,
         );
-        insertRevision.run(
-          revisionId,
-          assetId,
-          entry.byteSize,
-          entry.modifiedAt,
-          entry.originalFilename,
-          now,
+        const setCurrentRevision = openLibrary.connection.prepare(
+          'UPDATE assets SET current_revision_id = ?, updated_at = ? WHERE asset_id = ?',
         );
-        setCurrentRevision.run(revisionId, now, assetId);
-        this.syncAssetSearchContent(openLibrary.connection, assetId);
-      }
-    })();
-    this.persistLinkedFolderImageDimensions(openLibrary, folderId);
-    this.reconcileLinkedWatchers(openLibrary);
+        let filesProcessed = 0;
+        let bytesProcessed = 0;
+        for (const entry of entries) {
+          const assetId = randomUUID();
+          const revisionId = randomUUID();
+          const assetPathIdentity = portablePathIdentity(entry.relativePath);
+          insertAsset.run(
+            assetId,
+            folderId,
+            entry.relativePath,
+            assetPathIdentity,
+            entry.sourceDevice,
+            entry.sourceInode,
+            now,
+            now,
+          );
+          insertRevision.run(
+            revisionId,
+            assetId,
+            entry.byteSize,
+            entry.modifiedAt,
+            entry.originalFilename,
+            now,
+          );
+          setCurrentRevision.run(revisionId, now, assetId);
+          this.syncAssetSearchContent(openLibrary.connection, assetId);
+          filesProcessed += 1;
+          bytesProcessed += entry.byteSize;
+          emitLinkedProgress(
+            'copy',
+            filesProcessed,
+            entries.length,
+            bytesProcessed,
+            totalBytes,
+            filesProcessed === entries.length,
+          );
+        }
+      })();
+      this.persistLinkedFolderImageDimensions(openLibrary, folderId);
+      this.reconcileLinkedWatchers(openLibrary);
+      emitLinkedProgress(
+        'complete',
+        entries.length,
+        entries.length,
+        totalBytes,
+        totalBytes,
+        true,
+      );
 
-    return {
-      folderId,
-      displayName: normalizedName,
-      status: 'available',
-      assetCount: entries.length,
-      absoluteRootPath: canonicalRoot,
-      linkedFolderId: folderId,
-      relativePath: '',
-      // Serpent-316493: echo the requested parent (null = library root).
-      parentFolderId,
-    };
+      return {
+        folderId,
+        displayName: normalizedName,
+        status: 'available',
+        assetCount: entries.length,
+        absoluteRootPath: canonicalRoot,
+        linkedFolderId: folderId,
+        relativePath: '',
+        // Serpent-316493: echo the requested parent (null = library root).
+        parentFolderId,
+      };
+    } catch (error) {
+      emitLinkedProgress('failed', 0, 0, 0, 0, true);
+      throw error;
+    }
   }
 
   relinkMissingFolder(input: {
@@ -20608,6 +20701,32 @@ export class LibraryService {
     });
   }
 
+  /**
+   * Serpent-e97c00：任务摘要缓存的有效性 token = 库变更序号 + 忽略规则序号（计数带
+   * 可见性过滤，忽略规则变化必须让它失效）。两者都由既有触发器维护，各读一行；这里
+   * 从读连接直读且**不抛错**——`listMediaJobs` 是读路径，不能因为序号表缺失或异常把
+   * 面板读取变成 LIBRARY_CORRUPT；返回 null 时本次完全不进缓存，退化成原行为。
+   */
+  private mediaJobSummaryToken(openLibrary: OpenLibrary): string | null {
+    try {
+      const libraryRow = openLibrary.connection
+        .prepare('SELECT sequence FROM library_change_sequence WHERE library_id = ?')
+        .get(openLibrary.summary.libraryId) as { sequence: number } | undefined;
+      const ignoreRow = openLibrary.connection
+        .prepare('SELECT sequence FROM browse_change_sequence WHERE library_id = ?')
+        .get(openLibrary.summary.libraryId) as { sequence: number } | undefined;
+      if (
+        !libraryRow || !Number.isSafeInteger(libraryRow.sequence)
+        || !ignoreRow || !Number.isSafeInteger(ignoreRow.sequence)
+      ) {
+        return null;
+      }
+      return `${libraryRow.sequence}:${ignoreRow.sequence}`;
+    } catch {
+      return null;
+    }
+  }
+
   listMediaJobs(libraryId: string, options: { summaryOnly?: boolean } = {}): {
     queued: number;
     running: number;
@@ -20639,17 +20758,48 @@ export class LibraryService {
     const visibleJobFilter = `
           AND (j.error_code IS NULL OR j.error_code <> 'ASSET_IGNORED')
           AND (j.asset_id IS NULL OR ${this.explicitIgnoreSql(openLibrary.connection, 'a')})`;
-    const counts = openLibrary.connection.prepare(
-      `SELECT status, COUNT(*) AS count FROM jobs
-        LEFT JOIN assets a ON a.asset_id = jobs.asset_id
-        WHERE jobs.library_id = ? AND jobs.kind IN (${kindPlaceholders})
-          AND (jobs.error_code IS NULL OR jobs.error_code <> 'ASSET_IGNORED')
-          AND (jobs.asset_id IS NULL OR ${this.explicitIgnoreSql(openLibrary.connection, 'a')})
-        GROUP BY status`,
-    ).all(openLibrary.summary.libraryId, ...MEDIA_JOB_KINDS) as Array<{
-      status: string;
-      count: number;
-    }>;
+    // Serpent-e97c00：这条 GROUP BY 要遍历整个媒体任务历史（真实库中位约 110 ms），
+    // 而任务面板与状态栏会反复读它。任何 jobs 写入都会 bump 变更序号，因此按序号校验
+    // 即可安全复用；序号变化但在陈旧窗口内仍复用，避免繁忙队列让每次读取都退回全扫。
+    const summaryToken = this.mediaJobSummaryToken(openLibrary);
+    const summaryRead = JOB_SUMMARY_CACHE_ENABLED && summaryToken !== null
+      ? this.mediaJobSummaryCache.read(openLibrary.summary.libraryId, summaryToken)
+      : { counts: null, source: 'miss' as const, ageMs: 0, totalJobs: 0 };
+    let counts: Array<{ status: string; count: number }>;
+    if (summaryRead.counts === null) {
+      counts = openLibrary.connection.prepare(
+        `SELECT status, COUNT(*) AS count FROM jobs
+          LEFT JOIN assets a ON a.asset_id = jobs.asset_id
+          WHERE jobs.library_id = ? AND jobs.kind IN (${kindPlaceholders})
+            AND (jobs.error_code IS NULL OR jobs.error_code <> 'ASSET_IGNORED')
+            AND (jobs.asset_id IS NULL OR ${this.explicitIgnoreSql(openLibrary.connection, 'a')})
+          GROUP BY status`,
+      ).all(openLibrary.summary.libraryId, ...MEDIA_JOB_KINDS) as Array<{
+        status: string;
+        count: number;
+      }>;
+      const rebuilt = mediaJobCountsFromRows(counts);
+      if (summaryToken !== null) {
+        this.mediaJobSummaryCache.store(
+          openLibrary.summary.libraryId,
+          summaryToken,
+          rebuilt,
+          mediaJobCountTotal(rebuilt),
+        );
+      }
+      logMediaJobSummaryEvent({
+        source: summaryToken === null ? 'rebuild-uncached' : 'rebuild',
+        totalJobs: mediaJobCountTotal(rebuilt),
+        epoch: summaryToken ?? 'unavailable',
+      });
+    } else {
+      counts = Object.entries(summaryRead.counts).map(([status, count]) => ({ status, count }));
+      logMediaJobSummaryEvent({
+        source: summaryRead.source,
+        ageMs: Math.round(summaryRead.ageMs),
+        totalJobs: summaryRead.totalJobs,
+      });
+    }
     const rows = options.summaryOnly
       ? []
       : openLibrary.connection.prepare(
@@ -24203,6 +24353,7 @@ export class LibraryService {
     // primary thumbnail wave yields.
     const limit = options.limit === undefined
       ? 256
+      : Math.max(1, Math.min(500, Math.trunc(options.limit)));
     // Backfill is a secondary maintenance lane. Keep its durable queue bounded
     // so each scheduler turn does not rescan every asset while hundreds of
     // metadata jobs are already waiting. The jobs library/status index makes
@@ -24221,7 +24372,6 @@ export class LibraryService {
       : 0;
     const availableAdmissionLimit = Math.max(0, limit - pendingMetadataCount);
     if (availableAdmissionLimit === 0) return 0;
-      : Math.max(1, Math.min(500, Math.trunc(options.limit)));
     const retryCutoff = new Date(Date.now() - RAW_IMAGE_METADATA_RETRY_DELAY_MS).toISOString();
     const retryRows = openLibrary.connection
       .prepare(
@@ -28641,10 +28791,10 @@ export class LibraryService {
       state.timer = undefined;
     }
     state.dirty = false;
+    state.reason = 'watcher';
     state.fullRefreshRequested = false;
     state.linkedFolderIds = undefined;
     state.linkedChanges = undefined;
-    state.reason = 'watcher';
   }
 
   /**
@@ -38504,6 +38654,7 @@ export class LibraryService {
     linkedFolderId?: string,
     suppliedRules?: LinkedFolderRule[],
     explicitlyIgnored?: (relativePath: string, pathKind: 'asset' | 'folder') => boolean,
+    onDiscovered?: (foundCount: number, entryBytes: number) => void,
   ): Array<{
     relativePath: string;
     byteSize: number;
@@ -38607,6 +38758,7 @@ export class LibraryService {
           sourceDevice: String(stat.dev),
           sourceInode: String(stat.ino),
         });
+        onDiscovered?.(entries.length, byteSize);
       }
     };
     visit(rootPath, '');
@@ -39843,6 +39995,9 @@ export class LibraryService {
       }),
     );
     if (isImportSourceFailurePlan(plan)) return plan;
+    if (cancelState.mode === 'stop') {
+      cancelState.cancelled = false;
+    }
     const finish = (completion: ImportCompletion): ImportCompletion => {
       this.emitManagedImportProgress(
         plan.importId,
@@ -42337,8 +42492,8 @@ export class LibraryService {
   }
 
   private async collectManagedAssetDiscoveryAsync(
-    options?: { linkedFolderIds?: readonly string[] },
     task: OpenReconciliationTask,
+    options?: { linkedFolderIds?: readonly string[] },
   ): Promise<RefreshManagedAssetsDiscovery> {
     const openLibrary = this.openById.get(task.libraryId);
     if (!openLibrary) throw this.reconciliationAbortError();
@@ -42359,10 +42514,10 @@ export class LibraryService {
         .all() as Array<{ asset_id: string; path_identity: string }>) {
         existingManagedAssetIdsByIdentity.set(row.path_identity, row.asset_id);
       }
+    }
     const scopedIds = scopedLinkedFolderIds === undefined
       ? undefined
       : [...scopedLinkedFolderIds];
-    }
     const linkedFolderRows = openLibrary.connection
       .prepare(
         `SELECT folder_id, absolute_root_path, status
@@ -42391,8 +42546,8 @@ export class LibraryService {
         .all(folder.folder_id) as Array<{ asset_id: string; path_identity: string }>) {
         existingAssetIdsByIdentity.set(row.path_identity, row.asset_id);
       }
-      const linkedScanStartedAt = performance.now();
       existingLinkedAssetIdsByFolder.set(folder.folder_id, existingAssetIdsByIdentity);
+      const linkedScanStartedAt = performance.now();
       const entries = await this.enumerateSourcesAsync({
         errorCode: 'INVALID_IMPORT_SOURCE',
         explicitlyIgnored: (relativePath, pathKind) => this.isExplicitlyIgnored(
@@ -42417,6 +42572,7 @@ export class LibraryService {
         locationKind: 'linked',
         rootPath: folder.absolute_root_path,
         task,
+      });
       if (process.env.SERPENT_REFRESH_STAGE_LOG === '1') {
         this.options.onDiagnostic?.({
           scope: 'open.refresh-managed-assets.source-scan',
@@ -42434,7 +42590,6 @@ export class LibraryService {
           },
         });
       }
-      });
       for (const entry of entries) {
         entry.assetId = existingAssetIdsByIdentity.get(portablePathIdentity(entry.relativePath));
       }
@@ -42479,8 +42634,8 @@ export class LibraryService {
     }
     return {
       linkedEntriesByFolder,
-      ...(scopedLinkedFolderIds === undefined ? {} : { scopedLinkedFolderIds }),
       managedEntries,
+      ...(scopedLinkedFolderIds === undefined ? {} : { scopedLinkedFolderIds }),
       existingLinkedAssetIdsByFolder,
       existingManagedAssetIdsByIdentity,
     };
@@ -44746,6 +44901,26 @@ export class LibraryService {
     });
   }
 
+  private emitLinkedFolderImportProgress(
+    importId: string,
+    phase: ImportProgressEvent['phase'],
+    filesProcessed: number,
+    totalFiles: number,
+    bytesProcessed: number,
+    totalBytes: number,
+  ): void {
+    this.emitProgress({
+      type: 'import.progress',
+      importId,
+      phase,
+      cancelable: false,
+      filesProcessed,
+      totalFiles,
+      bytesProcessed,
+      totalBytes,
+    });
+  }
+
   private emitDeleteProgress(event: Omit<DeleteProgressEvent, 'type'>): void {
     this.emitProgress({ type: 'delete.progress', ...event });
   }
@@ -44815,6 +44990,7 @@ export class LibraryService {
     const stageNameOffset = input.stageNameOffset ?? 0;
     const stageIndex = (index: number): void => {
       if (input.cancelState?.cancelled) {
+        if (input.cancelState.mode === 'stop') return;
         if (input.importId) {
           this.emitManagedImportProgress(
             input.importId,
@@ -44883,16 +45059,54 @@ export class LibraryService {
           );
         }
         for (let index = 0; index < input.entries.length; index += 1) {
-          if (index === 0 || index % 8 === 0) {
-            await transferCheckpoint();
+          await transferCheckpoint();
+          if (input.cancelState?.cancelled && input.cancelState.mode === 'stop') {
+            break;
           }
           stageIndex(index);
+        }
+        if (
+          input.cancelState?.cancelled
+          && input.cancelState.mode === 'stop'
+          && stagedEntries.length === 0
+        ) {
+          if (input.importId) {
+            this.emitManagedImportProgress(
+              input.importId,
+              'cancelled',
+              0,
+              input.totalFiles,
+              0,
+              input.totalBytes,
+            );
+          }
+          throw new LibraryServiceError('CANCELLED');
         }
         return stagedEntries;
       })();
     }
     for (let index = 0; index < input.entries.length; index += 1) {
+      if (input.cancelState?.cancelled && input.cancelState.mode === 'stop') {
+        break;
+      }
       stageIndex(index);
+    }
+    if (
+      input.cancelState?.cancelled
+      && input.cancelState.mode === 'stop'
+      && stagedEntries.length === 0
+    ) {
+      if (input.importId) {
+        this.emitManagedImportProgress(
+          input.importId,
+          'cancelled',
+          0,
+          input.totalFiles,
+          0,
+          input.totalBytes,
+        );
+      }
+      throw new LibraryServiceError('CANCELLED');
     }
     return stagedEntries;
   }
@@ -45574,9 +45788,14 @@ export class LibraryService {
     }
   }
 
-  cancelImport(importId: string): void {
+  cancelImport(importId: string, mode: 'abandon' | 'stop' = 'abandon'): void {
     const state = this.activeImports.get(importId);
     if (state) {
+      if (state.mode === 'abandon' && mode === 'stop') {
+        state.onCancel?.();
+        return;
+      }
+      state.mode = mode;
       state.cancelled = true;
       state.onCancel?.();
       return;

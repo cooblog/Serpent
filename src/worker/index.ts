@@ -4932,7 +4932,7 @@ function logWorkerRequestSpan(input: {
   }));
 }
 
-parentPort.on('message', async (event) => {
+const handleLibraryWorkerMessage = async (event: { data: unknown }): Promise<void> => {
   const input: unknown = event.data;
   const callbackAt = WORKER_CMD_LOG ? Date.now() : 0;
 
@@ -5287,6 +5287,10 @@ parentPort.on('message', async (event) => {
       servedSuccessfully: response.result.ok,
     });
   }
+};
+
+parentPort.on('message', (event) => {
+  void handleLibraryWorkerMessage(event);
 });
 
 // CI 诊断：UtilityProcess fork 后若模块加载失败/被系统杀，main 只见握手

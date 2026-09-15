@@ -1479,7 +1479,16 @@ async function createMainWindow(): Promise<void> {
   // A blank window in a packaged build must leave the same evidence as one
   // started from Vite; idle windows produce no log entries.
   attachRendererDiagnostics(window);
-  window.on("ready-to-show", () => window.show());
+  window.on("ready-to-show", () => {
+    // E2E can keep its renderer fully loaded and automatable without putting
+    // a test window over the user's desktop session.
+    if (
+      process.env.SERPENT_E2E !== "1"
+      || process.env.SERPENT_E2E_HIDE_WINDOW !== "1"
+    ) {
+      window.show();
+    }
+  });
   // Cleanup while webContents/HWND still exist (`closed` is too late).
   window.on("close", () => {
     clearViewerVideoShortcutCapture(mainContentsId);
@@ -3045,6 +3054,7 @@ async function commandFor(
       return {
         type: "browse.session.open",
         libraryId: request.libraryId,
+        ...(request.navigationId === undefined ? {} : { navigationId: request.navigationId }),
         query: request.query,
         filters: request.filters,
         scope: request.scope,
@@ -3381,7 +3391,11 @@ async function commandFor(
       };
     }
     case "library.import.cancel.request":
-      return { type: "library.import-cancel", importId: request.importId };
+      return {
+        type: "library.import-cancel",
+        importId: request.importId,
+        ...(request.mode === undefined ? {} : { mode: request.mode }),
+      };
     case "asset.delete-cancel.request":
       return { type: "asset.delete-cancel", operationId: request.operationId };
     case "library.import.copy.request": {
@@ -3832,8 +3846,41 @@ async function handleLibraryRequest(
     | undefined;
   let previousLibraryPaths: string[] = [];
   let openCancellation: ActiveLibraryOpenCancellation | undefined;
+  let navigationTrace: {
+    navigationId: string;
+    rendererStartedAtEpochMs?: number;
+    mainEnteredAt: number;
+    workerReturnedAt?: number;
+  } | undefined;
+  const navigationTraceEnabled =
+    process.env.SERPENT_NAVIGATION_TRACE === "1" || libraryRequestTraceEnabled();
+  const logNavigationStage = (
+    stage: string,
+    fields: Record<string, unknown> = {},
+  ): void => {
+    if (!navigationTraceEnabled || !navigationTrace) return;
+    logger?.info("performance.navigation", "Browse navigation performance stage.", {
+      navigationId: navigationTrace.navigationId,
+      stage,
+      ...fields,
+    });
+  };
   try {
     const request = parseRendererRequest(input);
+    if (request.type === "browse.session.open.request" && request.navigationId) {
+      navigationTrace = {
+        navigationId: request.navigationId,
+        ...(request.navigationStartedAtEpochMs === undefined
+          ? {}
+          : { rendererStartedAtEpochMs: request.navigationStartedAtEpochMs }),
+        mainEnteredAt: performance.now(),
+      };
+      logNavigationStage("main-enter", {
+        ...(navigationTrace.rendererStartedAtEpochMs === undefined
+          ? {}
+          : { rendererToMainMs: Math.max(0, Date.now() - navigationTrace.rendererStartedAtEpochMs) }),
+      });
+    }
 
     if (request.type === "library.open-cancel.request") {
       if (activeLibraryOpenCancellation) {
@@ -4929,6 +4976,7 @@ async function handleLibraryRequest(
     const viewerWorkerStartedAt = VIEWER_TIMING_LOG && viewerRequest !== undefined
       ? performance.now()
       : 0;
+    const navigationWorkerStartedAt = navigationTrace ? performance.now() : 0;
     const workerResult = command.type === "sync.probe"
       ? await runSyncProbeWithRetry(command)
       : await (async () => {
@@ -4950,6 +4998,15 @@ async function handleLibraryRequest(
         }
         return result;
       })();
+    if (navigationTrace) {
+      navigationTrace.workerReturnedAt = performance.now();
+      logNavigationStage("worker-returned", {
+        workerRoundTripMs: Math.max(0, navigationTrace.workerReturnedAt - navigationWorkerStartedAt),
+        mainElapsedMs: Math.max(0, navigationTrace.workerReturnedAt - navigationTrace.mainEnteredAt),
+        ok: workerResult.ok,
+        resultType: workerResult.ok ? workerResult.type : undefined,
+      });
+    }
     if (viewerWorkerStartedAt > 0) {
       logger?.info("viewer.preview-worker-timing", "Preview request resolved.", {
         libraryId: viewerRequest?.libraryId,
@@ -5786,6 +5843,17 @@ async function handleLibraryRequest(
       rendererWorkerResult,
       relinkPreviewContext?.previewId,
     );
+    if (navigationTrace) {
+      const responseReadyAt = performance.now();
+      logNavigationStage("main-response-ready", {
+        mainPostProcessMs: navigationTrace.workerReturnedAt === undefined
+          ? 0
+          : Math.max(0, responseReadyAt - navigationTrace.workerReturnedAt),
+        mainTotalMs: Math.max(0, responseReadyAt - navigationTrace.mainEnteredAt),
+        ok: result.ok,
+        resultType: result.ok ? result.type : undefined,
+      });
+    }
     if (!result.ok) {
       if (operation) {
         publishLifecycle({
@@ -5841,6 +5909,11 @@ async function handleLibraryRequest(
       clearNativeAssetDragCache(result.libraryId);
       publishLifecycle({ type: "library.closed", libraryId: result.libraryId });
     }
+    logNavigationStage("main-return", {
+      mainToIpcReturnMs: navigationTrace?.workerReturnedAt === undefined
+        ? undefined
+        : Math.max(0, performance.now() - navigationTrace.workerReturnedAt),
+    });
     return result;
   } catch (error) {
     if (relinkPreviewContext) {

@@ -133,6 +133,10 @@ import {
   withFolderRecursiveEnabled,
 } from "./folder-recursive-preferences";
 import {
+  FOLDER_BROWSE_CARD_PREFERENCES_CHANGED,
+  loadFolderBrowseCardPreferences,
+} from "./folder-browse-card-preferences";
+import {
   hasFeatureHintBeenShown,
   isFeatureHintEnabled,
   loadFeatureHintPreferences,
@@ -1033,6 +1037,10 @@ function AppInner() {
   const [folderRecursivePrefs, setFolderRecursivePrefs] = useState(() =>
     loadFolderRecursivePreferences(),
   );
+  const [showFolderCardsWhenRecursive, setShowFolderCardsWhenRecursive] =
+    useState(
+      () => loadFolderBrowseCardPreferences().showWhenRecursive,
+    );
   // Serpent-b8a853: one-time feature hints for hidden UI affordances share a
   // global switch (Settings → Feature hints) and per-key "seen" marks.
   const [featureHintPrefs, setFeatureHintPrefs] = useState(() =>
@@ -1074,6 +1082,20 @@ function AppInner() {
     },
     [],
   );
+  useEffect(() => {
+    const onChanged = (): void => {
+      setShowFolderCardsWhenRecursive(
+        loadFolderBrowseCardPreferences().showWhenRecursive,
+      );
+    };
+    window.addEventListener(FOLDER_BROWSE_CARD_PREFERENCES_CHANGED, onChanged);
+    return () => {
+      window.removeEventListener(
+        FOLDER_BROWSE_CARD_PREFERENCES_CHANGED,
+        onChanged,
+      );
+    };
+  }, []);
   // Hovering a highlighted affordance for >0.5s dismisses that hint
   // permanently (shared "all highlights" rule, Serpent-b8a853).
   const linkedFolderHintShow =
@@ -1532,6 +1554,10 @@ function AppInner() {
   const importProgressRef = useRef(importProgress);
   importProgressRef.current = importProgress;
   const importAwaitingUserDecisionRef = useRef(false);
+  const importInterruptRef = useRef<"abandon" | "stop" | null>(null);
+  const [importInterrupt, setImportInterrupt] = useState<"abandon" | "stop" | null>(
+    null,
+  );
   const [deleteProgress, setDeleteProgress] =
     useState<DeleteProgressEvent | null>(null);
   const [libraryTransferKind, setLibraryTransferKind] = useState<LibraryTransferKind>("import");
@@ -2284,8 +2310,8 @@ function AppInner() {
   const [thumbnailFailures, setThumbnailFailures] = useState<
     Map<string, string>
   >(new Map());
-  const mediaJobsOpenRef = useRef(false);
   const [mediaJobsOpen, setMediaJobsOpen] = useState(false);
+  const mediaJobsOpenRef = useRef(false);
   const [mediaJobs, setMediaJobs] = useState<MediaJobStatus | null>(null);
   const [aiJobs, setAiJobs] = useState<AiJobStatus | null>(null);
   const [pluginJobs, setPluginJobs] = useState<PluginJobStatus | null>(null);
@@ -3118,10 +3144,15 @@ function AppInner() {
         if (!cancelled) setFolderBrowseEntries([]);
         return;
       }
-      // Serpent-7a9e89: 「递归显示子文件夹内容」的浏览语义是把子级资产
-      // 摊平进画布，子文件夹卡片会与摊平结果冲突——递归开启时不再
-      // 查询/展示子文件夹卡片（关闭后由 mutable 依赖恢复原行为）。
-      if (!shouldShowFolderBrowseCards(assetScope, folderRecursive)) {
+      // Recursive browse still shows direct child folder cards unless the
+      // Settings switch turns that off (Serpent-4e9caa).
+      if (
+        !shouldShowFolderBrowseCards(
+          assetScope,
+          folderRecursive,
+          showFolderCardsWhenRecursive,
+        )
+      ) {
         if (!cancelled) setFolderBrowseEntries([]);
         return;
       }
@@ -3156,6 +3187,7 @@ function AppInner() {
     searchValue,
     showIgnoredItems,
     folderRecursive,
+    showFolderCardsWhenRecursive,
     ensureLibraryView,
     isCurrentLibraryView,
     // Serpent-d0nv: a cover candidate's thumbnail.ready bumps this token so
@@ -6461,58 +6493,6 @@ function AppInner() {
     }
   }
 
-  async function reorderCollectionSibling(sourceId: string, targetId: string) {
-    if (!api || !library || sourceId === targetId) return;
-    const targetLibraryId = library.libraryId;
-    const viewSession = ensureLibraryView(targetLibraryId);
-    if (!viewSession) return;
-    const source = collections.find(
-      (collection) => collection.collectionId === sourceId,
-    );
-    const target = collections.find(
-      (collection) => collection.collectionId === targetId,
-    );
-    setDraggedCollectionId(null);
-    if (!source || !target || source.parentId !== target.parentId) {
-      setError(t("toast.collectionReorderSameLevelOnly"));
-      return;
-    }
-    const siblings = [...(collectionTree.get(source.parentId) ?? [])];
-    const sourceIndex = siblings.findIndex(
-      (collection) => collection.collectionId === sourceId,
-    );
-    const targetIndex = siblings.findIndex(
-      (collection) => collection.collectionId === targetId,
-    );
-    const [moved] = siblings.splice(sourceIndex, 1);
-    if (!moved) return;
-    siblings.splice(targetIndex, 0, moved);
-    setUiState("loading");
-    try {
-      const reordered = await api.reorderCollections({
-        libraryId: targetLibraryId,
-        orderedCollectionIds: siblings.map(
-          (collection) => collection.collectionId,
-        ),
-      });
-      if (!reordered.ok) throw new LibraryOperationError(reordered.error);
-      if (!isCurrentLibraryView(viewSession)) return;
-      const result = await api.listCollections({
-        libraryId: targetLibraryId,
-      });
-      if (!result.ok) throw new LibraryOperationError(result.error);
-      if (!isCurrentLibraryView(viewSession)) return;
-      setCollections(result.value);
-      setNotice(t("toast.collectionOrderUpdated"), reordered.value.historyEntryId);
-    } catch (caught) {
-      if (isCurrentLibraryView(viewSession)) {
-        setError(toMessage(caught, t("toast.collectionReorderFailed"), locale));
-      }
-    } finally {
-      if (isCurrentLibraryView(viewSession)) setUiState("ready");
-    }
-  }
-
   async function moveCollectionToRoot(collectionId: string) {
     if (!api || !library) return;
     const source = collections.find(
@@ -6543,6 +6523,45 @@ function AppInner() {
     } catch (caught) {
       if (isCurrentLibraryView(viewSession)) {
         setError(toMessage(caught, t("toast.collectionReorderFailed"), locale));
+      }
+    } finally {
+      if (isCurrentLibraryView(viewSession)) setUiState("ready");
+    }
+  }
+
+  async function nestCollectionUnder(sourceId: string, targetId: string) {
+    if (!api || !library || sourceId === targetId) return;
+    const source = collections.find(
+      (collection) => collection.collectionId === sourceId,
+    );
+    const target = collections.find(
+      (collection) => collection.collectionId === targetId,
+    );
+    if (!source || !target || source.parentId === targetId) return;
+    const targetLibraryId = library.libraryId;
+    const viewSession = ensureLibraryView(targetLibraryId);
+    if (!viewSession) return;
+    setDraggedCollectionId(null);
+    setUiState("loading");
+    try {
+      const moved = await api.updateCollection({
+        libraryId: targetLibraryId,
+        collectionId: sourceId,
+        parentId: targetId,
+        position: (collectionTree.get(targetId) ?? []).length,
+      });
+      if (!moved.ok) throw new LibraryOperationError(moved.error);
+      if (!isCurrentLibraryView(viewSession)) return;
+      const result = await api.listCollections({
+        libraryId: targetLibraryId,
+      });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      if (!isCurrentLibraryView(viewSession)) return;
+      setCollections(result.value);
+      setNotice(t("toast.collectionNested", { name: target.name }), moved.value.historyEntryId);
+    } catch (caught) {
+      if (isCurrentLibraryView(viewSession)) {
+        setError(toMessage(caught, t("toast.collectionNestFailed"), locale));
       }
     } finally {
       if (isCurrentLibraryView(viewSession)) setUiState("ready");
@@ -9657,32 +9676,49 @@ function AppInner() {
     }
   }
 
-  async function cancelImport() {
+  async function cancelImport(mode: "abandon" | "stop" = "abandon") {
     if (!api) return;
     if (conflicts) {
       await abandonConflicts();
+      importInterruptRef.current = null;
+      setImportInterrupt(null);
       setImportProgress(null);
       return;
     }
     if (imageSequenceImportOffer) {
       setImageSequenceImportOffer(null);
       setImageSequenceImportError(null);
+      importInterruptRef.current = null;
+      setImportInterrupt(null);
       setImportProgress(null);
       return;
     }
     if (!importProgress?.importId) {
+      importInterruptRef.current = null;
+      setImportInterrupt(null);
       setImportProgress(null);
       setLibraryTransferKind("import");
       setLibraryTransferName("");
       return;
     }
+    const current = importInterruptRef.current;
+    if (current === "abandon") return;
+    if (current === "stop" && mode === "stop") return;
+    const firstRequest = current === null;
+    importInterruptRef.current = mode;
+    setImportInterrupt(mode);
+    if (firstRequest || mode === "abandon") {
+      setNotice(
+        t(mode === "stop" ? "toast.stoppingImport" : "toast.cancellingImport"),
+      );
+    }
     const importId = importProgress.importId;
     try {
       const result = await api.cancelLibraryImport({
         importId,
+        mode,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
-      setNotice(t("toast.cancellingImport"));
     } catch (caught) {
       const code = caught instanceof LibraryOperationError ? caught.code : "";
       if (
@@ -9693,11 +9729,15 @@ function AppInner() {
           isInFlightRequest: true,
         })
       ) {
+        importInterruptRef.current = null;
+        setImportInterrupt(null);
         setImportProgress(null);
         setLibraryTransferKind("import");
         return;
       }
       setError(toMessage(caught, t("toast.cancelImportFailed"), locale));
+      importInterruptRef.current = null;
+      setImportInterrupt(null);
     }
   }
 
@@ -10107,6 +10147,8 @@ function AppInner() {
         }
         setImportProgress(event);
         if (["complete", "cancelled", "failed"].includes(event.phase)) {
+          importInterruptRef.current = null;
+          setImportInterrupt(null);
           setImportProgress(null);
           setLibraryTransferKind("import");
         }
@@ -10150,10 +10192,14 @@ function AppInner() {
       importSourceFailurePlan,
   );
   importAwaitingUserDecisionRef.current = importAwaitingUserDecision;
-  const blockingImportOverlayVisible = isBlockingImportOverlayVisible(
+  const importOverlayReady = isBlockingImportOverlayVisible(
     uiState,
     importProgress,
     importAwaitingUserDecision,
+  );
+  const blockingImportOverlayVisible = useDelayedVisibility(
+    importOverlayReady,
+    LIBRARY_LOADING_DISPLAY_DELAY_MS,
   );
   const blockingDeleteOverlayVisible =
     isActiveDeleteProgress(deleteProgress) && deleteProgress.totalFiles >= 2;
@@ -10282,7 +10328,7 @@ function AppInner() {
     onDismissFatalAlert: dismissFatalAlert,
     onAbortAiConnectionFailure: onAiConnectionFailureAbort,
     onCancelBlockingImport: () => {
-      void cancelImport();
+      void cancelImport("abandon");
     },
     onCancelBlockingDelete: () => {
       void cancelDiskDelete();
@@ -11379,8 +11425,8 @@ function AppInner() {
   useEffect(() => {
     // Opening the panel tightens the cadence and re-enables event-driven
     // refreshes; closing it drops browsing back to the slow fallback so the
-    mediaJobsOpenRef.current = mediaJobsOpen;
     // canvas does not pay for status queries it never displays.
+    mediaJobsOpenRef.current = mediaJobsOpen;
     jobStatusCoordinatorRef.current?.setPanelOpen(mediaJobsOpen);
     jobStatusCoordinatorRef.current?.setEventDrivenQueries(mediaJobsOpen);
   }, [mediaJobsOpen]);
@@ -11831,8 +11877,12 @@ function AppInner() {
     ) : null}
     {blockingImportOverlayVisible ? (
       <ImportProgressOverlay
+        actionsDisabled={importInterrupt !== null}
         onCancel={() => {
-          void cancelImport();
+          void cancelImport("abandon");
+        }}
+        onStop={() => {
+          void cancelImport("stop");
         }}
         progress={importProgress}
         transferKind={libraryTransferKind}
@@ -12232,8 +12282,8 @@ function AppInner() {
         }
         onInlineSmartCollectionEditCancel={cancelInlineSmartCollectionEdit}
         onOpenContextMenu={openContextMenu}
-        onReorderCollection={(sourceId, targetId) =>
-          void reorderCollectionSibling(sourceId, targetId)
+        onNestCollection={(sourceId, targetId) =>
+          void nestCollectionUnder(sourceId, targetId)
         }
         onMoveCollectionToRoot={(collectionId) =>
           void moveCollectionToRoot(collectionId)

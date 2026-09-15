@@ -81,12 +81,9 @@ const LIBRARY_WRITE_METHODS: ReadonlySet<keyof SerpentLibraryApi> = new Set([
   "relinkBatchPreview",
   "relinkBatchPreviewAtRoot",
   "relinkBatchApply",
-  "cancelRelinkBatch",
   "exportLibrary",
-  "cancelLibraryExport",
   "importLibrary",
   "importLibraryZip",
-  "cancelLibraryImport",
   "importLibraryCopy",
   "importLibraryOpenInPlace",
   "setAiConfig",
@@ -104,13 +101,24 @@ const LIBRARY_WRITE_METHODS: ReadonlySet<keyof SerpentLibraryApi> = new Set([
   "retryArtifact",
   "pauseMediaJobs",
   "resumeMediaJobs",
-  "cancelMediaJobs",
   "retryMediaJobs",
   "clearAiContent",
   "pauseAiJobs",
   "resumeAiJobs",
-  "cancelAiJobs",
   "retryAiJobs",
+]);
+
+/**
+ * These must reach the Worker while a catalog write is still running. Putting
+ * them on the Renderer write FIFO (the same gate as import/export) delayed
+ * cancel until the transfer finished, then flushed one toast per click.
+ */
+const LIBRARY_PREEMPTIVE_METHODS: ReadonlySet<keyof SerpentLibraryApi> = new Set([
+  "cancelLibraryImport",
+  "cancelLibraryExport",
+  "cancelMediaJobs",
+  "cancelAiJobs",
+  "cancelRelinkBatch",
 ]);
 
 export function createTrackedLibraryApi(
@@ -126,11 +134,14 @@ export function createTrackedLibraryApi(
   return new Proxy(proxyTarget, {
     get(target, property, receiver) {
       const value = Reflect.get(target, property, receiver);
-      if (
-        typeof property !== "string" ||
-        !LIBRARY_WRITE_METHODS.has(property as keyof SerpentLibraryApi) ||
-        typeof value !== "function"
-      ) {
+      if (typeof property !== "string" || typeof value !== "function") {
+        return value;
+      }
+      const method = property as keyof SerpentLibraryApi;
+      if (LIBRARY_PREEMPTIVE_METHODS.has(method)) {
+        return value;
+      }
+      if (!LIBRARY_WRITE_METHODS.has(method)) {
         return value;
       }
 

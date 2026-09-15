@@ -21,6 +21,7 @@ const nonBlankString = z.string().min(1).refine((value) => value.trim().length >
 
 const displayNameSchema = nonBlankString.max(255);
 const identifierSchema = nonBlankString.max(255);
+const importCancelModeSchema = z.enum(['abandon', 'stop']);
 /**
  * Linked-folder subtree path. Empty string means the linked folder root
  * (OS trash / disk delete of the whole linked tree).
@@ -742,6 +743,9 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     // reuse its opaque session instead of rebuilding scope SQL and COUNT.
     type: z.literal('browse.session.open.request'),
     libraryId: identifierSchema,
+    /** Correlates one visible navigation through Renderer, Main, and Worker diagnostics. */
+    navigationId: z.string().uuid().optional(),
+    navigationStartedAtEpochMs: z.number().finite().nonnegative().optional(),
     query: searchQuerySchema,
     filters: z.array(filterClauseSchema).max(16).optional(),
     scope: searchScopeSchema.optional(),
@@ -989,6 +993,7 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('library.import.cancel.request'),
     importId: identifierSchema,
+    mode: importCancelModeSchema.optional(),
   }),
   z.strictObject({
     type: z.literal('library.import.copy.request'),
@@ -1188,8 +1193,8 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     type: z.literal('media.list-jobs.request'),
-    summaryOnly: z.boolean().optional(),
     libraryId: identifierSchema,
+    summaryOnly: z.boolean().optional(),
   }),
   z.strictObject({
     type: z.literal('plugin.list-jobs.request'),
@@ -1872,6 +1877,7 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('browse.session.open'),
     libraryId: identifierSchema,
+    navigationId: z.string().uuid().optional(),
     query: searchQuerySchema,
     filters: z.array(filterClauseSchema).max(16).optional(),
     scope: searchScopeSchema.optional(),
@@ -2227,6 +2233,7 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('library.import-cancel'),
     importId: identifierSchema,
+    mode: importCancelModeSchema.optional(),
   }),
   z.strictObject({
     type: z.literal('library.import-validate'),
@@ -2300,8 +2307,8 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     type: z.literal('media.list-jobs'),
-    summaryOnly: z.boolean().optional(),
     libraryId: identifierSchema,
+    summaryOnly: z.boolean().optional(),
   }),
   z.strictObject({
     type: z.literal('media.pause-jobs'),

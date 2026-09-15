@@ -1,6 +1,12 @@
 # Serpent 项目状态
 
-- **2026-09-15 合集根级操作与侧栏排序（`Serpent-01cff7`）**：合集新增入口固定在资源库根级；合集栏空白区复用文件夹根级拖放语义，把嵌套合集移回根级；文件夹与合集共用侧栏排序比较器、控件和偏好编解码，合集使用独立偏好键，字段为名称和资产数量（不提供创建时间）。定向单测 49 passed、Worker 67 passed、类型检查、改动文件 ESLint 和资源库可用性门禁（9 files / 214 passed / 1 skipped）已通过；合集根级定向 Electron 用例 1 passed。完整合集回归文件为 3 passed / 1 failed，失败是超出本范围的既有文件夹磁盘路径断言；Computer Use、packaged、Windows 和人类验收未执行。见[开发日志](development/2026-09-15-collection-root-and-sort-development-log.md)与清单 `COLLECTION-ROOT-001` / `DND-COLLECTION-ROOT-001` / `COLLECTION-SORT-001`。
+- **2026-09-15 合集拖放（`Serpent-01cff7`）**：用户确认 `DND-COLLECTION-ROOT-001` 通过。拖到另一合集行改为嵌套成子合集，不再做同层重排；同层顺序仍用合集排序控件。清单 `DND-COLLECTION-NEST-001` 待复验。合集嵌套行高亮已与文件夹 `is-drop-target` 对齐。
+
+- **2026-09-15 递归文件夹卡片（`Serpent-4e9caa`）**：用户确认 `FOLDER-CARDS-001` 通过。开关从设置 → 常规挪到设置 → 浏览。
+
+- **2026-09-15 导入停止/取消（`Serpent-409cff`）**：用户验收 `IMPORT-UI-007` 不通过——复制导入时取消当时没有效果，导入结束后堆出大量停止/取消提示。根因是 `cancelLibraryImport` 排在导入同一把 Renderer 写入 FIFO 后面。已改为取消抢占发出、checkpoint 使用 `setTimeout(0)`、Worker 消息 fire-and-forget，并且第一次点击只出一条提示、按钮随即不可用。清单待复验。
+
+- **2026-09-15 合集根级操作与侧栏排序（`Serpent-01cff7`）**：合集新增入口固定在资源库根级；合集栏空白区复用文件夹根级拖放语义，把嵌套合集移回根级；文件夹与合集共用侧栏排序比较器、控件和偏好编解码，合集使用独立偏好键，字段为名称和资产数量（不提供创建时间）。定向单测 49 passed、Worker 67 passed、类型检查、改动文件 ESLint 和资源库可用性门禁（9 files / 214 passed / 1 skipped）已通过；合集根级定向 Electron 用例 1 passed。完整合集回归文件为 3 passed / 1 failed，失败是超出本范围的既有文件夹磁盘路径断言；Computer Use、packaged、Windows 和人类验收未执行。见[开发日志](development/2026-09-15-collection-root-and-sort-development-log.md)与清单 `COLLECTION-ROOT-001` / `DND-COLLECTION-ROOT-001` / `COLLECTION-SORT-001` / `DND-COLLECTION-NEST-001`。
 
 - **2026-09-14 同 ID 开库提示（`Serpent-79b839`）**：已打开一份库后再打开同一 `library_id` 的另一条路径（网络位置的不同到达方式，或复制出的副本），不再报 `LIBRARY_CORRUPT`、不走备份抢救、不从最近列表删除。Worker 抛 `LIBRARY_ALREADY_OPEN`；界面标题为「资源库已打开」。取消留在当前库；确认打开刚选择的路径。同一规范化路径再打开仍静默复用。**用户 2026-09-14 验收通过**，清单 `LIB-OPEN-001`。packaged 未验证。见[开发日志](development/2026-09-14-same-library-id-open-prompt-development-log.md)。
 

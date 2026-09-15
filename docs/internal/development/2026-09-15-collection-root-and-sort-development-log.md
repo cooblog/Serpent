@@ -49,6 +49,8 @@
 | `git diff --check` | 通过 |
 | 后续调整定向单测 / 类型检查 / ESLint | 3 files / 49 tests 通过；`npm run typecheck` 通过；定向 ESLint 通过 |
 | 后续调整合集根级 Electron E2E | 1 test passed；确认合集排序面板没有「按时间」，名称与资产数量选项可用 |
+| 2026-09-15 行投放改为嵌套 | 侧栏/协议/overlay 定向单测 5 files / 154 passed；Worker `organization` + `asset-import-progress` 2 files / 71 passed；`npm run typecheck` 通过；改动文件 ESLint 通过；`npm run test:library-availability` 9 files / 216 passed / 1 skipped |
+| 2026-09-15 合集嵌套行高亮 | `tests/unit/navigation-sidebar.test.ts` 随导入取消定向单测 3 files / 39 passed；`npm run typecheck` 通过；改动文件 ESLint 通过；`npm run test:library-availability` 9 files / 216 passed / 1 skipped |
 
 ## 当前限制
 
@@ -57,8 +59,30 @@
 - 完整合集回归文件仍包含一个超出本次范围的文件夹磁盘路径失败；已按套件级和需求级拆分记录，未把它写成全套通过。
 - 双轴复审（Composer 2.5）确认上次 E2E 辅助函数与资源库可用性证据两个阻断均已关闭，当前未发现新的 Standards / Spec 实现阻断；实现者不替代独立审查和用户验收。
 
+## 2026-09-15 空白拖放验收不通过后的修复
+
+用户复验：合集 A 为顶层、B 为 A 的子合集时，把 B 拖到合集栏空白处（含行左侧缩进槽）后 B 没有变成顶层合集。
+
+根因：每个合集节点包在 `.collection-drop-target` 里，该包装覆盖整行含缩进槽。`onDrop` 无条件 `preventDefault` + `stopPropagation`，有 `draggedCollectionId` 就走同层 `onReorderCollection`。缩进槽投放被内层抢走，列表上的 `collectionListBlankHandlers` 收不到。既有单测把 drop 直接打在 `.nav-collection-list` 上，绕过内层，所以自动化绿、真机失败。
+
+修复：包装层若命中空白（`isFolderListBlankTarget`），不处理、不拦截，让事件冒泡到列表，调用 `onMoveCollectionToRoot`。行按钮上的投放仍走同层重排。补测从子合集 `.nav-disclosure-spacer` 派发 drop，以及拖到合集行仍走 reorder。
+
+后续命令：侧栏/画布/导入 overlay 定向单测 4 files / 48 passed；链接导入 progress Worker 2 passed；`npm run typecheck` 通过；改动文件 ESLint 通过；`npm run test:library-availability` 9 files / 214 passed / 1 skipped。
+
+工单 `Serpent-01cff7` 已重开；清单 `DND-COLLECTION-ROOT-001` 改为待复验，不得标人类通过。
+
+## 2026-09-15 空白拖放通过后：行投放改为嵌套
+
+用户确认 `DND-COLLECTION-ROOT-001` 通过，并指出拖到另一合集行不应是同层重排，而应成为子合集。
+
+行投放改为 `onNestCollection` → `updateCollection({ parentId: targetId })`。自身、当前父级、后代目标为 no-op。同层顺序仍用合集标题旁的排序控件。清单新增 `DND-COLLECTION-NEST-001`。
+
 ## 后续
 
 1. 处理或单独跟踪合集回归文件中的既有文件夹磁盘路径失败，不将其归因于本次合集实现。
-2. 由用户完成人类 UI 验收；Computer Use、packaged 和 Windows 证据仍待补。
-3. 用户完成验收后再关闭工单 `Serpent-01cff7`。
+2. `DND-COLLECTION-NEST-001` 待用户复验；Computer Use、packaged 和 Windows 证据仍待补。
+3. 合集拖放相关条目全部通过后再关闭工单 `Serpent-01cff7`。
+
+## 2026-09-15 合集行高亮与文件夹对齐
+
+用户反馈：合集拖到另一合集时没有文件夹那种行高亮。合集行此前只对资产/外部文件设置 `is-drop-target`，嵌套拖入只 `preventDefault`。现已在 dragenter/dragover 上设置同一 `assetDropTarget`，并从空白区根级高亮让出。自身、当前父级、后代仍不高亮。清单 `DND-COLLECTION-NEST-001` 保持待人类验收。

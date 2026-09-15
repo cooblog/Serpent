@@ -906,7 +906,7 @@ export interface NavigationSidebarProps {
   ) => void;
 
   // --- Collection drag/drop ---
-  onReorderCollection: (sourceId: string, targetId: string) => void;
+  onNestCollection: (sourceId: string, targetId: string) => void;
   onMoveCollectionToRoot: (collectionId: string) => void;
   onImportDroppedFiles: (
     files: File[],
@@ -1001,7 +1001,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     onInlineSmartCollectionEditCommit,
     onInlineSmartCollectionEditCancel,
     onOpenContextMenu,
-    onReorderCollection,
+    onNestCollection,
     onMoveCollectionToRoot,
     onImportDroppedFiles,
     onCopyManagedToLinked,
@@ -1476,10 +1476,41 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     return dragged?.parentId !== null && dragged !== undefined;
   }
 
+  function isCollectionAncestor(ancestorId: string, nodeId: string): boolean {
+    const byId = new Map(
+      collections.map((collection) => [collection.collectionId, collection]),
+    );
+    const seen = new Set<string>();
+    let cursor = byId.get(nodeId);
+    while (cursor?.parentId) {
+      if (cursor.parentId === ancestorId) return true;
+      if (seen.has(cursor.parentId)) break;
+      seen.add(cursor.parentId);
+      cursor = byId.get(cursor.parentId);
+    }
+    return false;
+  }
+
+  function acceptsCollectionNestDrop(targetId: string): boolean {
+    if (!draggedCollectionId || draggedCollectionId === targetId) return false;
+    if (isCollectionAncestor(draggedCollectionId, targetId)) return false;
+    const dragged = collections.find(
+      (collection) => collection.collectionId === draggedCollectionId,
+    );
+    return Boolean(dragged && dragged.parentId !== targetId);
+  }
+
+  function highlightCollectionNestTarget(collectionId: string): boolean {
+    if (!acceptsCollectionNestDrop(collectionId)) return false;
+    setAssetDropTarget(`collection:${collectionId}`);
+    setCollectionListDropActive(false);
+    return true;
+  }
+
   /**
    * Collections mirror the folder section's blank-area root target. A drop
    * outside a collection row reparents the dragged collection to the root;
-   * row drops keep their existing same-level reorder behavior.
+   * dropping onto another collection row nests it as a child.
    */
   function collectionListBlankHandlers() {
     return {
@@ -1874,6 +1905,10 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
         onDragEnter={(event) => {
           if (supportsAssetDropTransfer(event.dataTransfer)) {
             setAssetDropTarget(`collection:${c.collectionId}`);
+            return;
+          }
+          if (draggedCollectionId && !isFolderListBlankTarget(event)) {
+            highlightCollectionNestTarget(c.collectionId);
           }
         }}
         onDragLeave={(event) => {
@@ -1895,7 +1930,12 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
             return;
           }
           if (draggedCollectionId) {
+            // Gutter / blank hits belong to the list root-drop target; do not
+            // claim them as a nest (Serpent-01cff7 follow-up).
+            if (isFolderListBlankTarget(event)) return;
+            if (!highlightCollectionNestTarget(c.collectionId)) return;
             event.preventDefault();
+            event.dataTransfer.dropEffect = "move";
           }
         }}
         onDragStart={(event) => {
@@ -1904,6 +1944,9 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           event.dataTransfer.effectAllowed = "move";
         }}
         onDrop={(event) => {
+          if (draggedCollectionId && isFolderListBlankTarget(event)) {
+            return;
+          }
           event.preventDefault();
           event.stopPropagation();
           setAssetDropTarget(null);
@@ -1922,7 +1965,11 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
             return;
           }
           if (draggedCollectionId) {
-            void onReorderCollection(draggedCollectionId, c.collectionId);
+            if (!acceptsCollectionNestDrop(c.collectionId)) return;
+            if (persistedCollapsedCollectionIds.has(c.collectionId)) {
+              toggleCollectionCollapsed(c.collectionId);
+            }
+            void onNestCollection(draggedCollectionId, c.collectionId);
           } else if (
             event.dataTransfer.files.length > 0 &&
             onResolveManagedAssetDrop
@@ -2002,6 +2049,11 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
               if (supportsAssetDropTransfer(event.dataTransfer)) {
                 event.stopPropagation();
                 setAssetDropTarget(`collection:${c.collectionId}`);
+                return;
+              }
+              if (draggedCollectionId) {
+                event.stopPropagation();
+                highlightCollectionNestTarget(c.collectionId);
               }
             }}
             onDragLeave={(event) => {
@@ -2025,6 +2077,12 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
                 // owns the event so the parent collection cannot steal the
                 // highlight, therefore it must also accept the drop here.
                 onExternalDragOver(event);
+              } else if (draggedCollectionId) {
+                if (isFolderListBlankTarget(event)) return;
+                if (!highlightCollectionNestTarget(c.collectionId)) return;
+                event.stopPropagation();
+                event.preventDefault();
+                event.dataTransfer.dropEffect = "move";
               }
             }}
             onDrop={(event) => {

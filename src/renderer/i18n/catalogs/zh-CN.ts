@@ -920,7 +920,7 @@ export const zhCN = {
       cover: "封面资产",
       save: "保存详情",
       currentCoverOffPage: "当前封面（不在本页）",
-      help: "可从当前页面资产中选择封面；合集树支持同级拖拽排序。"
+      help: "可从当前页面资产中选择封面。把合集拖到另一个合集上会成为子合集，拖到空白处会回到顶层。"
     },
     linkedRules: {
       enableRule: "启用规则 {index}",
@@ -1373,6 +1373,9 @@ export const zhCN = {
     taskCompletionSoundHint: "仅当导入、导出等操作实际耗时超过 1 分钟时，在完成或失败后播放轻提示音。关闭后不再播放。",
     featureHints: "功能提示",
     featureHintsHint: "在遇到隐藏用法（例如展开文件夹的子文件夹）时显示一次性提示。关闭后不再出现任何提示。",
+    folderCardsWhenRecursive: "递归展开时显示子文件夹",
+    folderCardsWhenRecursiveHint:
+      "打开「递归显示子文件夹内容」时，画布开头仍显示当前文件夹下的子文件夹。关闭后只显示文件。",
     languageHint: "控制界面文案语言，立即生效。",
     imageSequenceAutoDetect: "导入时自动检测序列帧",
     imageSequenceAutoDetectHint:
@@ -1774,6 +1777,9 @@ export const zhCN = {
     validatingBillfishLibrary: "正在验证 Billfish 资源库…",
     cancelExport: "取消导出",
     cancelImport: "取消导入",
+    cancelImportHint: "这次导入全部撤销，已经处理的文件也会从资源库去掉。",
+    stopImport: "停止导入",
+    stopImportHint: "已处理的文件留在资源库，尚未处理的不再导入。",
     cancelDiskDelete: "取消删除",
     cancelOpen: "取消打开",
     loadingMore: "继续加载资产…"
@@ -1858,6 +1864,8 @@ export const zhCN = {
     collectionDetailsUpdated: "合集详情已更新。",
     collectionReorderSameLevelOnly: "当前版本仅支持在同一层级内拖拽排序合集。",
     collectionOrderUpdated: "合集顺序已更新。",
+    collectionNested: "合集已移入「{name}」。",
+    collectionNestFailed: "无法将合集移入该合集。",
     collectionReorderFailed: "合集排序失败。",
     collectionMemberDirectOnly: "只能对当前合集的直接成员排序。",
     collectionMemberOrderUpdated: "合集成员顺序已更新。",
@@ -2005,6 +2013,7 @@ export const zhCN = {
     diskDeleteCancelled: "删除已取消。",
     cancelExportFailed: "无法取消导出。",
     cancellingImport: "正在取消导入并清理本次导入内容…",
+    stoppingImport: "正在停止导入，已处理的文件会保留…",
     cancelImportFailed: "无法取消导入。",
     importValidateFailed: "导入验证失败。",
     importCancelled: "导入已取消。",

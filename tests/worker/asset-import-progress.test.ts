@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -69,5 +69,93 @@ describe('managed asset import progress', () => {
 
     service.closeAll();
     cancelling.closeAll();
+  });
+
+  it('stop keeps already staged files and skips the rest', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'serpent-import-stop-'));
+    roots.push(root);
+    const sources = Array.from({ length: 40 }, (_, index) => {
+      const source = path.join(root, `file-${index}.txt`);
+      writeFileSync(source, `payload-${index}`);
+      return source;
+    });
+    let stopArmed = false;
+    const service = new LibraryService({
+      onProgress: (event) => {
+        if (event.type !== 'import.progress') return;
+        if (event.phase !== 'copy' || !event.importId || stopArmed) return;
+        stopArmed = true;
+        const importId = event.importId;
+        let remaining = 8;
+        const waitThenStop = (): void => {
+          remaining -= 1;
+          if (remaining > 0) {
+            setImmediate(waitThenStop);
+            return;
+          }
+          service.cancelImport(importId, 'stop');
+        };
+        setImmediate(waitThenStop);
+      },
+    });
+    const library = service.createLibrary({
+      displayName: 'Import Stop',
+      selectedParentPath: root,
+    });
+
+    const result = await service.prepareOrExecuteImportCancellable({
+      libraryId: library.libraryId,
+      sourceKind: 'files',
+      sourcePaths: sources,
+    });
+    expect(result).toMatchObject({
+      importedCount: expect.any(Number),
+    });
+    const imported = 'importedCount' in result ? result.importedCount : 0;
+    expect(imported).toBeGreaterThan(0);
+    expect(imported).toBeLessThan(40);
+    expect(
+      service.listAssets({ libraryId: library.libraryId, recursive: true }).length,
+    ).toBe(imported);
+
+    service.closeAll();
+  });
+});
+
+describe('linked folder import progress', () => {
+  it('emits non-cancelable validate and copy progress then complete', () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'serpent-linked-import-progress-'));
+    roots.push(root);
+    const sourceRoot = path.join(root, 'source');
+    mkdirSync(sourceRoot);
+    writeFileSync(path.join(sourceRoot, 'a.txt'), 'aaa');
+    writeFileSync(path.join(sourceRoot, 'b.txt'), 'bbbb');
+    mkdirSync(path.join(sourceRoot, 'sub'));
+    writeFileSync(path.join(sourceRoot, 'sub', 'c.txt'), 'ccccc');
+
+    const events: ImportProgressEvent[] = [];
+    const service = new LibraryService({
+      onProgress: (event) => {
+        if (event.type === 'import.progress') events.push(event);
+      },
+    });
+    const library = service.createLibrary({
+      displayName: 'Linked Import Progress',
+      selectedParentPath: root,
+    });
+
+    const linked = service.importFolderAsLinked({
+      libraryId: library.libraryId,
+      sourceRootPath: sourceRoot,
+    });
+
+    expect(linked.assetCount).toBe(3);
+    expect(events.some((event) => event.phase === 'validate')).toBe(true);
+    expect(events.some((event) => event.phase === 'copy' && event.totalFiles === 3)).toBe(true);
+    expect(events.at(-1)?.phase).toBe('complete');
+    expect(events.at(-1)?.filesProcessed).toBe(3);
+    expect(events.every((event) => event.cancelable === false && event.importId.length > 0)).toBe(true);
+
+    service.closeAll();
   });
 });

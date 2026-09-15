@@ -31,6 +31,15 @@ describe("import overlay copy", () => {
     expect(isBlockingImportOverlayVisible("ready", null)).toBe(false);
   });
 
+  it("treats linked-folder validate events as overlay-ready work", () => {
+    expect(
+      isBlockingImportOverlayVisible(
+        "importing",
+        progress({ phase: "validate", cancelable: false, totalFiles: 0 }),
+      ),
+    ).toBe(true);
+  });
+
   it("keeps the overlay up while copy/validate events are in flight", () => {
     expect(isBlockingImportOverlayVisible("ready", progress())).toBe(true);
     expect(

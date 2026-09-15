@@ -25,8 +25,9 @@
 | 需求 | 实现位置 | 自动化测试 | 人工/平台证据 |
 | --- | --- | --- | --- |
 | 合集分节新增固定根级 | `src/renderer/NavigationSidebar.tsx` 合集 section action | `tests/unit/navigation-sidebar.test.ts`；合集定向 Electron E2E | Computer Use、Windows、packaged 未执行；待人类验收 |
-| 嵌套合集空白区拖回根级 | `src/renderer/NavigationSidebar.tsx`、`src/renderer/App.tsx`、`src/preload/index.ts`、`src/main/index.ts` | `tests/unit/navigation-sidebar.test.ts`、`tests/worker/organization.test.ts`；合集定向 Electron E2E | 真实 Electron 开发态定向通过；视觉人工验收待执行 |
-| 合集树复用文件夹排序 | `src/renderer/folder-sort-preferences.ts`、`src/renderer/unified-directory-nav.ts`、`src/renderer/NavigationSidebar.tsx` | `tests/unit/folder-sort-preferences.test.ts`、`tests/unit/unified-directory-nav.test.ts`；合集定向 Electron E2E | 合集提供名称、资产数量排序，不提供创建时间排序；完整重启后的偏好恢复未自动化验证，待人类验收 |
+| 嵌套合集空白区拖回根级 | `src/renderer/NavigationSidebar.tsx`、`src/renderer/App.tsx`、`src/preload/index.ts`、`src/main/index.ts` | `tests/unit/navigation-sidebar.test.ts`（含缩进槽投放）、`tests/worker/organization.test.ts`；合集定向 Electron E2E | 2026-09-15 第一轮用户验收不通过后已修包装层截获；同日用户确认 `DND-COLLECTION-ROOT-001` 通过 |
+| 拖到另一合集成为子合集 | `src/renderer/NavigationSidebar.tsx` `onNestCollection`、`src/renderer/App.tsx` `nestCollectionUnder`；行高亮 `is-drop-target` | `tests/unit/navigation-sidebar.test.ts`、`tests/worker/organization.test.ts` | Computer Use、Windows、packaged 未执行；待人类验收 `DND-COLLECTION-NEST-001`。用户反馈合集行没有文件夹那种投放高亮后已对齐。 |
+| 合集树复用文件夹排序 | `src/renderer/folder-sort-preferences.ts`、`src/renderer/unified-directory-nav.ts`、`src/renderer/NavigationSidebar.tsx` | `tests/unit/folder-sort-preferences.test.ts`、`tests/unit/unified-directory-nav.test.ts`；合集定向 Electron E2E | 合集提供名称、资产数量排序，不提供创建时间排序；完整重启后的偏好恢复未自动化验证；用户已确认 `COLLECTION-SORT-001` 通过 |
 
 ## 未执行与风险
 

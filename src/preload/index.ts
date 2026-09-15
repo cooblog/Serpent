@@ -1,3 +1,12 @@
+// A sandboxed preload cannot load `node:crypto` — importing it here makes the
+// whole preload fail (`Unable to load preload script`), which leaves the
+// renderer without the `serpent` bridge. Web Crypto is available in the
+// preload's renderer context and produces the same RFC 4122 v4 shape the
+// navigation-id schema requires.
+function createNavigationId(): string {
+  return globalThis.crypto.randomUUID();
+}
+
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
 import type { AiJobStatus, LibraryApiResult, LinkedAssetDeleteResult, MediaJobStatus, PluginJobStatus, PreviewResolution, RelinkAssetResult, SerpentLibraryApi, SyncCapabilities, SyncReport } from '../shared/library-api';
@@ -241,6 +250,20 @@ async function request(command: RendererRequest): Promise<RendererResult> {
     requestCounts.set(command.type, (requestCounts.get(command.type) ?? 0) + 1);
   }
   return parseRendererResult(await ipcRenderer.invoke(LIBRARY_REQUEST_CHANNEL, command));
+}
+
+function emitE2eBrowseSessionResponse(
+  navigationId: string,
+  ok: boolean,
+): void {
+  if (!e2eEnabled || process.env.SERPENT_E2E_LIBRARY_TRACE !== '1') return;
+  window.dispatchEvent(new CustomEvent('serpent:e2e-browse-session-response', {
+    detail: JSON.stringify({
+      navigationId,
+      responseAtEpochMs: Date.now(),
+      ok,
+    }),
+  }));
 }
 
 function failure(result: Extract<RendererResult, { ok: false }>): LibraryApiResult<never> {
@@ -1354,6 +1377,8 @@ const library: SerpentLibraryApi = Object.freeze({
   },
 
   async openBrowseSession({ libraryId, query, filters, scope, sort, smartCollectionId, limit, showIgnored }: { libraryId: string; query: SearchQuery | null; filters?: FilterClause[]; scope?: SearchScope; sort?: { field: 'name' | 'modified_at' | 'created_at' | 'byte_size' | 'long_edge' | 'duration' | 'rating' | 'color' | 'author'; order: 'asc' | 'desc' }; smartCollectionId?: string; limit?: number; showIgnored?: boolean }) {
+    const navigationId = createNavigationId();
+    const navigationStartedAtEpochMs = Date.now();
     const delayedBrowse = e2eBrowseSessionDelay;
     const shouldDelay = delayedBrowse && (
       delayedBrowse.target.folderId !== undefined
@@ -1365,7 +1390,20 @@ const library: SerpentLibraryApi = Object.freeze({
       e2eBrowseSessionDelay = null;
       await new Promise((resolve) => setTimeout(resolve, delayedBrowse.delayMs));
     }
-    const result = await request({ type: 'browse.session.open.request', libraryId, query, filters, scope, sort, smartCollectionId, limit, showIgnored });
+    const result = await request({
+      type: 'browse.session.open.request',
+      libraryId,
+      navigationId,
+      navigationStartedAtEpochMs,
+      query,
+      filters,
+      scope,
+      sort,
+      smartCollectionId,
+      limit,
+      showIgnored,
+    });
+    emitE2eBrowseSessionResponse(navigationId, result.ok);
     if (!result.ok) return failure(result);
     if (result.type !== 'browse.session.opened') throw new Error('Unexpected open-browse-session response.');
     return {
@@ -1803,8 +1841,12 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true as const, value: result };
   },
 
-  async cancelLibraryImport({ importId }: { importId: string }) {
-    const result = await request({ type: 'library.import.cancel.request', importId });
+  async cancelLibraryImport({ importId, mode }: { importId: string; mode?: 'abandon' | 'stop' }) {
+    const result = await request({
+      type: 'library.import.cancel.request',
+      importId,
+      ...(mode === undefined ? {} : { mode }),
+    });
     if (!result.ok) return failure(result);
     if (result.type !== 'library.closed') throw new Error('Unexpected import-cancel response.');
     return { ok: true as const, value: { importId } };

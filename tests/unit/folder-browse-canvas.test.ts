@@ -36,17 +36,23 @@ describe("resolveBrowseCanvasBodyLayout (CANVAS-022 / Serpent-an1)", () => {
 });
 
 describe("shouldShowFolderBrowseCards (Serpent-7a9e89)", () => {
-  it("hides child folder cards when recursive browse is on for a folder scope", () => {
-    expect(shouldShowFolderBrowseCards("folder-1", true)).toBe(false);
+  it("keeps child folder cards by default when recursive browse is on", () => {
+    expect(shouldShowFolderBrowseCards("folder-1", true)).toBe(true);
+    expect(shouldShowFolderBrowseCards("folder-1", true, true)).toBe(true);
+  });
+
+  it("hides child folder cards when the setting turns them off", () => {
+    expect(shouldShowFolderBrowseCards("folder-1", true, false)).toBe(false);
   });
 
   it("keeps folder cards when recursive browse is off", () => {
     expect(shouldShowFolderBrowseCards("folder-1", false)).toBe(true);
+    expect(shouldShowFolderBrowseCards("folder-1", false, false)).toBe(true);
   });
 
   it("never hides folder cards for all/root scopes", () => {
-    expect(shouldShowFolderBrowseCards("all", true)).toBe(true);
-    expect(shouldShowFolderBrowseCards("root", true)).toBe(true);
+    expect(shouldShowFolderBrowseCards("all", true, false)).toBe(true);
+    expect(shouldShowFolderBrowseCards("root", true, false)).toBe(true);
   });
 
   it("is scoped to a concrete folder id only (recursive is never set outside it)", () => {

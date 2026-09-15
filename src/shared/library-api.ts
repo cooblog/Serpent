@@ -581,7 +581,7 @@ export interface SerpentLibraryApi {
   cancelLibraryExport(input: { exportId: string }): Promise<LibraryApiResult<{ exportId: string }>>;
   importLibrary(): Promise<LibraryApiResult<ImportValidatedResult>>;
   importLibraryZip(): Promise<LibraryApiResult<ImportCompletedResult>>;
-  cancelLibraryImport(input: { importId: string }): Promise<LibraryApiResult<{ importId: string }>>;
+  cancelLibraryImport(input: { importId: string; mode?: "abandon" | "stop" }): Promise<LibraryApiResult<{ importId: string }>>;
   importLibraryCopy(input: { importId: string }): Promise<LibraryApiResult<ImportCompletedResult>>;
   importLibraryOpenInPlace(input: { importId: string }): Promise<LibraryApiResult<ImportCompletedResult>>;
   onProgress(listener: (event: ExportProgressEvent | ImportProgressEvent | SyncProgressEvent | DeleteProgressEvent) => void): () => void;
