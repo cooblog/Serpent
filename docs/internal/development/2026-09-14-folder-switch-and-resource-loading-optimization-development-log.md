@@ -436,3 +436,22 @@ preview-cache: 281 miss / 281 store，其中 15:29:37 → 15:30:19 有 42 秒完
 而 `MIGRATIONS` 已有 v49（`LINKED_FOLDER_PARENT_SCHEMA_SQL`，链接文件夹父级，2026-09-12 落地时未同步）。
 逐项核对 v1–48 的 checksum 与快照完全一致（说明已发布迁移的 SQL 没有被改动），只追加 v49 一项；
 `migration-checksum-snapshot` + `migration-discipline` 共 9 passed。迁移本身未改动。
+
+### 14.6 第二次作废：并行轨道执行 `npm start` 杀掉了整轮门禁
+
+加上防睡眠后重跑（11:46:17 起），`lint` / `typecheck` / `extension:verify` / `test:library-availability`
+全部通过，`test` 段也在持续通过（日志里成片 `✓`），但整轮在 11:54:46 以 `exit=-1`（Windows 进程被强杀）
+终止，`test` 段的通过证据随之作废。
+
+时间线对得上：另一条并行轨道 11:54:21 执行 `npm start` → `scripts/dev-start.mjs` 调
+`killStaleSerpentDevProcesses()`，其 Windows 分支是 `Get-Process -Name electron | Stop-Process -Force`；
+对方 electron 于 11:54:43 启动，本轮的 vitest 主进程/worker 随即被一起杀掉（11:54:46），
+日志留下成批 `[vitest-pool]: Timeout terminating forks worker`。
+
+根因：本项目 `npm run test` 走 `scripts/run-vitest-with-electron.mjs`，**测试运行本身就是 electron.exe**，
+而清理函数按进程名全机匹配。已开 `Serpent-9e21f8`（P1）要求 Windows 分支改为按本仓库可执行文件路径匹配。
+
+同时记住：共享工作树里另有轨道在改 `src/`，全量门禁跑的是**含他人未提交改动的工作树**，
+不是单一提交；报结论时必须写明这一点，必要时只作定向复现。
+
+本轮已取得的定向证据（均在清醒宿主上单跑，见 §14.3）仍然有效，因为它们不受该强杀影响。
