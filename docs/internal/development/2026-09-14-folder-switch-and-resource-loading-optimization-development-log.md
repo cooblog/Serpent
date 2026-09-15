@@ -535,3 +535,65 @@ scope 未变、可见卡数 20→20，而同轮另两次跳转 270 ms / 1,105 ms
 - `npx vitest run tests/unit/perf-bench-helpers.test.ts`：6 passed；
 - 真实库 profile（最终一轮）：`1 passed (46.8s)`、`timeouts {}`、`chainMatched 4 / misses 0`、
   `jumpMeasured 3`（另 1 次 `no-scroll` skip），切换与跳转均无 `no-commit`（见 §15.2）。
+
+## 16. P0C 实施：媒体任务状态摘要的 O(1) 读（`Serpent-e97c00`）
+
+计划 §3.3 指认的第一热点是任务状态读取：`GROUP BY status` 要遍历整个媒体任务历史
+（真实 4.3 万资产库、约 8.9 万条历史任务，中位约 110 ms），而任务面板与常驻状态栏会反复读它。
+并行轨道已提交该查询的排序索引（v50 `jobs_library_created_desc`，计划里已证明列表页 166.6 → 1.0 ms），
+但**计数仍是每次全表扫描**：读路径上 20 次读取要花 2.1 秒 Worker 时间。
+
+### 16.1 做法：零钩子、按既有序列失效
+
+摘要缓存不去每个任务写路径挂钩子，而是复用既有触发器维护的两个持久序号：
+
+- `jobs` 的 insert/update/delete → `library_change_on_jobs_*` → bump `library_change_sequence`；
+- 忽略规则变化 → `browse_change_on_*_ignored_paths_*` → bump `browse_change_sequence`
+  （计数带可见性过滤，忽略规则必须能让摘要失效）。
+
+两者组成有效性 token，各读一行，并且**从读连接直读、不抛错**：`listMediaJobs` 是读路径，
+不能因为序号表缺失或异常把面板读取变成 `LIBRARY_CORRUPT`（取不到 token 就本次不进缓存，退化为原行为）。
+
+新增 `src/worker/media-job-status-summary.ts`（`read` / `store` / `invalidate` / `stats`），
+陈旧窗口 3 s——**必须大于面板约 1 Hz 的轮询间隔**，否则繁忙队列下每次读取都会过期重算，缓存等于没有。
+诊断行 `media.job-summary` 输出 rebuild / hit / stale-hit 与覆盖任务数，进入 benchmark 报告；
+`SERPENT_JOB_SUMMARY_CACHE=0` 可回到旧行为，用于同树 A/B。
+
+### 16.2 同树 A/B（真实 4.3 万资产库，仅开关不同）
+
+各 20 次 `listMediaJobs({summaryOnly:true})`，200 ms 间隔模拟面板轮询；两轮都无 timeout：
+
+| 指标 | 关缓存 | 开缓存 |
+| --- | ---: | ---: |
+| 读取 p50 | 98.2 ms | **3.1 ms** |
+| mean / p95 / max | 103.9 / 122.3 / 152.7 ms | **9.3 / 4.2 / 124.5 ms** |
+| 20 次读取 Worker 总耗时 | 2,078.3 ms | **186 ms（−91%）** |
+| 摘要重算次数 | 25 | **2（命中 23）** |
+| 正确性 oracle | 相等 | 相等 |
+
+正确性 oracle：同一次运行里再读一次**强制走 SQL 的完整路径**，两者六个计数必须一致；但队列活跃时
+两次读取之间计数本就会变，所以只在「两次读取之间队列状态未变」（用队列快照比对判定）时才断言——
+第一版无条件断言把关缓存的一轮判成了 false，属于判据问题，已修正留档。
+
+### 16.3 测试
+
+- `tests/unit/media-job-status-summary.test.ts`（4）：命中/有界陈旧/过期重算、按库隔离与显式失效、
+  分组行折算与未知状态不混入。
+- `tests/worker/media-job-summary-cache.test.ts`（2）：重复读取与 SQL 路径一致；写入一个任务后摘要
+  在陈旧窗口内收敛（证明序列失效真的生效，而不是靠钩子）。
+
+### 16.4 未完成边界（不得视为 §3.3 全部完成）
+
+- 仍是「序号校验 + 有界陈旧（≤3 s）」，不是事务内 O(1) 增量；
+- 最近列表未做 cursor 分页（面板打开仍取 500 行，只是已有排序索引）；
+- 忽略规则变化后的批量修正未做（当前靠 token 变化触发下一次重算）；
+- 面板**打开**场景的独立 profile 未跑（本轮用 bridge 直读 20 次模拟）；
+- 主工作树未复跑：本节的 A/B 在主工作树完成，但改动尚未提交（见 §16.5）。
+
+### 16.5 提交阻塞（repo 状态事故）
+
+本轨改动必须落在 `src/worker/library-service.ts`，而该文件在 dev HEAD 上被截断：HEAD blob
+46,538 行 / 1,848,590 字节 / **662 处语法错误**，工作树同名文件 46,757 行 / 1,903,421 字节 / **0 处**——
+少约 55 KB（约 219 行），不是两行笔误。同时该文件在工作树里还带着**另一条轨道的未提交改动**
+（334 增 / 119 删、93 个 hunk）。已开 `Serpent-74aaed`（P1）。在作者轨道提交完好版本之前，
+本轨先落地与之无关的部分（新模块、测试、harness、本日志），接线随后补。

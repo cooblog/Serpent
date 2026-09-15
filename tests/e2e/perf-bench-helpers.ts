@@ -523,6 +523,18 @@ export type NavigationSummary = {
 export type BenchLogSummary = {
   commands: CommandAggregate[];
   navigations: NavigationSummary;
+  /**
+   * Serpent-e97c00: how often the media job status summary was served from
+   * cache versus recomputed. A browsing journey with the task panel closed
+   * should show hits/stale-hits and very few rebuilds.
+   */
+  jobSummary: {
+    hits: number;
+    staleHits: number;
+    misses: number;
+    rebuilds: number;
+    lastTotalJobs: number;
+  };
   unmatchedRoundTripCount: number;
   lagEvents: { count: number; maxDriftMs: number; activities: Record<string, number> };
   mainLagEvents: { count: number; maxDriftMs: number };
@@ -633,6 +645,28 @@ function stableDiagnosticLabel(value: unknown): string {
     .replace(/:[0-9a-f]{8}-[0-9a-f-]{27,}/gi, "")
     .replace(/[^a-zA-Z0-9._:-]/g, "")
     .slice(0, 96) || "unknown";
+}
+
+/**
+ * Count how the media job status summary was served: cache hit, bounded stale
+ * hit (validated token changed but inside the stale window) or a rebuild that
+ * re-scanned the job history. Serpent-e97c00's acceptance needs this because
+ * the latency of `media.list-jobs` only proves the symptom, not the algorithm.
+ */
+function summarizeJobSummary(lines: Array<Record<string, unknown>>): BenchLogSummary["jobSummary"] {
+  const summary = { hits: 0, staleHits: 0, misses: 0, rebuilds: 0, lastTotalJobs: 0 };
+  for (const line of lines) {
+    if (line.scope !== "media.job-summary") continue;
+    const context = (line.context ?? {}) as Record<string, unknown>;
+    const source = String(context.source ?? "");
+    if (source === "hit") summary.hits += 1;
+    else if (source === "stale-hit") summary.staleHits += 1;
+    else if (source === "miss") summary.misses += 1;
+    else if (source === "rebuild") summary.rebuilds += 1;
+    const totalJobs = finiteNumber(context.totalJobs);
+    if (totalJobs !== null) summary.lastTotalJobs = totalJobs;
+  }
+  return summary;
 }
 
 function epochMsOf(line: Record<string, unknown>): number | null {
@@ -883,6 +917,7 @@ export function summarizeBenchLog(logText: string): BenchLogSummary {
   return {
     commands,
     navigations: summarizeNavigations(lines),
+    jobSummary: summarizeJobSummary(lines),
     unmatchedRoundTripCount: [...roundTripByRequestId.keys()]
       .filter((requestId) => !commandByRequestId.has(requestId)).length,
     lagEvents: { count: lagEvents.length, maxDriftMs, activities: lagActivities },

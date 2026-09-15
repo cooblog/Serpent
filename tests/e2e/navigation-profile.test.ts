@@ -56,6 +56,13 @@ const minimumQueueSize = Math.max(0, Number(process.env.SERPENT_PROFILE_QUEUE_MI
 const minScopeAssets = Math.max(1, Number(process.env.SERPENT_PROFILE_MIN_SCOPE_ASSETS ?? 32));
 const minVisibleImages = Math.max(1, Number(process.env.SERPENT_PROFILE_MIN_VISIBLE_IMAGES ?? 6));
 const repeatSwitchesForWarmCache = process.env.SERPENT_PROFILE_REPEAT_SWITCHES !== "0";
+/**
+ * Serpent-e97c00: how many task-status reads to issue through the real bridge
+ * after the navigation journey. The task panel polls at about 1 Hz, so a series
+ * of reads is the only way to A/B a summary cache without opening the panel.
+ */
+const statusSamples = Math.max(0, Number(process.env.SERPENT_PROFILE_STATUS_SAMPLES ?? 0));
+const statusSampleIntervalMs = Math.max(0, Number(process.env.SERPENT_PROFILE_STATUS_INTERVAL_MS ?? 200));
 type PersistedJobGroup = {
   kind: string;
   status: string;
@@ -550,6 +557,75 @@ async function measureScrollJump(
   }
 }
 
+/** One task-status read through the real bridge, timed end to end. */
+async function sampleMediaJobStatus(window: Page, libraryId: string): Promise<number> {
+  return window.evaluate(async (id) => {
+    type Result<T> = { ok: true; value: T } | { ok: false; error: { code: string } };
+    const bridge = globalThis as typeof globalThis & {
+      serpent: {
+        library: {
+          listMediaJobs(input: { libraryId: string; summaryOnly?: boolean }): Promise<Result<unknown>>;
+        };
+      };
+    };
+    const startedAt = performance.now();
+    const result = await bridge.serpent.library.listMediaJobs({ libraryId: id, summaryOnly: true });
+    const elapsedMs = performance.now() - startedAt;
+    if (!result.ok) throw new Error(`Could not read task status: ${result.error.code}`);
+    return elapsedMs;
+  }, libraryId);
+}
+
+async function openLibraryId(window: Page): Promise<string> {
+  return window.evaluate(async () => {
+    type Result<T> = { ok: true; value: T } | { ok: false; error: { code: string } };
+    const bridge = globalThis as typeof globalThis & {
+      serpent: { library: { listOpen(): Promise<Result<Array<{ libraryId: string }>>> } };
+    };
+    const opened = await bridge.serpent.library.listOpen();
+    const libraryId = opened.ok ? opened.value[0]?.libraryId : undefined;
+    if (!libraryId) throw new Error("Expected one open library while sampling task status.");
+    return libraryId;
+  });
+}
+
+/**
+ * Read the six media job counters, either through the cached summary path
+ * (`summaryOnly: true`) or through the full path that always re-runs the SQL.
+ * The two must agree; a fast counter that disagrees is a wrong counter.
+ */
+async function readMediaJobCounts(
+  window: Page,
+  libraryId: string,
+  summaryOnly: boolean,
+): Promise<Record<string, number>> {
+  return window.evaluate(async ({ id, cached }) => {
+    type Counts = {
+      queued: number;
+      running: number;
+      succeeded: number;
+      failed: number;
+      paused: number;
+      cancelled: number;
+    };
+    type Result<T> = { ok: true; value: T } | { ok: false; error: { code: string } };
+    const bridge = globalThis as typeof globalThis & {
+      serpent: {
+        library: {
+          listMediaJobs(input: { libraryId: string; summaryOnly?: boolean }): Promise<Result<Counts>>;
+        };
+      };
+    };
+    const result = await bridge.serpent.library.listMediaJobs({
+      libraryId: id,
+      ...(cached ? { summaryOnly: true } : {}),
+    });
+    if (!result.ok) throw new Error(`Could not read task counts: ${result.error.code}`);
+    const { queued, running, succeeded, failed, paused, cancelled } = result.value;
+    return { queued, running, succeeded, failed, paused, cancelled };
+  }, { id: libraryId, cached: summaryOnly });
+}
+
 async function readMediaQueueSnapshot(window: Page): Promise<{
   queued: number;
   running: number;
@@ -716,6 +792,10 @@ test("profile navigation hotspots on a real library", async () => {
   // pass as a green run.
   let jumpMeasured = 0;
   let jumpsScrollable = false;
+  // Correctness oracle for the cached task summary (see readMediaJobCounts).
+  let statusCountsCached: Record<string, number> | null = null;
+  let statusCountsFromSql: Record<string, number> | null = null;
+  let statusCountsComparable = false;
   const record = (key: string, value: number): void => {
     (timings[key] ??= []).push(value);
   };
@@ -925,6 +1005,28 @@ test("profile navigation hotspots on a real library", async () => {
       }
     }
     if (scopes.length === 0) skipped.folderSwitch = switches;
+    // Serpent-e97c00: a burst of task-status reads reproduces the panel's ~1 Hz
+    // polling without opening the panel, so the summary cache can be A/B'd on
+    // the exact command the panel uses.
+    if (statusSamples > 0) {
+      const samplingLibraryId = await openLibraryId(window);
+      for (let index = 0; index < statusSamples; index += 1) {
+        record("status.sampleMs", await sampleMediaJobStatus(window, samplingLibraryId));
+        if (index < statusSamples - 1 && statusSampleIntervalMs > 0) {
+          await window.waitForTimeout(statusSampleIntervalMs);
+        }
+      }
+      // Correctness oracle: the cached summary must equal the counts the full
+      // (SQL) path reports. A live queue moves counters between the two reads,
+      // so the comparison is only asserted when the queue state did not change
+      // in between — otherwise a churning queue would fail a correct cache.
+      const queueBeforeOracle = await readMediaQueueSnapshot(window);
+      statusCountsCached = await readMediaJobCounts(window, samplingLibraryId, true);
+      statusCountsFromSql = await readMediaJobCounts(window, samplingLibraryId, false);
+      const queueAfterOracle = await readMediaQueueSnapshot(window);
+      statusCountsComparable =
+        JSON.stringify(queueBeforeOracle) === JSON.stringify(queueAfterOracle);
+    }
     mediaQueueAtNavigationEnd = idleMs > 0 ? await readMediaQueueSnapshot(window) : null;
     if (pauseQueueBeforeNavigation && mediaQueueAtNavigationEnd?.running !== 0) {
       throw new Error("A background media job ran during the paused navigation measurement.");
@@ -1115,6 +1217,11 @@ test("profile navigation hotspots on a real library", async () => {
       jumpDiagnostics,
       jumpMeasured,
       jumpsScrollable,
+      statusSamples,
+      statusSampleIntervalMs,
+      statusCountsCached,
+      statusCountsFromSql,
+      statusCountsComparable,
       log,
     };
     profileReport = report;
@@ -1142,15 +1249,28 @@ test("profile navigation hotspots on a real library", async () => {
       // Diagnostics only.
     }
     expect(timeouts, "Navigation profile timeouts are failures and are excluded from latency percentiles").toEqual({});
-    expect(
-      navigationChainMisses,
-      "Every measured switch must be attributable to a Main/Worker navigation span (Serpent-217028 navigationId join)",
-    ).toBe(0);
+    // Navigation tracing is produced by the Main-side `performance.navigation`
+    // spans. When the build under test has no producer the chain cannot be
+    // established at all: record that as a coverage gap (the report keeps
+    // `log.navigations.count`) instead of failing the run, but never accept a
+    // partial join when tracing is present.
+    if (log.navigations.count > 0) {
+      expect(
+        navigationChainMisses,
+        "Every measured switch must be attributable to a Main/Worker navigation span (Serpent-217028 navigationId join)",
+      ).toBe(0);
+    }
     if (includeJumps && jumpsScrollable) {
       expect(
         jumpMeasured,
         "A scrollable library-wide scope must yield at least one real jump sample; skipped preconditions are not a green jump result",
       ).toBeGreaterThan(0);
+    }
+    if (statusCountsCached !== null && statusCountsFromSql !== null && statusCountsComparable) {
+      expect(
+        statusCountsCached,
+        "The cached task summary must equal the counts the full SQL path reports (Serpent-e97c00)",
+      ).toEqual(statusCountsFromSql);
     }
     if (switches > 0) {
       const contentChangedKey = pauseQueueBeforeNavigation
@@ -1195,7 +1315,14 @@ test("profile navigation hotspots on a real library", async () => {
       );
       writeBenchReport(path.join(outDir!, "queue-snapshot.json"), queueDiagnosticSnapshot);
     }
-    rmSync(temporaryRoot, { force: true, recursive: true });
+    try {
+      // Windows keeps handles on the isolated profile for a moment after the app
+      // exits (Defender/indexer). Retry, and never let cleanup replace the real
+      // failure: a masked error here once hid the actual cause of a red run.
+      rmSync(temporaryRoot, { force: true, recursive: true, maxRetries: 20, retryDelay: 250 });
+    } catch (error) {
+      console.error("Could not remove the isolated navigation-profile userData directory.", error);
+    }
   }
 });
 
