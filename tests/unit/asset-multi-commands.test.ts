@@ -146,7 +146,7 @@ describe('内嵌计数标题（与历史渲染一致）', () => {
     ['assets.copy', '复制（2 项）'],
     ['assets.paste', '粘贴'],
     ['assets.move-to-folder', '移动到文件夹…（1 项）'],
-    ['assets.move-to-trash', '移入回收站（3 项）'],
+    ['assets.move-to-trash', '移入回收站（2 项）'],
     ['assets.clear-selection', '清除选择（3 项）'],
   ] as const)('正常分支 %s 标题为「%s」', (id, expected) => {
     const { ctx } = makeCtx();
@@ -316,8 +316,8 @@ describe('run 委托到 actions 回调包', () => {
     ['assets.copy', {}, 'copyFiles', [['a-1', 'a-3']]],
     ['assets.paste', {}, 'pasteIntoFolder', ['folder-1']],
     ['assets.move-to-folder', {}, 'moveToFolder', [['a-1'], []]],
-    ['assets.move-to-trash', {}, 'moveToTrash', [['a-1', 'a-2', 'a-3'], []]],
-    ['assets.delete-from-disk', {}, 'deleteFromDisk', [['a-1', 'a-2'], []]],
+    ['assets.move-to-trash', {}, 'moveToTrash', [['a-1', 'a-2'], []]],
+    ['assets.delete-from-disk', {}, 'deleteFromDisk', [['a-1', 'a-2', 'a-3'], []]],
     ['assets.clear-selection', {}, 'clearSelection', []],
   ] as const)(
     '%s 转调 %s（操作对象与原内联 onAction 一致）',
@@ -330,7 +330,7 @@ describe('run 委托到 actions 回调包', () => {
     },
   );
 
-  it('move-to-folder 只传可用托管 id，move-to-trash 传托管与链接 id', () => {
+  it('move-to-folder 只传可用托管 id；move-to-trash 只含托管；强制删除含托管与链接', () => {
     const { ctx, calls } = makeCtx({
       managedAssetIds: ['m-1', 'm-2', 'm-3'],
       availableManagedAssetIds: ['m-2'],
@@ -339,9 +339,13 @@ describe('run 委托到 actions 回调包', () => {
     });
     void registry.get('assets.move-to-folder')?.run(ctx);
     void registry.get('assets.move-to-trash')?.run(ctx);
+    void registry.get('assets.delete-from-disk')?.run(ctx);
     expect(calls).toEqual([
       { action: 'moveToFolder', args: [['m-2'], []] },
-      { action: 'moveToTrash', args: [['m-1', 'm-2', 'm-3', 'l-1'], []] },
+      // 2026-09-15 用户决定：链接资产不再参与「移入回收站」。
+      { action: 'moveToTrash', args: [['m-1', 'm-2', 'm-3'], []] },
+      // 链接资产唯一保留的删除动作是强制从硬盘删除。
+      { action: 'deleteFromDisk', args: [['m-1', 'm-2', 'm-3', 'l-1'], []] },
     ]);
   });
 

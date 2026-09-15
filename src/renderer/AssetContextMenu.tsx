@@ -324,11 +324,6 @@ interface AssetContextMenuProps {
     linkedRelativePath?: string;
   }) => void;
   onRemoveLinkedFolder: (folderId: string, name: string) => void;
-  onTrashLinkedFolderSubtree: (
-    linkedFolderId: string,
-    relativePath: string,
-    name: string,
-  ) => void;
   onBatchAssignTag: (tagId: string, assetIds: string[]) => void;
   onBatchRemoveTag: (tagId: string, assetIds: string[]) => void;
   onBatchAddToCollection: (collectionId: string, assetIds: string[]) => void;
@@ -418,7 +413,6 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
     onTrashManagedFolder,
     onDeleteFolderFromDisk,
     onRemoveLinkedFolder,
-    onTrashLinkedFolderSubtree,
     onBatchAssignTag,
     onBatchRemoveTag,
     onBatchAddToCollection,
@@ -840,7 +834,6 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   locationKind: "managed",
                 }),
               removeLinkedFolder: onRemoveLinkedFolder,
-              trashLinkedFolderSubtree: onTrashLinkedFolderSubtree,
               renameOrganization: onRenameOrganization,
               createSubcollection: onCreateSubcollection,
               editCollectionDetails: onEditCollectionDetails,
@@ -932,7 +925,6 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   locationKind: "managed",
                 }),
               removeLinkedFolder: onRemoveLinkedFolder,
-              trashLinkedFolderSubtree: onTrashLinkedFolderSubtree,
               renameOrganization: onRenameOrganization,
               createSubcollection: onCreateSubcollection,
               editCollectionDetails: onEditCollectionDetails,
@@ -1063,7 +1055,6 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   linkedRelativePath: desc.linkedRelativePath,
                 }),
               removeLinkedFolder: onRemoveLinkedFolder,
-              trashLinkedFolderSubtree: onTrashLinkedFolderSubtree,
               renameOrganization: onRenameOrganization,
               createSubcollection: onCreateSubcollection,
               editCollectionDetails: onEditCollectionDetails,
@@ -1278,6 +1269,18 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                       onAction={() => runSidebarCommand("folder.move-to-trash")}
                     />
                   )}
+                  {/* 2026-09-15 用户要求：链接文件夹的「移除链接文件夹」排在「强制从硬盘删除」之前
+                      ——移除只删链接记录（可再次导入），比永久删除更安全，因此放在前面。 */}
+                  {removeFromLibraryItem && (
+                    <ContextMenuItem
+                      icon={<Icon name="trash" size={14} />}
+                      label={removeFromLibraryItem.label}
+                      danger
+                      onAction={() =>
+                        runSidebarCommand("folder.remove-from-library")
+                      }
+                    />
+                  )}
                   {deleteFromDiskItem && (
                     <ContextMenuItem
                       icon={<Icon name="trash" size={14} />}
@@ -1290,16 +1293,6 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                       }
                       onAction={() =>
                         runSidebarCommand("folder.delete-from-disk")
-                      }
-                    />
-                  )}
-                  {removeFromLibraryItem && (
-                    <ContextMenuItem
-                      icon={<Icon name="trash" size={14} />}
-                      label={removeFromLibraryItem.label}
-                      danger
-                      onAction={() =>
-                        runSidebarCommand("folder.remove-from-library")
                       }
                     />
                   )}

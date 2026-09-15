@@ -1538,13 +1538,11 @@ describe('deleteLinkedAssets', () => {
     service.closeAll();
   });
 
-  it('moves the linked source to the system trash before deleting its DB row', async () => {
+  it('permanently deletes the linked source before deleting its DB row', async () => {
     const root = temporaryRoot();
-    const systemTrashPath = path.join(root, 'system-trash');
-    mkdirSync(systemTrashPath);
     const service = newService({
-      trashItem: async (sourcePath) => {
-        renameSync(sourcePath, path.join(systemTrashPath, path.basename(sourcePath)));
+      removeLinkedSourceFile: async (sourcePath) => {
+        rmSync(sourcePath, { force: true });
       },
     });
     const created = service.createLibrary({ displayName: 'Linked Src', selectedParentPath: root });
@@ -1563,19 +1561,19 @@ describe('deleteLinkedAssets', () => {
     });
 
     expect(result).toEqual({ deletedCount: 1, failedCount: 0, failures: [] });
+    // 2026-09-15：源文件被永久删除，不再有「落到系统回收站」这一步。
     expect(existsSync(path.join(root, 'linked-del-src', 'keep.txt'))).toBe(false);
-    expect(existsSync(path.join(systemTrashPath, 'keep.txt'))).toBe(true);
     expect(service.listAssets({ libraryId: created.libraryId, recursive: true })).toEqual([]);
     service.closeAll();
   });
 
-  it('keeps the linked record and reports a diagnostic when system trash fails', async () => {
+  it('keeps the linked record and reports a diagnostic when source deletion fails', async () => {
     const root = temporaryRoot();
     const diagnostics: Array<{ scope: string; error: unknown; context?: Record<string, unknown> }> = [];
     const service = newService({
       onDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
-      trashItem: async () => {
-        throw new Error('System trash rejected the source.');
+      removeLinkedSourceFile: async () => {
+        throw new Error('Source deletion was rejected.');
       },
     });
     const created = service.createLibrary({ displayName: 'Linked Trash Failure', selectedParentPath: root });
@@ -1601,7 +1599,7 @@ describe('deleteLinkedAssets', () => {
       .toEqual([expect.objectContaining({ assetId: linkedAsset!.assetId })]);
     expect(diagnostics).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        scope: 'asset.delete-linked.trash-source',
+        scope: 'asset.delete-linked.delete-source',
         error: expect.objectContaining({
           code: 'ASSET_SOURCE_TRASH_FAILED',
           reason: 'SOURCE_TRASH_FAILED',
@@ -1615,19 +1613,17 @@ describe('deleteLinkedAssets', () => {
     service.closeAll();
   });
 
-  it('deletes only records whose individual source trash operation succeeded', async () => {
+  it('deletes only records whose individual source deletion succeeded', async () => {
     const root = temporaryRoot();
-    const systemTrashPath = path.join(root, 'partial-system-trash');
-    mkdirSync(systemTrashPath);
     const service = newService({
-      trashItem: async (sourcePath) => {
+      removeLinkedSourceFile: async (sourcePath) => {
         if (path.basename(sourcePath) === 'fail.txt') {
-          throw new Error('Injected second-item trash failure.');
+          throw new Error('Injected second-item delete failure.');
         }
-        renameSync(sourcePath, path.join(systemTrashPath, path.basename(sourcePath)));
+        rmSync(sourcePath, { force: true });
       },
     });
-    const created = service.createLibrary({ displayName: 'Linked Partial Trash', selectedParentPath: root });
+    const created = service.createLibrary({ displayName: 'Linked Partial Delete', selectedParentPath: root });
     const linkedRoot = path.join(root, 'linked-partial-trash');
     mkdirSync(linkedRoot);
     writeFileSync(path.join(linkedRoot, 'ok.txt'), 'ok');
@@ -1648,25 +1644,23 @@ describe('deleteLinkedAssets', () => {
       failures: [{ assetId: failedAsset.assetId, reason: 'SOURCE_TRASH_FAILED' }],
     });
 
-    expect(existsSync(path.join(systemTrashPath, 'ok.txt'))).toBe(true);
+    expect(existsSync(path.join(linkedRoot, 'ok.txt'))).toBe(false);
     expect(existsSync(path.join(linkedRoot, 'fail.txt'))).toBe(true);
     expect(service.listAssets({ libraryId: created.libraryId, recursive: true }))
       .toEqual([expect.objectContaining({ assetId: failedAsset.assetId })]);
     service.closeAll();
   });
 
-  it('trashes every successful source before deleting their records in one transaction', async () => {
+  it('deletes every successful source before deleting their records in one transaction', async () => {
     const root = temporaryRoot();
-    const systemTrashPath = path.join(root, 'transaction-system-trash');
     const diagnostics: Array<{ scope: string; error: unknown; context?: Record<string, unknown> }> = [];
-    mkdirSync(systemTrashPath);
     const service = newService({
       onDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
-      trashItem: async (sourcePath) => {
-        renameSync(sourcePath, path.join(systemTrashPath, path.basename(sourcePath)));
+      removeLinkedSourceFile: async (sourcePath) => {
+        rmSync(sourcePath, { force: true });
       },
     });
-    const created = service.createLibrary({ displayName: 'Linked Trash Transaction', selectedParentPath: root });
+    const created = service.createLibrary({ displayName: 'Linked Delete Transaction', selectedParentPath: root });
     const linkedRoot = path.join(root, 'linked-trash-transaction');
     mkdirSync(linkedRoot);
     writeFileSync(path.join(linkedRoot, 'one.txt'), 'one');
@@ -1694,8 +1688,8 @@ describe('deleteLinkedAssets', () => {
       reason: 'SOURCE_TRASH_RECONCILIATION_REQUIRED',
     });
 
-    expect(existsSync(path.join(systemTrashPath, 'one.txt'))).toBe(true);
-    expect(existsSync(path.join(systemTrashPath, 'two.txt'))).toBe(true);
+    expect(existsSync(path.join(linkedRoot, 'one.txt'))).toBe(false);
+    expect(existsSync(path.join(linkedRoot, 'two.txt'))).toBe(false);
     expect(service.listAssets({ libraryId: created.libraryId, recursive: true })).toHaveLength(2);
     expect(diagnostics).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -1726,14 +1720,12 @@ describe('deleteLinkedAssets', () => {
     auditedDatabase.close();
   });
 
-  it('recovers when the system-trash helper moves a source and then throws', async () => {
+  it('recovers when the source file is removed and the deletion then reports failure', async () => {
     const root = temporaryRoot();
-    const systemTrashPath = path.join(root, 'move-then-throw-trash');
-    mkdirSync(systemTrashPath);
     const service = newService({
-      trashItem: async (sourcePath) => {
-        renameSync(sourcePath, path.join(systemTrashPath, path.basename(sourcePath)));
-        throw new Error('injected helper exit after move');
+      removeLinkedSourceFile: async (sourcePath) => {
+        rmSync(sourcePath, { force: true });
+        throw new Error('injected helper exit after delete');
       },
     });
     const created = service.createLibrary({ displayName: 'Move Then Throw', selectedParentPath: root });
@@ -1892,15 +1884,15 @@ describe('deleteLinkedAssets', () => {
   );
 
   (process.env.SERPENT_TEST_REAL_SYSTEM_TRASH === '1' ? it : it.skip)(
-    'moves a real linked source through the platform system-trash helper',
+    'permanently deletes a real linked source file from disk',
     async () => {
       const root = temporaryRoot();
       const service = newService();
-      const created = service.createLibrary({ displayName: 'Real System Trash', selectedParentPath: root });
-      const linkedRoot = path.join(root, 'real-system-trash');
-      const sourcePath = path.join(linkedRoot, `serpent-trash-${randomUUID()}.txt`);
+      const created = service.createLibrary({ displayName: 'Real Linked Delete', selectedParentPath: root });
+      const linkedRoot = path.join(root, 'real-linked-delete');
+      const sourcePath = path.join(linkedRoot, `serpent-delete-${randomUUID()}.txt`);
       mkdirSync(linkedRoot);
-      writeFileSync(sourcePath, 'safe-to-trash');
+      writeFileSync(sourcePath, 'safe-to-delete');
       service.importFolderAsLinked({ libraryId: created.libraryId, sourceRootPath: linkedRoot });
       const [linkedAsset] = service.listAssets({ libraryId: created.libraryId, recursive: true });
 

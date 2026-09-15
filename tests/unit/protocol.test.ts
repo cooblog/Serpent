@@ -189,6 +189,28 @@ describe('renderer request protocol', () => {
     })).toMatchObject({ type: 'asset.recovery-probe.result' });
   });
 
+  it('accepts the optional linked-asset hint on delete-from-disk requests', () => {
+    // 2026-09-15：Main 的确认窗按这个提示写文案（链接资产 = 源文件永久删除）。
+    expect(parseRendererRequest({
+      type: 'asset.delete-from-disk.request',
+      libraryId: 'library-01',
+      assetIds: ['asset-01'],
+      locationKind: 'linked',
+    })).toMatchObject({ locationKind: 'linked' });
+    // 旧调用方与混合选择可以省略这一提示。
+    expect(parseRendererRequest({
+      type: 'asset.delete-from-disk.request',
+      libraryId: 'library-01',
+      assetIds: ['asset-01'],
+    })).not.toHaveProperty('locationKind');
+    expect(() => parseRendererRequest({
+      type: 'asset.delete-from-disk.request',
+      libraryId: 'library-01',
+      assetIds: ['asset-01'],
+      locationKind: 'external',
+    })).toThrow();
+  });
+
   it('requires an opaque preview token to apply or cancel batch relinking', () => {
     expect(parseRendererRequest({
       type: 'asset.relink-batch.apply.request',

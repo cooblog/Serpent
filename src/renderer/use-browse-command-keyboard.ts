@@ -44,7 +44,6 @@ export type UseBrowseCommandKeyboardArgs = {
   readonly searchInputRef: RefObject<HTMLInputElement | null>;
   readonly onOpenExternal: (assetId: string) => void;
   readonly onTrashManaged: (assetIds: string[]) => void;
-  readonly onTrashLinked: (assetIds: string[]) => void;
   readonly onRename: (assetId: string) => void;
   readonly onCopyFiles: (assetIds: string[]) => void;
   readonly onCopyFilePath: (assetId: string) => void;
@@ -78,7 +77,6 @@ export function useBrowseCommandKeyboard(
     searchInputRef,
     onOpenExternal,
     onTrashManaged,
-    onTrashLinked,
     onRename,
     onCopyFiles,
     onCopyFilePath,
@@ -194,7 +192,8 @@ export function useBrowseCommandKeyboard(
             onTrashManaged([...plan.assetIds]);
             return;
           }
-          onTrashLinked([...plan.assetIds]);
+          // 2026-09-15 用户决定：链接资产没有「移入回收站」——普通 Delete 对链接
+          // 资产不再有任何动作（唯一的删除动作是 Shift+Delete 的强制从硬盘删除）。
           return;
         }
       }
@@ -271,7 +270,6 @@ export function useBrowseCommandKeyboard(
     searchInputRef,
     onOpenExternal,
     onTrashManaged,
-    onTrashLinked,
     onRename,
     onCopyFiles,
     onCopyFilePath,

@@ -6120,6 +6120,110 @@ function criticalRendererRequest(request: RendererRequest): boolean {
     || (request.type === 'linked-folder.delete-subtree.request' && request.deleteFromDisk);
 }
 
+type CriticalRendererOperation =
+  | 'folder'
+  | 'linked-folder'
+  | 'linked-asset'
+  | 'asset-permanent'
+  | 'trash-purge'
+  | 'asset';
+
+/**
+ * Linked assets are deleted permanently from their source folder (the file never
+ * enters the application trash, and the previous implementation's trip through
+ * the OS recycle bin is gone), so the confirmation must name that operation
+ * instead of the generic "delete these assets" copy.  The renderer supplies
+ * `locationKind` as a copy hint only; Main still has no database access.
+ */
+function criticalRendererOperation(request: RendererRequest): CriticalRendererOperation {
+  switch (request.type) {
+    case 'folder.delete-from-disk.request':
+      return 'folder';
+    case 'linked-folder.delete-subtree.request':
+      return 'linked-folder';
+    case 'asset.delete-permanent.request':
+      return 'asset-permanent';
+    case 'trash.purge.request':
+      return 'trash-purge';
+    case 'asset.delete-from-disk.request':
+      return request.locationKind === 'linked' ? 'linked-asset' : 'asset';
+    default:
+      return 'asset';
+  }
+}
+
+function criticalRendererCopy(
+  operation: CriticalRendererOperation,
+  count: number,
+  english: boolean,
+): { heading: string; message: string; detail: string } {
+  const confirmationPolicy = english
+    ? 'This confirmation is required every time; it cannot be remembered or bypassed by MCP permissions.'
+    : '每次操作都必须确认；不能记住此决定，也不能通过 MCP 权限绕过。';
+  switch (operation) {
+    case 'folder':
+      return {
+        heading: english ? 'Delete this folder from disk?' : '从磁盘删除这个文件夹？',
+        message: english
+          ? 'The selected folder and its managed assets will be permanently deleted.'
+          : '选定文件夹及其中的托管资产将被永久删除。',
+        detail: english
+          ? `This cannot be undone and the files will not go to the application trash. ${confirmationPolicy}`
+          : `此操作无法撤销，文件不会进入应用回收站。${confirmationPolicy}`,
+      };
+    case 'linked-folder':
+      return {
+        heading: english ? 'Delete linked-folder files from disk?' : '从磁盘删除链接文件夹内容？',
+        message: english
+          ? 'The selected linked-folder source files will be permanently deleted.'
+          : '选定链接文件夹中的源文件将被永久删除。',
+        detail: english
+          ? `This cannot be undone and the files will not go to the application trash. ${confirmationPolicy}`
+          : `此操作无法撤销，文件不会进入应用回收站。${confirmationPolicy}`,
+      };
+    case 'linked-asset':
+      return {
+        heading: english ? 'Delete these linked assets from disk?' : '从磁盘删除这些链接资产的源文件？',
+        message: english
+          ? `The source files of ${count} selected linked asset(s) will be permanently deleted, and their library link records with them.`
+          : `选定 ${count} 个链接资产的源文件将被永久删除，库内的链接记录也会一并移除。`,
+        detail: english
+          ? `This cannot be undone; the source files are deleted from the linked folder and do not go to the recycle bin. ${confirmationPolicy}`
+          : `此操作无法撤销：链接文件夹中的源文件会被直接删除，不会进入系统回收站。${confirmationPolicy}`,
+      };
+    case 'asset-permanent':
+      return {
+        heading: english ? 'Permanently delete these trash assets?' : '永久删除这些回收站资产？',
+        message: english
+          ? `${count} selected trash asset(s) will be permanently deleted.`
+          : `选定的 ${count} 项回收站资产将被永久删除。`,
+        detail: english
+          ? `This cannot be undone and the files will not go to the application trash. ${confirmationPolicy}`
+          : `此操作无法撤销，文件不会进入应用回收站。${confirmationPolicy}`,
+      };
+    case 'trash-purge':
+      return {
+        heading: english ? 'Empty the Serpent trash permanently?' : '永久清空 Serpent 回收站？',
+        message: english
+          ? 'All assets currently in the Serpent trash will be permanently deleted.'
+          : 'Serpent 回收站中的全部资产将被永久删除。',
+        detail: english
+          ? `This cannot be undone and the files will not go to the application trash. ${confirmationPolicy}`
+          : `此操作无法撤销，文件不会进入应用回收站。${confirmationPolicy}`,
+      };
+    case 'asset':
+      return {
+        heading: english ? 'Delete these assets from disk?' : '从磁盘删除这些资产？',
+        message: english
+          ? `${count} selected asset(s) will be permanently deleted.`
+          : `选定的 ${count} 项资产将被永久删除。`,
+        detail: english
+          ? `This cannot be undone and the files will not go to the application trash. ${confirmationPolicy}`
+          : `此操作无法撤销，文件不会进入应用回收站。${confirmationPolicy}`,
+      };
+  }
+}
+
 async function confirmCriticalRendererRequest(request: RendererRequest): Promise<boolean> {
   if (request.type === 'library.delete-from-disk.request') {
     return confirmCriticalLibraryDeletion(request.libraryId);
@@ -6127,44 +6231,20 @@ async function confirmCriticalRendererRequest(request: RendererRequest): Promise
   const manager = criticalConfirmationWindowManager;
   if (manager === undefined) return false;
   const english = appLocale === 'en';
-  const operation = request.type === 'folder.delete-from-disk.request'
-    ? 'folder'
-    : request.type === 'linked-folder.delete-subtree.request'
-      ? 'linked-folder'
-      : request.type === 'asset.delete-permanent.request'
-        ? 'asset-permanent'
-        : request.type === 'trash.purge.request'
-          ? 'trash-purge'
-          : 'asset';
   const count = request.type === 'asset.delete-from-disk.request'
     || request.type === 'asset.delete-permanent.request'
     ? request.assetIds.length
-    : undefined;
-  const heading = operation === 'folder'
-    ? (english ? 'Delete this folder from disk?' : '从磁盘删除这个文件夹？')
-    : operation === 'linked-folder'
-      ? (english ? 'Delete linked-folder files from disk?' : '从磁盘删除链接文件夹内容？')
-      : operation === 'asset-permanent'
-        ? (english ? 'Permanently delete these trash assets?' : '永久删除这些回收站资产？')
-        : operation === 'trash-purge'
-          ? (english ? 'Empty the Serpent trash permanently?' : '永久清空 Serpent 回收站？')
-          : (english ? 'Delete these assets from disk?' : '从磁盘删除这些资产？');
-  const message = operation === 'folder'
-    ? (english ? 'The selected folder and its managed assets will be permanently deleted.' : '选定文件夹及其中的托管资产将被永久删除。')
-    : operation === 'linked-folder'
-      ? (english ? 'The selected linked-folder source files will be permanently deleted.' : '选定链接文件夹中的源文件将被永久删除。')
-      : operation === 'asset-permanent'
-        ? (english ? `${count ?? 0} selected trash asset(s) will be permanently deleted.` : `选定的 ${count ?? 0} 项回收站资产将被永久删除。`)
-        : operation === 'trash-purge'
-          ? (english ? 'All assets currently in the Serpent trash will be permanently deleted.' : 'Serpent 回收站中的全部资产将被永久删除。')
-          : (english ? `${count ?? 0} selected asset(s) will be permanently deleted.` : `选定的 ${count ?? 0} 项资产将被永久删除。`);
+    : 0;
+  const { heading, message, detail } = criticalRendererCopy(
+    criticalRendererOperation(request),
+    count,
+    english,
+  );
   return manager.request({
     title: english ? 'Confirm critical operation' : '确认危险操作',
     heading,
     message,
-    detail: english
-      ? 'This cannot be undone and the files will not go to the application trash. This confirmation is required every time; it cannot be remembered or bypassed by MCP permissions.'
-      : '此操作无法撤销，文件不会进入应用回收站。每次操作都必须确认；不能记住此决定，也不能通过 MCP 权限绕过。',
+    detail,
     cancelLabel: english ? 'Cancel' : '取消',
     confirmLabel: english ? 'Delete permanently' : '永久删除',
   });

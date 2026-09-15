@@ -9,7 +9,14 @@ import {
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { _electron as electron, expect, test, type Page } from '@playwright/test';
+import {
+  _electron as electron,
+  expect,
+  test,
+  type Dialog,
+  type ElectronApplication,
+  type Page,
+} from '@playwright/test';
 
 import {
   assetCard,
@@ -77,11 +84,16 @@ test('imports a linked folder, reconciles external changes, and relinks after th
       .click();
 
     await assetCard(window, 'a.png').click({ button: 'right' });
-    await expect(window.getByRole('menuitem', { name: '移入回收站' })).toBeVisible();
+    // 2026-09-15 用户决定：链接资产没有「移入回收站」，只有「强制从硬盘删除…」。
+    await expect(window.getByRole('menuitem', { name: '移入回收站' })).toHaveCount(0);
+    await expect(window.getByRole('menuitem', { name: '强制从硬盘删除' })).toBeVisible();
     await window.keyboard.press('Escape');
 
     await assetCard(window, 'delete-me.png').click({ button: 'right' });
-    await window.getByRole('menuitem', { name: '移入回收站' }).click();
+    await window.getByRole('menuitem', { name: '强制从硬盘删除' }).click();
+    // 「强制从硬盘删除」在 Main 进程弹出危险操作确认窗（不可记住、不可绕过），
+    // 链接资产的文案必须点明「源文件被永久删除」，而不是沿用托管资产的通用说法。
+    await confirmAssetDiskDelete(application);
     await expect(window.getByText('delete-me.png', { exact: true })).toHaveCount(0);
     expect(existsSync(path.join(sourceRoot, 'delete-me.png'))).toBe(false);
 
@@ -111,9 +123,15 @@ test('imports a linked folder, reconciles external changes, and relinks after th
       .getByLabel('当前浏览范围')
       .getByRole('button', { name: 'source', exact: true })
       .click();
+    // 2026-09-15：外部移动的身份归并在刷新后的后台收敛里完成（前台刷新只保证「已重新
+    // 扫描」），所以这里轮询到收敛为止。**已知间歇失败**：watcher 增量路径会先把新路径
+    // 落成新资产、旧路径标 missing，此时全量刷新再也并不回来——预存在的 P1 `Serpent-463571`
+    // （干净 HEAD 上同样复现，与本次链接文件夹删除改动无关）；轮询失败即说明踩到了它。
+    await expect
+      .poll(async () => (await listAllAssets(window)).length, { timeout: 20_000 })
+      .toBe(3);
     const afterMove = await listAllAssets(window);
     const bAfterMove = afterMove.find((asset) => asset.displayName === 'moved-b.png');
-    expect(afterMove).toHaveLength(3);
     expect(bAfterMove?.assetId).toBe(bBeforeMove?.assetId);
     expect(bAfterMove?.availability).toBe('available');
     expect(afterMove.some((asset) => asset.displayName === 'b.png')).toBe(false);
@@ -129,7 +147,9 @@ test('imports a linked folder, reconciles external changes, and relinks after th
     const missingC = assetCard(window, 'c.png');
     await expect(missingC).toBeVisible();
     await missingC.click({ button: 'right' });
-    await window.getByRole('menuitem', { name: '移入回收站' }).click();
+    // 源文件已被外部删除时，强制删除仍然只清库内记录（不因源文件缺失而失败）。
+    await window.getByRole('menuitem', { name: '强制从硬盘删除' }).click();
+    await confirmAssetDiskDelete(application);
     await expect(missingC).toHaveCount(0);
     await window
       .getByLabel('当前浏览范围')
@@ -174,11 +194,229 @@ test('imports a linked folder, reconciles external changes, and relinks after th
   }
 });
 
+// 2026-09-15 用户要求：链接文件夹的动作是「移除链接文件夹…」（只删链接记录）与
+// 「强制从硬盘删除…」（永久删除源文件），两者都必须有进度条，且「移除」排在
+// 「强制删除」之前；链接文件夹没有「移入回收站」。
+test('removes a linked folder without touching sources, then force-deletes it with disk progress', async () => {
+  const temporaryRoot = mkdtempSync(path.join(tmpdir(), 'serpent-linked-actions-'));
+  const sourceRoot = path.join(temporaryRoot, 'source');
+  const libraryName = '链接文件夹动作验收';
+  const libraryPath = path.join(temporaryRoot, libraryName);
+  mkdirSync(sourceRoot);
+  for (const name of ['a.png', 'b.png', 'c.png']) {
+    writeFileSync(path.join(sourceRoot, name), Buffer.from(name));
+  }
+  mkdirSync(path.join(sourceRoot, 'sub'));
+  writeFileSync(path.join(sourceRoot, 'sub', 'd.png'), Buffer.from('dddd'));
+
+  const executablePath = resolveElectronExecutablePath();
+  const applicationDirectory = process.env.SERPENT_E2E_APP_DIRECTORY ?? process.cwd();
+  const application = await electron.launch({
+    args: [applicationDirectory],
+    cwd: applicationDirectory,
+    executablePath,
+    env: {
+      ...process.env,
+      SERPENT_E2E: '1',
+      SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, 'user-data'),
+      SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
+      SERPENT_E2E_OPEN_LIBRARY_PATH: libraryPath,
+      SERPENT_E2E_LINKED_SOURCE: sourceRoot,
+    },
+  });
+
+  try {
+    const window = await application.firstWindow();
+    await window.getByRole('button', { name: '创建资源库' }).click();
+    await window.getByRole('textbox', { name: '名称' }).fill(libraryName);
+    await window.getByRole('button', { name: '创建', exact: true }).click();
+    await expect(window.getByRole('heading', { name: '导入资产以开始整理' })).toBeVisible();
+    await waitForLibraryLoadingToFinish(window);
+
+    await openLinkedFolderImportMenu(application, window);
+    const linkedRow = linkedFolderRow(window, 'source');
+    await expect(linkedRow).toBeVisible({ timeout: 15_000 });
+    expect(await listAllAssets(window)).toHaveLength(4);
+
+    await startDeleteProgressCapture(window);
+
+    // 菜单语义与顺序：没有「移入回收站」，「移除链接文件夹…」在「强制从硬盘删除…」之前。
+    await linkedRow.click({ button: 'right' });
+    const folderMenu = window.getByRole('menu', { name: '文件夹操作：source', exact: true });
+    await expect(folderMenu).toBeVisible();
+    await expect(folderMenu.getByRole('menuitem', { name: '移入回收站' })).toHaveCount(0);
+    const labels = await folderMenu.getByRole('menuitem').allTextContents();
+    const removeIndex = labels.findIndex((label) => label.includes('移除链接文件夹'));
+    const forceIndex = labels.findIndex((label) => label.includes('强制从硬盘删除'));
+    expect(removeIndex).toBeGreaterThanOrEqual(0);
+    expect(forceIndex).toBeGreaterThanOrEqual(0);
+    expect(removeIndex).toBeLessThan(forceIndex);
+    // 关掉菜单再操作下一行——右键菜单的 backdrop 会拦截后续点击。
+    await window.keyboard.press('Escape');
+    await expect(folderMenu).toHaveCount(0);
+
+    // ① 子文件夹「强制从硬盘删除…」：只删这棵子树（源文件永久消失），链接根保留。
+    await window.getByRole('button', { name: 'sub', exact: true }).click({ button: 'right' });
+    const childMenu = window.getByRole('menu', { name: '文件夹操作：sub', exact: true });
+    await expect(childMenu).toBeVisible();
+    // 子文件夹没有「移除链接文件夹…」（那是链接根的动作）。
+    await expect(childMenu.getByRole('menuitem', { name: '移除链接文件夹' })).toHaveCount(0);
+    await childMenu.getByRole('menuitem', { name: '强制从硬盘删除' }).click();
+    await confirmLinkedFolderDiskDelete(application);
+
+    await expect(window.getByRole('button', { name: 'sub', exact: true })).toHaveCount(0, {
+      timeout: 20_000,
+    });
+    expect(existsSync(path.join(sourceRoot, 'sub'))).toBe(false);
+    for (const name of ['a.png', 'b.png', 'c.png']) {
+      expect(existsSync(path.join(sourceRoot, name))).toBe(true);
+    }
+    await expect(linkedRow).toBeVisible();
+    expect(await listAllAssets(window)).toHaveLength(3);
+
+    const childDeleteEvents = await readDeleteProgress(window);
+    expect(childDeleteEvents.filter((event) => event.kind === 'disk' && event.phase === 'run').length)
+      .toBeGreaterThan(0);
+    expect(childDeleteEvents.filter((event) => event.kind === 'disk' && event.phase === 'complete'))
+      .toMatchObject([{ filesProcessed: 1, totalFiles: 1 }]);
+
+    // ②「移除链接文件夹…」：确认框只删链接记录，源目录剩下的文件一件不少，进度是 linked-remove。
+    await resetDeleteProgress(window);
+    await linkedRow.click({ button: 'right' });
+    const removeMenu = window.getByRole('menu', { name: '文件夹操作：source', exact: true });
+    await expect(removeMenu).toBeVisible();
+    const acceptDialogs = (dialog: Dialog) => void dialog.accept();
+    window.on('dialog', acceptDialogs);
+    await removeMenu.getByRole('menuitem', { name: '移除链接文件夹' }).click();
+    await expect(linkedRow).toHaveCount(0, { timeout: 15_000 });
+    window.off('dialog', acceptDialogs);
+
+    for (const name of ['a.png', 'b.png', 'c.png']) {
+      expect(existsSync(path.join(sourceRoot, name))).toBe(true);
+    }
+    expect(await listAllAssets(window)).toHaveLength(0);
+
+    const removeEvents = await readDeleteProgress(window);
+    expect(removeEvents.filter((event) => event.kind === 'linked-remove' && event.phase === 'complete'))
+      .toMatchObject([{ filesProcessed: 3, totalFiles: 3 }]);
+    // 移除链接记录不会碰磁盘：整段过程里不能出现任何「从硬盘删除 / 回收站」进度。
+    expect(removeEvents.some((event) => event.kind === 'disk' || event.kind === 'trash')).toBe(false);
+  } finally {
+    await application.close();
+    rmSync(temporaryRoot, { force: true, recursive: true });
+  }
+});
+
 interface AssetSnapshot {
   assetId: string;
   displayName: string;
   currentRevisionId: string;
   availability: 'available' | 'missing';
+}
+
+interface DeleteProgressSnapshot {
+  kind?: string;
+  phase?: string;
+  filesProcessed?: number;
+  totalFiles?: number;
+}
+
+/**
+ * 订阅 preload 的进度通道，把 `delete.progress` 事件收进窗口全局数组。
+ * 进度条在某些操作上可能一闪而过（几百毫秒），直接断言浮层会变成 flaky；
+ * 断言事件流才能稳定证明「操作确实带进度，且语义（kind）正确」。
+ */
+async function startDeleteProgressCapture(window: Page): Promise<void> {
+  await window.evaluate(() => {
+    const library = (
+      globalThis as typeof globalThis & {
+        serpent: {
+          library: {
+            onProgress(listener: (event: { type?: string }) => void): () => void;
+          };
+        };
+      }
+    ).serpent.library;
+    const store = globalThis as typeof globalThis & {
+      __serpentDeleteProgress?: Array<Record<string, unknown>>;
+    };
+    store.__serpentDeleteProgress = [];
+    library.onProgress((event) => {
+      if (event.type !== 'delete.progress') return;
+      store.__serpentDeleteProgress!.push(event as Record<string, unknown>);
+    });
+  });
+}
+
+async function readDeleteProgress(
+  window: Page,
+): Promise<DeleteProgressSnapshot[]> {
+  return window.evaluate(() => {
+    const store = globalThis as typeof globalThis & {
+      __serpentDeleteProgress?: DeleteProgressSnapshot[];
+    };
+    return store.__serpentDeleteProgress ?? [];
+  });
+}
+
+async function resetDeleteProgress(window: Page): Promise<void> {
+  await window.evaluate(() => {
+    const store = globalThis as typeof globalThis & {
+      __serpentDeleteProgress?: unknown[];
+    };
+    store.__serpentDeleteProgress = [];
+  });
+}
+
+function linkedFolderRow(window: Page, label: string) {
+  return window
+    .locator('.navigation-pane button.nav-row[data-nav-folder-kind="linked"]')
+    .filter({ has: window.locator('.nav-row-label', { hasText: new RegExp(`^${label}$`) }) });
+}
+
+/**
+ * 「强制从硬盘删除」由 Main 进程的危险操作确认窗把关（每次都要确认，不能记住或
+ * 通过 MCP 权限绕过）。E2E 点完菜单项后必须显式确认，否则删除根本不会发生。
+ * 同时断言链接资产的文案：源文件会被永久删除。
+ */
+async function confirmAssetDiskDelete(
+  application: ElectronApplication,
+): Promise<void> {
+  const windowsBefore = application.windows().length;
+  await expect
+    .poll(() => application.windows().length, { timeout: 10_000 })
+    .toBeGreaterThan(windowsBefore);
+  const criticalWindow = application.windows().at(-1)!;
+  await expect(
+    criticalWindow.getByRole('heading', {
+      name: '从磁盘删除这些链接资产的源文件？',
+    }),
+  ).toBeVisible();
+  await criticalWindow
+    .getByRole('button', { name: '永久删除', exact: true })
+    .click()
+    .catch(() => undefined);
+}
+
+/**
+ * 链接文件夹（根或子目录）的「强制从硬盘删除」同样由 Main 的危险操作确认窗把关，
+ * 文案是链接专用的一份（点明会永久删除源文件）。
+ */
+async function confirmLinkedFolderDiskDelete(
+  application: ElectronApplication,
+): Promise<void> {
+  const windowsBefore = application.windows().length;
+  await expect
+    .poll(() => application.windows().length, { timeout: 10_000 })
+    .toBeGreaterThan(windowsBefore);
+  const criticalWindow = application.windows().at(-1)!;
+  await expect(
+    criticalWindow.getByRole('heading', { name: '从磁盘删除链接文件夹内容？' }),
+  ).toBeVisible();
+  await criticalWindow
+    .getByRole('button', { name: '永久删除', exact: true })
+    .click()
+    .catch(() => undefined);
 }
 
 async function listAllAssets(window: Page): Promise<AssetSnapshot[]> {

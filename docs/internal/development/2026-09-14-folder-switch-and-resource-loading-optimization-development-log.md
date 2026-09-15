@@ -654,3 +654,158 @@ secondary pump 每轮都在处理积压、**从未走到 RAW 探测分支**（`p
   多组反连接（计划 §3.9 要求以 `EXPLAIN QUERY PLAN` 和 20k/真实库扫描行数证明索引命中，
   本轮未做，也没有把简单 RAW-id 临时表方案照搬——计划已指出它会退化到约 250 ms）；
 - 每片「条数 + 连续毫秒」双预算尚未实现（当前仍是准入预算 + 2 秒节流）。
+
+## 18. 链接文件夹「移入回收站」事故与语义修订（`Serpent-7edf6e`）
+
+### 18.1 用户现场
+
+用户在开发实例里把一个约 1.5 万文件的链接文件夹「移入回收站」：界面长时间无响应、没有任何进度。
+日志给出确切现场——`worker.scheduler.stall` 每 30 秒报一次同一个 owner：
+
+```
+active=[{label:"linked-folder.delete-subtree", lane:"mutation", runningMs: 60259 → 511290}]
+waitedMs: 60016 → 511047        期间 4 次 main.library-request 以 WORKER_REQUEST_TIMEOUT 结束
+```
+
+即：**一个 mutation 命令独占调度器 8 分钟以上**，缩略图/浏览/状态查询全部被饿死，渲染端连
+「进行到哪了」都问不到；前段还有 40 次 `linked-folder.sync.asset-missing` + `assets.sync.reconciled`
+（删除期间链接 watcher 在反复对账）。
+
+### 18.2 根因（实测）
+
+`deleteLinkedFolderSubtree(deleteFromDisk:false)` 每 20 个资产一批调用 `deleteLinkedAssets`，
+而后者对**每个文件** spawn 一次系统回收站 helper：
+
+| 测量 | 结果 |
+| --- | --- |
+| 单文件 `windows-trash.exe` | **126 ms**（8 个文件 1010 ms） |
+| 1.5 万文件外推 | **约 31 分钟** |
+| 对照：整目录一次回收 2000 文件 | 629 ms（约快 400 倍） |
+| 多路径一次传参 | 有效（可批量化，但仍是系统回收站语义） |
+
+引入该实现的提交是 `a6bbe982`（2026-07-19，澄清 #7），代码注释写明当时的前提：
+「linked bytes are not library-owned, so they cannot enter the app trash」——即把「应用回收站」
+等同于「把字节搬进 `.serpent/trash`」。该前提写在 `0007` / `scope-decisions` 里，且当时就标了
+「需确认：链接资产是否也应有 Serpent 级回收站？」，一直没有答案。
+
+### 18.3 用户裁决与语义修订
+
+- **链接文件夹**：没有「移入回收站」。动作收敛为「移除链接文件夹…」（只删链接记录，源文件一律不动）
+  与「强制从硬盘删除…」（永久删除，**不再使用系统回收站**）。
+- **链接文件夹内的文件**：只有「强制从硬盘删除…」，没有「移入回收站」。
+- 「移除」与「强制删除」都必须有进度条。
+- 「转换为普通文件夹」（复制进库成为托管）另立 `Serpent-8e47de`（P2，暂不实现）。
+
+### 18.4 改动
+
+| 文件 | 改动 |
+| --- | --- |
+| `src/worker/library-service.ts` | 链接源文件删除改为**永久删除**（`rmAsync`，可注入 `removeLinkedSourceFile` 覆盖错误路径）；恢复日志从「每文件两次写」降到「每 25 个文件一次 + 失败/收尾」；`delete.progress`（`kind:'disk'`）覆盖整个删除；`removeLinkedFolder` 改为异步分批删除（500/批）+ 批间让出 + `delete.progress`（`kind:'linked-remove'`，可静默）；`deleteLinkedFolderSubtree` 子树一次交给统一例程（内部分批 20，单一进度流），`deleteFromDisk:false` 变成「只删链接记录」；`deleteAssetsFromDiskAsync` 接受链接资产并分流；删除 `trash` helper 与 `execFile` 依赖 |
+| `src/renderer/commands/*` | 链接文件夹不再提供「移入回收站」（`visible` 仅托管 + `run` 防御）；「从库中移除」改为「移除链接文件夹…」；「从硬盘中删除…」对链接显示为「强制从硬盘删除…」；链接资产同样只保留强制删除（含多选计数与标题） |
+| `src/renderer/{App.tsx,AssetContextMenu.tsx,use-folder-delete-actions.ts,use-browse-command-keyboard.ts}` | 拆掉所有直达旧路径的接线：键盘 Delete 对链接资产不再触发回收站、多选回收站不再含链接分支、`trashLinkedFolderSubtree` 动作整体移除 |
+| `forge.config.ts` / `scripts/verify-package.mjs` / `package.json` | 移除 `trash` 依赖与 asar 解包规则、移除包校验里的系统回收站 helper 断言（`npm uninstall trash` 掉了 31 个包） |
+| i18n / 文档 | 新增「移除链接文件夹…」「强制从硬盘删除…」中英文案；删除已无引用的 `linkedSubtreeTrashed`/`removeFromLibrary*`；修订 `0007:43`、`scope-decisions:22`；验收清单更新 `FOLDER-014` 并新增 `LINKED-REMOVE-001` |
+
+### 18.5 实测（2000 个链接文件的临时基准，仓库外运行）
+
+| 指标 | 旧实现（逐文件系统回收站，按 126 ms/文件推算） | 新实现 |
+| --- | ---: | ---: |
+| 2,000 文件删除耗时 | 约 252 s | **4,011 ms**（2.01 ms/文件） |
+| 进度事件 | 0（完全没有） | **219 个**（0→2000，终态 2000/2000） |
+| 失败数 / 残留索引 | — | 0 / 0 |
+| 源目录 | 进系统回收站 | 永久删除（源目录已移除） |
+
+外推到用户的 1.5 万文件：约 31 分钟 → **约 30 秒**，并且全程有进度。
+剩余的单文件成本主要来自「每批最多 20 个 id」的公开契约造成的批次开销（每批一次日志行 + 让出），
+若将来仍觉慢，可在公开契约之外为文件夹子树放宽批量。
+
+### 18.6 验证
+
+- `npm run test:unit`：**475 files / 3513 passed / 5 skipped**；
+- `npm run test:library-availability`：9 files / 216 passed / 1 skipped（改了 `library-service.ts`，强制）；
+- 受影响 worker 测试（trash-relink / folder-delete / linked-folders / media-job-summary-cache / raw-metadata-admission）：全部通过；其中 trash-relink 的 6 个用例按新语义改写（注入缝 `trashItem` → `removeLinkedSourceFile`，「落到系统回收站」断言 → 「源文件永久消失」），覆盖未减；
+- `npx tsc --noEmit` 与改动文件 eslint：0 error；
+- 打包链路：`npm run package` 首次因连 github.com 超时失败（`ETIMEDOUT 20.205.243.166:443`，与本次改动无关）；
+  带 `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/` 重试后 **`package` exit 0**、
+  **`verify:package` exit 0**（移除 `trash` 依赖与解包规则后，包校验仍通过），随后 `rebuild:native` FTS5 probe OK；
+- 临时基准脚本（2000 文件）用完即删，测量数字记在本节 §18.5。
+
+### 18.7 用户实测后的两处修正（同日）
+
+用户在真机点「移除链接文件夹」时看到两件事：
+
+1. **弹窗标题错成「正在清空回收站」**。原因不是文案，而是进度事件语义：`deleteOverlayTitleKey()`
+   把 `kind:'permanent'` 映射为 `progress.purgingTrash`（`permanent` 属于「清空回收站/永久删除」语义），
+   而我为「移除链接记录」复用了这个 kind。修正：协议 `delete.progress.kind` 新增 **`'linked-remove'`**，
+   `removeLinkedFolder` 与子树「只删链接记录」分支改用它，渲染端新增
+   `progress.removingLinkedFolder`（中英：「正在移除链接文件夹」/「Removing linked folder」），
+   单测补上该映射。回收站清空的 7 处 `permanent` 保持不变（替换时曾误伤，已逐一核对回改）。
+2. **菜单顺序**：用户要求「移除链接文件夹」排在「强制从硬盘删除」**之前**（移除只删链接记录、可再次导入，
+   比永久删除安全）。已调整 `AssetContextMenu.tsx` 的删除组顺序；托管分支不受影响（该位置本就没有
+   移除项）。
+3. E2E `tests/e2e/linked-folders.test.ts` 的三处断言仍按旧菜单点击「移入回收站」，已按新语义改写：
+   链接资产菜单**不再有**「移入回收站」、只有「强制从硬盘删除…」，对已缺失源文件的条目同样生效。
+
+### 18.8 链接资产「强制从硬盘删除」走通到端（同日）
+
+§18.7 改写后的 E2E 仍然红：`expect(getByText('delete-me.png')).toHaveCount(0)` 收到 1。**这不是删除逻辑没生效，
+而是测试漏了一步**——「强制从硬盘删除」在 Main 进程由危险操作确认窗把关
+（`criticalRendererRequest` 含 `asset.delete-from-disk.request`，每次都必须确认、不能记住、不能被 MCP 权限绕过），
+测试点完菜单项就直接断言，确认窗一直挂着，请求根本没发出去。按 `organization-search-trash.test.ts` 的既有写法
+（`application.windows()` 等确认窗 → 点确认）补上 `confirmAssetDiskDelete()`。
+
+顺带修正一处用户可见的语义不一致：链接资产的确认窗原本沿用托管资产的通用文案
+（「从磁盘删除这些资产？」+「选定的 N 项资产将被永久删除」），而同一操作的**文件夹**版本
+（`linked-folder.delete-subtree.request`，`deleteFromDisk: true`）早就写明「从磁盘删除链接文件夹内容？/ 源文件将被永久删除」。
+链接资产同样是**永久删除源文件、不进系统回收站**，文案必须点明：
+
+| 项 | 改动 |
+| --- | --- |
+| `src/shared/protocol/requests.ts` | `asset.delete-from-disk.request` 增加**可选** `locationKind: 'managed' \| 'linked' \| 'mixed'`，注释写明它只是文案提示，不参与删除决策 |
+| `src/main/index.ts` | 把 40 余行的嵌套三元拆成 `criticalRendererOperation()` + `criticalRendererCopy()`；新增 `linked-asset` 操作分支：标题「从磁盘删除这些链接资产的源文件？」、正文「选定 N 个链接资产的源文件将被永久删除，库内的链接记录也会一并移除。」、细节补「不会进入系统回收站」。`'mixed'` 沿用通用文案（通用说法对混合选择同样成立） |
+| `src/renderer/App.tsx` | 新增 `assetSelectionLocationKind()`：按当前列表的 `locationKind` 推导提示并随请求下发（渲染层知道、Main 无数据库访问、Worker 仍按 `assets.location_kind` 自行分流）；`requestAssetDiskDelete` / `deleteManagedAssetsFromDisk*` / `executeSelectionDiskDelete` 透传 |
+| `src/renderer/useBatchActions.ts` | 删除早已无人调用的 `trashLinkedAssets()`（旧「逐文件进系统回收站」实现）与 `LINKED_DELETE_CHUNK`；`deleteManagedAssetsFromDisk()` 增加可选 `locationKind` |
+| i18n | 删除随之成为死文案的 `toast.deleteLinkedPartial` / `deleteLinkedWithTrash` / `deleteLinkedFailed`（其中 `deleteLinkedWithTrash` 仍在描述「源文件已移入系统回收站」的旧行为） |
+| `src/worker/library-service.ts` | `deleteLinkedFolderSubtree` 的文档注释仍在描述「OS trash / 空目录回收」，按现行语义重写（无行为改动） |
+
+验证（本轮同树，最终一轮）：
+
+- `npx vitest run tests/unit`：475 files / **3514 passed** / 5 skipped（新增 1 例协议断言）；
+- `npm run test:library-availability`：9 files / **216 passed** / 1 skipped（改了 `library-service.ts`，强制跑完）；
+- `node scripts/run-vitest-with-electron.mjs run --config vitest.config.ts tests/worker/trash-relink.test.ts tests/worker/folder-delete.test.ts`：2 files / **105 passed** / 2 skipped；
+- `node scripts/run-e2e.mjs tests/e2e/linked-folders.test.ts`：**4 passed / 1 failed（1.1 min）**——新增的链接文件夹动作用例（本轮重写后连续 3 次绿）通过，
+  唯一失败是既有的移动身份用例，踩的正是下面 §18.8.1 的预存在 P1（`Expected 3, Received 4`，轮询 20 s 超时）；
+- `npm run typecheck`、`npm run lint`：0 error（lint 仅 1 条既有 warning，在本次未触碰的文件）；
+- 顺带跑的 `tests/e2e/critical-confirmation.test.ts` + `tests/e2e/organization-search-trash.test.ts`：前者全绿；后者部分用例在**导入步骤**失败
+  （页面快照是「导入失败 / A library transition is already in progress.」），与本次改动无关——这是已存在的 P1 `Serpent-283094`
+  （新建资源库后立刻导入必然踩到 transition 锁，工单里已记录「`git stash` 干净 HEAD 复跑同样失败」）。本次没有把该失败算作自己的绿，
+  也没有顺手改（属另一条轨道，需先定方案），已在工单下补记本轮复现。
+
+用例本身的两次返工（都记在这里，避免后来者重踩）：
+
+1. **第一版**用「移除链接文件夹 → 重新导入 → 强制从硬盘删除」覆盖两个动作，重导入这一步在本机不稳（菜单点击会被上一操作的 UI 刷新吃掉），
+   改为：先对链接根下的**子文件夹**执行「强制从硬盘删除…」（子树源文件永久消失、链接根保留），再对根执行「移除链接文件夹…」——
+   既不依赖重导入，又顺带覆盖了子目录子树删除这条路径；磁盘进度的总数相应是子树里的 1 个文件，移除进度是根下剩余的 3 个。
+2. 菜单顺序断言后必须 `Escape` 关掉右键菜单：菜单 backdrop 会拦截后续行上的点击（否则表现为 `locator.click` 30 s 超时）。
+
+#### 18.8.1 顺带定位到的预存在 P1：链接文件夹外部移动的身份归并会永久分叉（`Serpent-463571`）
+
+`linked-folders.test.ts` 的「外部移动保持资产身份」断言本轮间歇性红（本机 5 次 2 次红）。用**不含任何删除操作**的最小临时 E2E
+（导入链接文件夹 → `renameSync` 移动一个文件 → 点「刷新磁盘变化」→ 轮询 `listAssets`）定位：
+
+| 树 | 运行 | 结果 |
+| --- | --- | --- |
+| 干净 HEAD `13115e09`（`git worktree` 独立检出，无未提交改动） | 2 次 | **2/2 失败**：`b.png` 停在 missing + `moved-b.png` 变成新资产，24 秒 12 次轮询都不收敛 |
+| 当前工作树 | 2 次 | 1 次不收敛、1 次立即收敛 |
+
+根因：手动刷新走 `refreshManagedAssets()` → `reconcileMovedLinkedAssets()`（按 `source_device + source_inode` 认领新路径，正确），
+而 watcher 增量路径 `refreshLinkedWatcherFileChanges()` 在构造 discovery 时**预设** `movedLinkedAssetsReconciled: true`，
+从不做移动归并却照常落库（旧路径 missing + 新路径新资产）；一旦它先跑，后续全量刷新再也认领不回那条新记录
+（归并只处理 `entry.assetId === undefined` 的路径），分叉永久保留。**与本次链接文件夹删除改动无关**
+（该路径不在本次 diff 内，且不涉及任何删除的脚本即可复现），已按 P1 开单并给出限定作用域的修复方向，
+是否本轮修由用户决定；测试里的断言按设计意图保留（不为了让套件变绿而放宽），只把轮询上限写成 20 秒并在注释里指向工单。
+
+> **方法作废（2026-09-15 用户要求）**：上面的「`git worktree` 独立检出」只是当时的做法，本项目现已**禁止使用 `git worktree`**
+> （见 `AGENTS.md` §磁盘与工作区洁净纪律 第 5 条、`docs/internal/development-process.md`，「`Serpent-9b1af8`」记录了这次
+> junction 反噬事故）。后续要做「干净 HEAD vs 当前改动」对照，改用 `git stash`（跑完 `git stash pop`）或把对照产物复制到
+> 仓库外目录；那条独立检出也应在交接时清理掉，不要在其上继续开发。

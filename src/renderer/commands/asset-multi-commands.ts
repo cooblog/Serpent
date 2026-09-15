@@ -212,7 +212,7 @@ export const assetMultiCommandDefinitions: readonly AssetMultiCommandDefinition[
       id: 'assets.move-to-trash',
       title: (ctx) =>
         t(ctx, 'command.assets.moveToTrash', {
-          count: ctx.managedCount + ctx.linkedCount + ctx.folderCount,
+          count: ctx.managedCount + ctx.folderCount,
         }),
       group: 'delete',
       shortcut: {
@@ -220,31 +220,37 @@ export const assetMultiCommandDefinitions: readonly AssetMultiCommandDefinition[
         windows: { label: 'Delete', key: 'Delete' },
       },
       visible: (ctx) => !ctx.trashedAll,
+      // 2026-09-15 用户决定：链接资产不再参与「移入回收站」（链接条目不属于资源库，
+      // 之前会逐个文件送进系统回收站）。链接资产只走下面的强制删除。
       disabledReason: (ctx) =>
-        ctx.managedCount + ctx.linkedCount + ctx.folderCount === 0
+        ctx.managedCount + ctx.folderCount === 0
           ? t(ctx, 'command.reason.noManaged')
           : null,
       run: (ctx) =>
         ctx.actions.moveToTrash(
-          [...ctx.managedAssetIds, ...ctx.linkedAssetIds],
+          [...ctx.managedAssetIds],
           [...ctx.processFolderIds],
         ),
     },
     {
       id: 'assets.delete-from-disk',
       title: (ctx) =>
-        t(ctx, 'command.assets.deleteFromDisk', {
-          count: ctx.managedCount + ctx.folderCount,
-        }),
+        t(
+          ctx,
+          ctx.managedCount + ctx.folderCount === 0
+            ? 'command.assets.forceDeleteFromDisk'
+            : 'command.assets.deleteFromDisk',
+          { count: ctx.managedCount + ctx.folderCount + ctx.linkedCount },
+        ),
       group: 'delete',
       visible: (ctx) => !ctx.trashedAll,
       disabledReason: (ctx) =>
-        ctx.managedCount + ctx.folderCount === 0
+        ctx.managedCount + ctx.folderCount + ctx.linkedCount === 0
           ? t(ctx, 'command.reason.noManaged')
           : null,
       run: (ctx) =>
         ctx.actions.deleteFromDisk(
-          [...ctx.managedAssetIds],
+          [...ctx.managedAssetIds, ...ctx.linkedAssetIds],
           [...ctx.processFolderIds],
         ),
     },

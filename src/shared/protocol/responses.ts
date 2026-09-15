@@ -350,7 +350,9 @@ export const deleteProgressEventSchema = z.strictObject({
   type: z.literal('delete.progress'),
   operationId: nonBlankString,
   libraryId: nonBlankString,
-  kind: z.enum(['trash', 'disk', 'permanent']),
+  // 2026-09-15：新增 'linked-remove'——「移除链接文件夹 / 链接记录」既不是回收站操作也不动磁盘，
+  // 复用 'permanent' 会让遮罩标题显示成「正在清空回收站」（'permanent' 是回收站清空语义）。
+  kind: z.enum(['trash', 'disk', 'permanent', 'linked-remove']),
   phase: z.enum(['run', 'complete', 'failed', 'cancelled']),
   /** True when disk delete can be cancelled between files. */
   cancelable: z.boolean().optional(),

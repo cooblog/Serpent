@@ -548,7 +548,12 @@ export interface SerpentLibraryApi {
     lineCount: number;
   }>>;
   deleteAssetsPermanent(input: { libraryId: string; assetIds: string[] }): Promise<LibraryApiResult<{ deletedCount: number; skippedCount: number; skippedReasons: Array<{ assetId: string; reason: PublicErrorReason }> }>>;
-  deleteAssetsFromDisk(input: { libraryId: string; assetIds: string[] }): Promise<LibraryApiResult<{ deletedCount: number }>>;
+  deleteAssetsFromDisk(input: {
+    libraryId: string;
+    assetIds: string[];
+    /** Confirmation-copy hint only; the worker resolves the real location kinds. */
+    locationKind?: 'managed' | 'linked' | 'mixed';
+  }): Promise<LibraryApiResult<{ deletedCount: number }>>;
   cancelDiskDelete(input: { operationId: string }): Promise<LibraryApiResult<{ operationId: string }>>;
   listTrash(input: { libraryId: string }): Promise<LibraryApiResult<AssetSummary[]>>;
   listTrashedFolders(input: { libraryId: string }): Promise<LibraryApiResult<TrashedFolderSummary[]>>;

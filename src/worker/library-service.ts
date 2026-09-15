@@ -38,7 +38,6 @@ import {
 import path from 'node:path';
 import { removeLibraryRootWithRetry, removePathWithSyncRetry, renamePathWithRetry } from './windows-fs-retry';
 import {
-  execFile,
   execFileSync,
   spawn,
   type ChildProcess,
@@ -4478,8 +4477,11 @@ export interface LibraryServiceOptions {
   mediaComponentProbe?: (component: MediaAutoRepairComponent) => boolean;
   /** Injectable spawn for binary subprocesses (ffmpeg/ffprobe/oiiotool). */
   spawnFn?: SpawnFunction;
-  /** Moves one absolute source path to the OS system trash. */
-  trashItem?: (sourcePath: string) => Promise<void>;
+  /**
+   * 永久删除一个链接资产的源文件。可注入，用于覆盖权限/占用/磁盘错误等路径。
+   * 2026-09-15 起链接资产的删除**不再使用系统回收站**。
+   */
+  removeLinkedSourceFile?: (sourcePath: string) => Promise<void>;
   /** Test-only seam invoked after bounded-write lease acquisition. */
   beforeBoundedWriteTransaction?: (libraryId: string) => void;
   /** Test-only seam invoked immediately before the v23+ migration transaction. */
@@ -4650,35 +4652,15 @@ const DEFAULT_ASSET_OBSERVER_FACTORY: AssetObserverFactory = (assetsPath, onEven
   return observer;
 };
 
-async function defaultTrashItem(sourcePath: string): Promise<void> {
-  const binaryName = process.platform === 'darwin'
-    ? 'macos-trash'
-    : process.platform === 'win32'
-      ? 'windows-trash.exe'
-      : undefined;
-  if (!binaryName) throw new Error(`System trash is unsupported on ${process.platform}.`);
-
-  // trash@10.1.1 vendors maintained native helpers for macOS and Windows.
-  // Resolve the pinned package without loading its ESM entry, then redirect the
-  // helper to app.asar.unpacked because executable files cannot run from ASAR.
-  const packageEntry = require.resolve('trash');
-  const asarSegment = `${path.sep}app.asar${path.sep}`;
-  let binaryPath = path.join(path.dirname(packageEntry), 'lib', binaryName);
-  if (binaryPath.includes(asarSegment)) {
-    binaryPath = binaryPath.replace(
-      asarSegment,
-      `${path.sep}app.asar.unpacked${path.sep}`,
-    );
-  }
-
-  await new Promise<void>((resolve, reject) => {
-    execFile(
-      binaryPath,
-      [sourcePath],
-      { windowsHide: true },
-      (error) => error ? reject(error) : resolve(),
-    );
-  });
+/**
+ * 永久删除一个链接资产的源文件。
+ *
+ * 2026-09-15 用户决定：链接资产/文件夹的删除动作就是「强制从硬盘删除」，不再使用
+ * 系统回收站。旧实现为每个文件 spawn 一次 `trash` 的本地 helper（实测 126 ms/文件，
+ * 1.5 万文件约 31 分钟，并且全程独占 Worker 调度器），既慢又不可在库内恢复。
+ */
+async function defaultRemoveLinkedSourceFile(sourcePath: string): Promise<void> {
+  await rmAsync(sourcePath, { force: true, maxRetries: 5, retryDelay: 120 });
 }
 
 export class SimulatedCrashError extends Error {}
@@ -13751,14 +13733,17 @@ export class LibraryService {
   }
 
   /**
-   * Clarification #7: remove a linked folder root from the library index.
-   * Source files on disk are never touched. Linked child paths use
-   * trashLinkedFolderSubtree / deleteLinkedFolderSubtreeFromDisk instead.
+   * Clarification #7（2026-09-15 修订）：移除链接文件夹 = 只删除链接记录，源文件从不改动。
+   * 链接子树删完后需要清掉链接记录时，由调用方传 `progress: 'silent'`，避免在同一个操作里
+   * 再发一条空进度流（否则界面会看到一条 0/0 的终态进度）。
    */
-  removeLinkedFolder(input: {
-    libraryId: string;
-    folderId: string;
-  }): { removedAssetCount: number } {
+  async removeLinkedFolder(
+    input: {
+      libraryId: string;
+      folderId: string;
+    },
+    options: { progress?: 'emit' | 'silent' } = {},
+  ): Promise<{ removedAssetCount: number }> {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     this.assertLibraryWritable(openLibrary);
     const linked = openLibrary.connection
@@ -13775,14 +13760,53 @@ export class LibraryService {
       )
       .all(input.folderId) as Array<{ asset_id: string }>;
 
+    // 2026-09-15：索引行的删除分批进行，批间让出事件循环。旧实现在单个事务里逐行
+    // DELETE——1.5 万条记录会长时间独占 mutation 车道，且界面没有任何进度反馈。
+    const operationId = randomUUID();
+    const totalFiles = assetRows.length;
+    const removeThrottle = createProgressThrottle();
+    const silent = options.progress === 'silent';
+    let processed = 0;
+    const emitRun = (force = false): void => {
+      if (silent) return;
+      if (!removeThrottle.shouldEmit(force || processed === totalFiles)) return;
+      this.emitDeleteProgress({
+        operationId,
+        libraryId: input.libraryId,
+        kind: 'linked-remove',
+        phase: 'run',
+        filesProcessed: processed,
+        totalFiles,
+      });
+    };
+    if (!silent) {
+      this.emitDeleteProgress({
+        operationId,
+        libraryId: input.libraryId,
+        kind: 'linked-remove',
+        phase: 'run',
+        filesProcessed: 0,
+        totalFiles,
+      });
+    }
+
+    const REMOVE_CHUNK_SIZE = 500;
+    const removeAsset = openLibrary.connection.prepare(
+      'DELETE FROM assets WHERE asset_id = ?',
+    );
+    for (let offset = 0; offset < assetRows.length; offset += REMOVE_CHUNK_SIZE) {
+      const chunk = assetRows.slice(offset, offset + REMOVE_CHUNK_SIZE);
+      openLibrary.connection.transaction(() => {
+        for (const row of chunk) removeAsset.run(row.asset_id);
+      })();
+      processed += chunk.length;
+      emitRun();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+
     openLibrary.connection.transaction(() => {
-      for (const row of assetRows) {
-        openLibrary.connection
-          .prepare('DELETE FROM assets WHERE asset_id = ?')
-          .run(row.asset_id);
-      }
       openLibrary.connection
-        .prepare("DELETE FROM explicit_ignored_paths WHERE linked_folder_id = ?")
+        .prepare('DELETE FROM explicit_ignored_paths WHERE linked_folder_id = ?')
         .run(input.folderId);
       const removed = openLibrary.connection
         .prepare('DELETE FROM linked_folders WHERE folder_id = ?')
@@ -13793,18 +13817,29 @@ export class LibraryService {
     })();
 
     this.stopLinkedWatcher(input.libraryId, input.folderId);
+    if (!silent) {
+      this.emitDeleteProgress({
+        operationId,
+        libraryId: input.libraryId,
+        kind: 'linked-remove',
+        phase: 'complete',
+        filesProcessed: totalFiles,
+        totalFiles,
+      });
+    }
     return { removedAssetCount: assetRows.length };
   }
 
   /**
-   * Clarification #7: delete a linked folder path.
-   * - relativePath "": the linked folder root — OS trash (or rm) of the
-   *   source tree, then drop the library index (same as removeLinkedFolder
-   *   after the bytes are gone).
-   * - relativePath child: a linked *child* folder.
-   * - deleteFromDisk false: move sources to the OS trash (linked bytes are not
-   *   library-owned, so they cannot enter the app trash) and drop index rows.
-   * - deleteFromDisk true: irreversible rm of the directory tree + rows.
+   * Delete a linked folder path (2026-09-15 user decision: links never enter the
+   * OS recycle bin, and the library trash never owns linked bytes).
+   * - `deleteFromDisk: true`: permanently delete the source files of the whole
+   *   subtree (one unified progress stream), remove source leftovers that were
+   *   never indexed, then drop the index rows.
+   * - `deleteFromDisk: false`: remove only the link records; the external source
+   *   files are left untouched (same semantics as 「移除链接文件夹」).
+   * - `relativePath === ''` targets the linked folder root, which also removes
+   *   the `linked_folders` row; a child path keeps the root link in place.
    */
   async deleteLinkedFolderSubtree(input: {
     libraryId: string;
@@ -13871,63 +13906,92 @@ export class LibraryService {
       : path.join(linked.absolute_root_path, ...relativePath.split('/'));
 
     if (input.deleteFromDisk) {
+      // 2026-09-15 用户决定：链接文件夹的删除动作是「强制从硬盘删除」——永久删除源
+      // 文件（不再送系统回收站），并带进度。整棵子树一次交给同一个例程，避免旧实现
+      // 「每 20 个一批」造成 750 次独立操作与 750 段碎片进度。
+      const ids = assetRows.map((row) => row.asset_id);
+      const result = ids.length > 0
+        ? await this.deleteLinkedAssetsInBatches({
+            libraryId: input.libraryId,
+            assetIds: ids,
+          })
+        : { deletedCount: 0, failedCount: 0 };
       if (linked.status === 'available' && existsSync(dirPath)) {
         try {
+          // 未纳入索引的文件（其它类型或已被忽略）同样属于本次删除目标。
           rmSync(dirPath, { force: true, recursive: true });
         } catch (error) {
           throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
         }
       }
       if (isLinkedRoot) {
-        return {
-          deletedAssetCount: this.removeLinkedFolder({
+        // 进度由上面的批量删除统一上报；这里只清链接记录，避免再冒出一条 0/0 的进度。
+        await this.removeLinkedFolder(
+          {
             libraryId: input.libraryId,
             folderId: input.linkedFolderId,
-          }).removedAssetCount,
-          failedCount: 0,
-        };
+          },
+          { progress: 'silent' },
+        );
       }
-      if (assetRows.length > 0) {
-        openLibrary.connection.transaction(() => {
-          for (const row of assetRows) {
-            openLibrary.connection
-              .prepare('DELETE FROM assets WHERE asset_id = ?')
-              .run(row.asset_id);
-          }
-        })();
-      }
-      return { deletedAssetCount: assetRows.length, failedCount: 0 };
+      return {
+        deletedAssetCount: result.deletedCount,
+        failedCount: result.failedCount,
+      };
     }
 
-    // Default: OS trash for indexed files (chunked), then trash leftover dir.
-    let deletedAssetCount = 0;
-    let failedCount = 0;
-    const ids = assetRows.map((row) => row.asset_id);
-    for (let offset = 0; offset < ids.length; offset += 20) {
-      const chunk = ids.slice(offset, offset + 20);
-      const result = await this.deleteLinkedAssets({
-        libraryId: input.libraryId,
-        assetIds: chunk,
-        deleteSourceFile: true,
-      });
-      deletedAssetCount += result.deletedCount;
-      failedCount += result.failedCount;
-    }
-    if (linked.status === 'available' && existsSync(dirPath)) {
-      const trashItem = this.options.trashItem ?? defaultTrashItem;
-      try {
-        await trashItem(dirPath);
-      } catch {
-        // Files already trashed; directory cleanup is best-effort.
-      }
-    }
-    if (isLinkedRoot && failedCount === 0) {
-      this.removeLinkedFolder({
+    // 只删链接记录：不动源文件（与「移除链接文件夹」同语义）。旧的逐文件系统回收站
+    // 分支已按 2026-09-15 用户决定移除——它会为每个文件 spawn 一次系统回收站 helper。
+    if (isLinkedRoot) {
+      const removed = await this.removeLinkedFolder({
         libraryId: input.libraryId,
         folderId: input.linkedFolderId,
       });
+      return { deletedAssetCount: removed.removedAssetCount, failedCount: 0 };
     }
-    return { deletedAssetCount, failedCount };
+    const childIds = assetRows.map((row) => row.asset_id);
+    const removeOperationId = randomUUID();
+    const removeTotalFiles = childIds.length;
+    const removeThrottle = createProgressThrottle();
+    let removeProcessed = 0;
+    this.emitDeleteProgress({
+      operationId: removeOperationId,
+      libraryId: input.libraryId,
+      kind: 'linked-remove',
+      phase: 'run',
+      filesProcessed: 0,
+      totalFiles: removeTotalFiles,
+    });
+    const removeAsset = openLibrary.connection.prepare(
+      'DELETE FROM assets WHERE asset_id = ?',
+    );
+    for (let offset = 0; offset < childIds.length; offset += 500) {
+      const chunk = childIds.slice(offset, offset + 500);
+      openLibrary.connection.transaction(() => {
+        for (const assetId of chunk) removeAsset.run(assetId);
+      })();
+      removeProcessed += chunk.length;
+      if (removeThrottle.shouldEmit(removeProcessed === removeTotalFiles)) {
+        this.emitDeleteProgress({
+          operationId: removeOperationId,
+          libraryId: input.libraryId,
+          kind: 'linked-remove',
+          phase: 'run',
+          filesProcessed: removeProcessed,
+          totalFiles: removeTotalFiles,
+        });
+      }
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    this.emitDeleteProgress({
+      operationId: removeOperationId,
+      libraryId: input.libraryId,
+      kind: 'linked-remove',
+      phase: 'complete',
+      filesProcessed: removeTotalFiles,
+      totalFiles: removeTotalFiles,
+    });
+    return { deletedAssetCount: childIds.length, failedCount: 0 };
   }
 
   /**
@@ -14527,27 +14591,118 @@ export class LibraryService {
       for (const id of assetIds) {
         const row = rows.find((candidate) => candidate.asset_id === id);
         if (!row) throw new LibraryServiceError('ASSET_NOT_FOUND');
-        if (row.location_kind !== 'managed') {
-          throw new LibraryServiceError('ASSET_NOT_MANAGED');
-        }
         if (row.deleted_at !== null) {
           throw new LibraryServiceError('ASSET_ALREADY_TRASHED');
         }
       }
     }
-    if (rows.some((row) => row.location_kind !== 'managed')) {
-      throw new LibraryServiceError('ASSET_NOT_MANAGED');
-    }
     if (rows.some((row) => row.deleted_at !== null)) {
       throw new LibraryServiceError('ASSET_ALREADY_TRASHED');
     }
-    await this.cancelMediaJobsForAssets(openLibrary, assetIds);
-    await this.deleteActiveManagedAssetsFromDiskWithProgress(
-      input.libraryId,
-      openLibrary,
-      assetIds,
-    );
+    // 2026-09-15 用户决定：链接资产的唯一删除动作也是「强制从硬盘删除」。托管与链接
+    // 在同一个命令里分流，各自的例程负责文件删除、产物/任务清理、索引行与进度。
+    const managedAssetIds = rows
+      .filter((row) => row.location_kind === 'managed')
+      .map((row) => row.asset_id);
+    const linkedAssetIds = rows
+      .filter((row) => row.location_kind !== 'managed')
+      .map((row) => row.asset_id);
+
+    if (managedAssetIds.length > 0) {
+      await this.cancelMediaJobsForAssets(openLibrary, managedAssetIds);
+      await this.deleteActiveManagedAssetsFromDiskWithProgress(
+        input.libraryId,
+        openLibrary,
+        managedAssetIds,
+      );
+    }
+    if (linkedAssetIds.length > 0) {
+      const linkedResult = await this.deleteLinkedAssetsInBatches({
+        libraryId: input.libraryId,
+        assetIds: linkedAssetIds,
+      });
+      if (linkedResult.failedCount > 0 && managedAssetIds.length === 0) {
+        throw new LibraryServiceError('ASSET_SOURCE_TRASH_FAILED', {
+          reason: linkedResult.failures[0]?.reason ?? 'SOURCE_TRASH_FAILED',
+        });
+      }
+    }
     return { deletedCount: logicalCount };
+  }
+
+  /**
+   * 公开契约 `deleteLinkedAssets` 每批最多 20 个 id；链接文件夹子树与多选删除都可能涉及
+   * 上万个文件，因此在这里内部分批，并把所有批次合并成**同一个**进度流——否则界面会出现
+   * 数百段碎片进度。批间让出事件循环，避免长时间独占调度器。
+   */
+  private async deleteLinkedAssetsInBatches(input: {
+    libraryId: string;
+    assetIds: string[];
+  }): Promise<{
+    deletedCount: number;
+    failedCount: number;
+    failures: Array<{ assetId: string; reason: PublicErrorReason }>;
+  }> {
+    const operationId = randomUUID();
+    const totalFiles = input.assetIds.length;
+    const throttle = createProgressThrottle();
+    let processed = 0;
+    const emitRun = (force = false): void => {
+      if (!throttle.shouldEmit(force || processed === totalFiles)) return;
+      this.emitDeleteProgress({
+        operationId,
+        libraryId: input.libraryId,
+        kind: 'disk',
+        phase: 'run',
+        cancelable: true,
+        filesProcessed: processed,
+        totalFiles,
+      });
+    };
+    this.emitDeleteProgress({
+      operationId,
+      libraryId: input.libraryId,
+      kind: 'disk',
+      phase: 'run',
+      cancelable: true,
+      filesProcessed: 0,
+      totalFiles,
+    });
+
+    const LINKED_DELETE_CHUNK_SIZE = 20;
+    let deletedCount = 0;
+    let failedCount = 0;
+    const failures: Array<{ assetId: string; reason: PublicErrorReason }> = [];
+    for (let offset = 0; offset < totalFiles; offset += LINKED_DELETE_CHUNK_SIZE) {
+      const chunk = input.assetIds.slice(offset, offset + LINKED_DELETE_CHUNK_SIZE);
+      const result = await this.deleteLinkedAssets({
+        libraryId: input.libraryId,
+        assetIds: chunk,
+        deleteSourceFile: true,
+        progress: {
+          operationId,
+          totalFiles,
+          processedBefore: processed,
+          onProcessed: (next) => {
+            processed = next;
+          },
+        },
+      });
+      deletedCount += result.deletedCount;
+      failedCount += result.failedCount;
+      failures.push(...result.failures);
+      emitRun();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    this.emitDeleteProgress({
+      operationId,
+      libraryId: input.libraryId,
+      kind: 'disk',
+      phase: failedCount > 0 ? 'failed' : 'complete',
+      filesProcessed: processed,
+      totalFiles,
+    });
+    return { deletedCount, failedCount, failures };
   }
 
   private async deleteActiveManagedAssetsFromDiskWithProgress(
@@ -37316,6 +37471,18 @@ export class LibraryService {
     libraryId: string;
     assetIds: string[];
     deleteSourceFile: boolean;
+    /**
+     * 内部调用（文件夹子树、从磁盘删除的链接项）：把多批删除合并到同一个进度流。
+     * 公开契约仍是「每批最多 20 个 id」，由调用方分批并传入累计进度。
+     */
+    progress?: {
+      operationId: string;
+      totalFiles: number;
+      /** 本批开始前已处理的文件数。 */
+      processedBefore: number;
+      /** 本批结束时回调累计处理数（用于统一进度与最终 complete 事件）。 */
+      onProcessed: (processed: number) => void;
+    };
   }): Promise<{
     deletedCount: number;
     failedCount: number;
@@ -37380,8 +37547,15 @@ export class LibraryService {
       return { deletedCount: orderedRows.length, failedCount: 0, failures: [] };
     }
 
-    const trashItem = this.options.trashItem ?? defaultTrashItem;
-    const operationId = randomUUID();
+    // 2026-09-15 用户决定：链接资产只有「强制从硬盘删除」——永久删除源文件，不再送
+    // 系统回收站。旧实现对每个文件 spawn 一次系统回收站 helper（实测 126 ms/文件，
+    // 1.5 万文件约 31 分钟），并在这段期间独占调度器。
+    const removeSourceFile =
+      this.options.removeLinkedSourceFile ?? defaultRemoveLinkedSourceFile;
+    // 恢复日志（file_operations）每批一行、id 唯一；进度流可以由调用方跨批合并，
+    // 两者必须解耦，否则第二批插入同一 operation_id 会撞主键。
+    const journalOperationId = randomUUID();
+    const progressOperationId = input.progress?.operationId ?? journalOperationId;
     const now = new Date().toISOString();
     const manifest: LinkedTrashOperationManifest = {
       version: 2,
@@ -37392,6 +37566,32 @@ export class LibraryService {
     };
     const trashedRows: typeof orderedRows = [];
     const failures: Array<{ assetId: string; reason: PublicErrorReason }> = [];
+    const totalFiles = input.progress?.totalFiles ?? orderedRows.length;
+    const deleteThrottle = createProgressThrottle();
+    let filesProcessed = input.progress?.processedBefore ?? 0;
+    const emitRun = (force = false): void => {
+      if (!deleteThrottle.shouldEmit(force || filesProcessed === totalFiles)) return;
+      this.emitDeleteProgress({
+        operationId: progressOperationId,
+        libraryId: input.libraryId,
+        kind: 'disk',
+        phase: 'run',
+        cancelable: true,
+        filesProcessed,
+        totalFiles,
+      });
+    };
+    if (input.progress === undefined) {
+      this.emitDeleteProgress({
+        operationId: progressOperationId,
+        libraryId: input.libraryId,
+        kind: 'disk',
+        phase: 'run',
+        cancelable: true,
+        filesProcessed: 0,
+        totalFiles,
+      });
+    }
 
     openLibrary.connection
       .prepare(
@@ -37399,16 +37599,24 @@ export class LibraryService {
            (operation_id, kind, status, manifest_json, error_code, created_at, updated_at)
          VALUES (?, 'delete-linked-source', 'applying', ?, NULL, ?, ?)`,
       )
-      .run(operationId, JSON.stringify(manifest), now, now);
+      .run(journalOperationId, JSON.stringify(manifest), now, now);
+
+    // 恢复日志按批落盘：旧实现每个文件写两次 manifest_json（1.5 万文件 ≈ 3 万次
+    // SQLite 写）。删除本身是原子的（文件要么在、要么不在），所以最多 25 个文件的
+    // 进度滞后不会破坏恢复语义——重放时已消失的文件按「已删除」处理即可。
+    const JOURNAL_CHECKPOINT_EVERY = 25;
+    const writeJournal = (force = false): void => {
+      if (!force && filesProcessed % JOURNAL_CHECKPOINT_EVERY !== 0) return;
+      openLibrary.connection
+        .prepare('UPDATE file_operations SET manifest_json = ?, updated_at = ? WHERE operation_id = ?')
+        .run(JSON.stringify(manifest), new Date().toISOString(), journalOperationId);
+    };
 
     for (const row of orderedRows) {
       let sourcePath: string | undefined;
-      let trashAttempted = false;
+      let deleteAttempted = false;
       try {
         manifest.inFlightAssetId = row.asset_id;
-        openLibrary.connection
-          .prepare('UPDATE file_operations SET manifest_json = ?, updated_at = ? WHERE operation_id = ?')
-          .run(JSON.stringify(manifest), new Date().toISOString(), operationId);
         sourcePath = this.linkedAssetPath(
           openLibrary,
           row.linked_folder_id,
@@ -37420,8 +37628,8 @@ export class LibraryService {
             reason: 'UNSUPPORTED_FILE_ENTRY',
           });
         }
-        trashAttempted = true;
-        await trashItem(sourcePath);
+        deleteAttempted = true;
+        await removeSourceFile(sourcePath);
         if (existsSync(sourcePath)) {
           throw new LibraryServiceError('ASSET_SOURCE_TRASH_FAILED', {
             reason: 'SOURCE_TRASH_FAILED',
@@ -37429,9 +37637,9 @@ export class LibraryService {
         }
         manifest.trashedAssetIds.push(row.asset_id);
         manifest.inFlightAssetId = null;
-        openLibrary.connection
-          .prepare('UPDATE file_operations SET manifest_json = ?, updated_at = ? WHERE operation_id = ?')
-          .run(JSON.stringify(manifest), new Date().toISOString(), operationId);
+        filesProcessed += 1;
+        writeJournal();
+        emitRun();
       } catch (error) {
         const linkedFolder = openLibrary.connection
           .prepare('SELECT absolute_root_path, status FROM linked_folders WHERE folder_id = ?')
@@ -37449,35 +37657,35 @@ export class LibraryService {
           // so this is not an offline/uncertain-source case.
           manifest.trashedAssetIds.push(row.asset_id);
           manifest.inFlightAssetId = null;
-          openLibrary.connection
-            .prepare('UPDATE file_operations SET manifest_json = ?, updated_at = ? WHERE operation_id = ?')
-            .run(JSON.stringify(manifest), new Date().toISOString(), operationId);
+          filesProcessed += 1;
+          writeJournal(true);
+          emitRun();
           trashedRows.push(row);
           continue;
         }
-        const sourceGoneAfterTrash = trashAttempted && sourcePath !== undefined && !existsSync(sourcePath);
-        const sourceWasTrashed = manifest.trashedAssetIds.includes(row.asset_id) ||
-          (sourceGoneAfterTrash && linkedRootOnline);
-        const sourceStateUncertain = sourceGoneAfterTrash && !linkedRootOnline;
-        if (sourceWasTrashed && !manifest.trashedAssetIds.includes(row.asset_id)) {
+        const sourceGoneAfterDelete = deleteAttempted && sourcePath !== undefined && !existsSync(sourcePath);
+        const sourceWasDeleted = manifest.trashedAssetIds.includes(row.asset_id) ||
+          (sourceGoneAfterDelete && linkedRootOnline);
+        const sourceStateUncertain = sourceGoneAfterDelete && !linkedRootOnline;
+        if (sourceWasDeleted && !manifest.trashedAssetIds.includes(row.asset_id)) {
           manifest.trashedAssetIds.push(row.asset_id);
         }
         manifest.inFlightAssetId = sourceStateUncertain ? row.asset_id : null;
+        filesProcessed += 1;
         try {
-          openLibrary.connection
-            .prepare('UPDATE file_operations SET manifest_json = ?, updated_at = ? WHERE operation_id = ?')
-            .run(JSON.stringify(manifest), new Date().toISOString(), operationId);
+          writeJournal(true);
         } catch {
           // The applying journal remains authoritative. Recovery only infers a
-          // trashed in-flight item while its linked root is confirmed online.
+          // deleted in-flight item while its linked root is confirmed online.
         }
-        if (sourceWasTrashed || sourceStateUncertain) {
+        emitRun();
+        if (sourceWasDeleted || sourceStateUncertain) {
           const failure = new LibraryServiceError('ASSET_SOURCE_TRASH_FAILED', {
             cause: error,
             reason: 'SOURCE_TRASH_RECONCILIATION_REQUIRED',
           });
-          this.diagnose('asset.delete-linked.persist-trash-progress', failure, {
-            operationId,
+          this.diagnose('asset.delete-linked.persist-delete-progress', failure, {
+            operationId: progressOperationId,
             libraryId: input.libraryId,
             assetId: row.asset_id,
           });
@@ -37492,8 +37700,8 @@ export class LibraryService {
             });
         const reason = failure.reason ?? 'SOURCE_TRASH_FAILED';
         failures.push({ assetId: row.asset_id, reason });
-        this.diagnose('asset.delete-linked.trash-source', failure, {
-          operationId,
+        this.diagnose('asset.delete-linked.delete-source', failure, {
+          operationId: progressOperationId,
           libraryId: input.libraryId,
           assetId: row.asset_id,
         });
@@ -37501,6 +37709,9 @@ export class LibraryService {
       }
       trashedRows.push(row);
     }
+
+    writeJournal(true);
+    emitRun(true);
 
     try {
       openLibrary.connection.transaction(() => {
@@ -37519,7 +37730,7 @@ export class LibraryService {
                 SET status = 'committed', manifest_json = ?, error_code = NULL, updated_at = ?
               WHERE operation_id = ?`,
           )
-          .run(JSON.stringify(manifest), new Date().toISOString(), operationId);
+          .run(JSON.stringify(manifest), new Date().toISOString(), journalOperationId);
       })();
     } catch (error) {
       const failure = new LibraryServiceError('ASSET_SOURCE_TRASH_FAILED', {
@@ -37527,7 +37738,7 @@ export class LibraryService {
         reason: 'SOURCE_TRASH_RECONCILIATION_REQUIRED',
       });
       this.diagnose('asset.delete-linked.delete-records', failure, {
-        operationId,
+        operationId: journalOperationId,
         libraryId: input.libraryId,
         sourceTrashedAssetIds: trashedRows.map((row) => row.asset_id),
       });
@@ -37536,6 +37747,20 @@ export class LibraryService {
 
     const deletedAssetIds = trashedRows.map((row) => row.asset_id);
 
+    if (input.progress !== undefined) {
+      // 分批调用时由调用方负责最终 complete/failed 事件。
+      input.progress.onProcessed(filesProcessed);
+    } else {
+      this.emitDeleteProgress({
+        operationId: progressOperationId,
+        libraryId: input.libraryId,
+        kind: 'disk',
+        phase: failures.length > 0 ? 'failed' : 'complete',
+        filesProcessed: deletedAssetIds.length,
+        totalFiles,
+      });
+    }
+
     if (failures.length > 0) {
       this.diagnose(
         'asset.delete-linked.partial-failure',
@@ -37543,7 +37768,7 @@ export class LibraryService {
           reason: failures[0]!.reason,
         }),
         {
-          operationId,
+          operationId: journalOperationId,
           libraryId: input.libraryId,
           succeededAssetIds: deletedAssetIds,
           failedAssetIds: failures.map(({ assetId }) => assetId),

@@ -7,7 +7,6 @@ import {
   isBrowseScopeAffectedByFolderTrash,
   type FolderParentNode,
 } from "./folder-trash-scope";
-import { linkedRevealFolderId } from "../shared/linked-folder-tree";
 
 export type FolderDiskDeleteTarget =
   | {
@@ -188,7 +187,7 @@ export function useFolderDeleteActions({
     async (folderId: string, name: string) => {
       if (!api || !libraryId) return;
       const confirmed = window.confirm(
-        translateForLocale(locale, "command.folder.removeFromLibraryConfirm", {
+        translateForLocale(locale, "command.folder.removeLinkedFolderConfirm", {
           name,
         }),
       );
@@ -227,54 +226,9 @@ export function useFolderDeleteActions({
     ],
   );
 
-  const trashLinkedFolderSubtree = useCallback(
-    async (linkedFolderId: string, relativePath: string, name: string) => {
-      if (!api || !libraryId) return;
-      setUiState("loading");
-      try {
-        const result = await api.deleteLinkedFolderSubtree({
-          libraryId,
-          linkedFolderId,
-          relativePath,
-          deleteFromDisk: false,
-        });
-        if (!result.ok) throw new LibraryOperationError(result.error);
-        setNotice(
-          translateForLocale(locale, "toast.linkedSubtreeTrashed", {
-            name,
-            count: result.value.deletedAssetCount,
-          }),
-        );
-        await afterFolderMutation([
-          linkedRevealFolderId(linkedFolderId, relativePath),
-        ]);
-      } catch (caught) {
-        setError(
-          toMessage(
-            caught,
-            translateForLocale(locale, "toast.folderTrashFailed"),
-            locale,
-          ),
-        );
-      } finally {
-        setUiState("ready");
-      }
-    },
-    [
-      api,
-      libraryId,
-      locale,
-      setUiState,
-      setNotice,
-      setError,
-      afterFolderMutation,
-    ],
-  );
-
   return {
     trashManagedFolder,
     openDiskDelete,
     removeLinkedFolder,
-    trashLinkedFolderSubtree,
   };
 }

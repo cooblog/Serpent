@@ -26,9 +26,11 @@ export function isDeleteProgressCancelable(
 
 export function deleteOverlayTitleKey(
   kind: DeleteProgressEvent["kind"] | undefined,
-): "progress.deletingAssets" | "progress.trashingAssets" | "progress.purgingTrash" {
+): "progress.deletingAssets" | "progress.trashingAssets" | "progress.purgingTrash" | "progress.removingLinkedFolder" {
   if (kind === "trash") return "progress.trashingAssets";
   if (kind === "permanent") return "progress.purgingTrash";
+  // 移除链接文件夹只删链接记录：既不是清空回收站，也不是从硬盘删除。
+  if (kind === "linked-remove") return "progress.removingLinkedFolder";
   return "progress.deletingAssets";
 }
 

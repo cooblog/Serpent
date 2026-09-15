@@ -915,6 +915,13 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
       (assetIds) => new Set(assetIds).size === assetIds.length,
       { message: 'assetIds must not contain duplicates.' },
     ),
+    /**
+     * Confirmation-copy hint only: the renderer knows whether the selection is
+     * managed, linked, or both, and Main has no database access. It never
+     * influences what is deleted — the worker resolves each asset's location
+     * kind from `assets.location_kind` itself.
+     */
+    locationKind: z.enum(['managed', 'linked', 'mixed']).optional(),
   }),
   z.strictObject({
     type: z.literal('asset.delete-cancel.request'),

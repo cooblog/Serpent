@@ -35,25 +35,8 @@ const requiredPaths = [
   ),
 ];
 
-const systemTrashBinary = process.platform === 'darwin'
-  ? 'macos-trash'
-  : process.platform === 'win32'
-    ? 'windows-trash.exe'
-    : undefined;
-
-if (!systemTrashBinary) {
-  throw new Error(`Packaged system trash is not supported on ${process.platform}.`);
-}
-
-requiredPaths.push(path.join(
-  resourcesPath,
-  'app.asar.unpacked',
-  'node_modules',
-  'trash',
-  'lib',
-  systemTrashBinary,
-));
-
+// 2026-09-15：链接资产/文件夹的删除改为永久删除源文件，产品不再使用系统回收站，
+// 因此不再校验 `trash` 的本地 helper 是否随包解包。
 const missingPaths = requiredPaths.filter((requiredPath) => !existsSync(requiredPath));
 if (missingPaths.length > 0) {
   throw new Error(`Package is missing required runtime files:\n${missingPaths.join('\n')}`);

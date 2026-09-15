@@ -7363,7 +7363,6 @@ function AppInner() {
     batchAddSelectionToCollection,
     batchRemoveSelectionFromCollection,
     trashManagedAssets,
-    trashLinkedAssets,
     deleteManagedAssetsFromDisk,
     copyManagedSelectionToLinked,
   } = useBatchActions({
@@ -7415,7 +7414,6 @@ function AppInner() {
     trashManagedFolder,
     openDiskDelete,
     removeLinkedFolder,
-    trashLinkedFolderSubtree,
   } = useFolderDeleteActions({
     api: api ?? null,
     libraryId: library?.libraryId ?? null,
@@ -7681,17 +7679,13 @@ function AppInner() {
   );
 
   function requestTrashFolder(folderId: string, name: string) {
-    const virtual = parseLinkedVirtualFolderId(folderId);
-    if (virtual) {
-      void trashLinkedFolderSubtree(
-        virtual.linkedFolderId,
-        virtual.relativePath,
-        name,
-      );
-      return;
-    }
-    if (linkedFolders.some((folder) => folder.folderId === folderId)) {
-      void trashLinkedFolderSubtree(folderId, "", name);
+    // 2026-09-15 用户决定：链接文件夹没有「移入回收站」。这里对链接目标直接落空，
+    // 而不是退回旧的逐文件系统回收站路径（链接文件夹请用「移除链接文件夹」或
+    // 「强制从硬盘删除」）。
+    if (
+      parseLinkedVirtualFolderId(folderId)
+      || linkedFolders.some((folder) => folder.folderId === folderId)
+    ) {
       return;
     }
     requestTrashManagedFolder(folderId, name);
@@ -9169,9 +9163,30 @@ function AppInner() {
     }
   }
 
-  function requestAssetDiskDelete(assetIds: string[]) {
+  function requestAssetDiskDelete(
+    assetIds: string[],
+    locationKind?: "managed" | "linked" | "mixed",
+  ) {
     if (assetIds.length === 0) return;
-    void deleteManagedAssetsFromDiskAfterClosingPreview(assetIds);
+    void deleteManagedAssetsFromDiskAfterClosingPreview(assetIds, locationKind);
+  }
+
+  /**
+   * 2026-09-15：主进程弹「确认危险操作」时需要按操作本身的语义写文案——链接资产的
+   * 源文件会被永久删除（不再送系统回收站），必须点明，不能沿用托管资产的通用说法。
+   * 渲染层知道当前列表的 locationKind，主进程没有数据库访问，因此这里只作为「文案
+   * 提示」随请求下发；真正的删除分流仍由 Worker 依 assets.location_kind 决定。
+   */
+  function assetSelectionLocationKind(
+    assetIds: string[],
+  ): "managed" | "linked" | "mixed" {
+    const byId = new Map(assets.map((asset) => [asset.assetId, asset]));
+    let linked = 0;
+    for (const assetId of assetIds) {
+      if (byId.get(assetId)?.locationKind === "linked") linked += 1;
+    }
+    if (linked === 0) return "managed";
+    return linked === assetIds.length ? "linked" : "mixed";
   }
 
   async function setIgnoreState(input: {
@@ -9214,9 +9229,10 @@ function AppInner() {
 
   async function deleteManagedAssetsFromDiskAfterClosingPreview(
     assetIds: string[],
+    locationKind?: "managed" | "linked" | "mixed",
   ) {
     await releaseAssetPreviewsBeforeDiskDelete();
-    await deleteManagedAssetsFromDisk(assetIds);
+    await deleteManagedAssetsFromDisk(assetIds, locationKind);
   }
 
   /**
@@ -9240,8 +9256,9 @@ function AppInner() {
     folderIds: readonly string[],
   ) {
     const folderIdList = [...folderIds];
+    const locationKind = assetSelectionLocationKind(assetIds);
     if (folderIdList.length === 0) {
-      requestAssetDiskDelete(assetIds);
+      requestAssetDiskDelete(assetIds, locationKind);
       return;
     }
     if (assetIds.length === 0 && folderIdList.length === 1) {
@@ -9254,12 +9271,13 @@ function AppInner() {
       openDiskDelete({ kind: "managed", folderId, name });
       return;
     }
-    void executeSelectionDiskDelete(assetIds, folderIdList);
+    void executeSelectionDiskDelete(assetIds, folderIdList, locationKind);
   }
 
   async function executeSelectionDiskDelete(
     assetIds: string[],
     folderIds: readonly string[],
+    locationKind: "managed" | "linked" | "mixed" = "managed",
   ) {
     if (!api || !library) return;
     if (assetIds.length === 0 && folderIds.length === 0) return;
@@ -9273,6 +9291,7 @@ function AppInner() {
         const result = await api.deleteAssetsFromDisk({
           libraryId: library.libraryId,
           assetIds,
+          locationKind,
         });
         if (!result.ok) {
           if (result.error.code === "CANCELLED") {
@@ -9327,43 +9346,18 @@ function AppInner() {
     if (assetIds.length === 0 && folderIds.length === 0) return;
     const startedAt = Date.now();
 
+    // 2026-09-15 用户决定：链接资产与链接文件夹不再有「移入回收站」（旧实现会逐个
+    // 文件送进系统回收站：实测 126 ms/文件，1.5 万文件约 31 分钟且独占调度器）。
+    // 链接项的唯一删除动作是「强制从硬盘删除」，这里只处理托管项。
     const assetById = new Map(assets.map((asset) => [asset.assetId, asset]));
-    const linkedAssetIds = assetIds.filter(
-      (assetId) => assetById.get(assetId)?.locationKind === "linked",
-    );
     const managedAssetIds = assetIds.filter(
       (assetId) => assetById.get(assetId)?.locationKind !== "linked",
     );
-    const linkedFolderIds: string[] = [];
-    const managedFolderIds: string[] = [];
-    for (const folderId of folderIds) {
-      if (
-        parseLinkedVirtualFolderId(folderId) ||
-        linkedFolders.some((folder) => folder.folderId === folderId)
-      ) {
-        linkedFolderIds.push(folderId);
-      } else {
-        managedFolderIds.push(folderId);
-      }
-    }
-
-    if (linkedAssetIds.length > 0) {
-      await trashLinkedAssets(linkedAssetIds);
-    }
-    for (const folderId of linkedFolderIds) {
-      const name = resolveManagedFolderName(folderId) ?? folderId;
-      const virtual = parseLinkedVirtualFolderId(folderId);
-      if (virtual) {
-        await trashLinkedFolderSubtree(
-          virtual.linkedFolderId,
-          virtual.relativePath,
-          name,
-        );
-      } else {
-        await trashLinkedFolderSubtree(folderId, "", name);
-      }
-    }
-
+    const managedFolderIds = folderIds.filter(
+      (folderId) =>
+        !parseLinkedVirtualFolderId(folderId)
+        && !linkedFolders.some((folder) => folder.folderId === folderId),
+    );
     if (managedAssetIds.length === 0 && managedFolderIds.length === 0) {
       return;
     }
@@ -10411,9 +10405,6 @@ function AppInner() {
     },
     onTrashManaged: (assetIds) => {
       void trashManagedAssets(assetIds);
-    },
-    onTrashLinked: (assetIds) => {
-      void trashLinkedAssets(assetIds);
     },
     onRename: openAssetRename,
     onCopyFiles: (assetIds) => {
@@ -14479,9 +14470,6 @@ function AppInner() {
         }}
         onRemoveLinkedFolder={(folderId, name) => {
           void removeLinkedFolder(folderId, name);
-        }}
-        onTrashLinkedFolderSubtree={(linkedFolderId, relativePath, name) => {
-          void trashLinkedFolderSubtree(linkedFolderId, relativePath, name);
         }}
         onBatchAssignTag={(tagId, assetIds) => {
           void batchAssignTagToSelection(tagId, assetIds);

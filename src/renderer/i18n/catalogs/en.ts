@@ -513,6 +513,9 @@ export const en = {
       clearAiContent: "Clear AI info",
       moveToTrash: "Move to Trash",
       deleteFromDisk: "Delete from disk…",
+      // Linked assets keep exactly one delete action (2026-09-15 decision):
+      // really remove the source file from disk.
+      forceDeleteFromDisk: "Force delete from disk…",
       moveToFolder: "Move to folder…",
       relink: "Relink asset…",
       relinkAlt: "Relink…",
@@ -533,6 +536,7 @@ export const en = {
       moveToFolder: "Move to folder… ({count})",
       moveToTrash: "Move to Trash ({count})",
       deleteFromDisk: "Delete from disk… ({count})",
+      forceDeleteFromDisk: "Force delete from disk ({count})",
       clearSelection: "Clear selection ({count})",
       assignTag: "Add tags…",
       removeTag: "Remove tags…",
@@ -556,8 +560,11 @@ export const en = {
       linkedRules: "Linked rules…",
       moveToTrash: "Move to Trash",
       deleteFromDisk: "Delete from disk…",
-      removeFromLibrary: "Remove from library",
-      removeFromLibraryConfirm: "Remove linked folder \"{name}\" from the library?\nThe external source folder will not be deleted."
+      // Linked folders lost "Move to Trash" (2026-09-15 decision): the two
+      // actions are now "remove the link record" and "really delete from disk".
+      forceDeleteFromDisk: "Force delete from disk…",
+      removeLinkedFolder: "Remove linked folder…",
+      removeLinkedFolderConfirm: "Remove linked folder \"{name}\" from the library?\nOnly the link record is removed; the external source folder and the files inside it are left untouched.",
     },
   collection: {
       newSubcollection: "New subcollection",
@@ -1768,6 +1775,7 @@ export const en = {
     deletingAssets: "Deleting",
     trashingAssets: "Moving to Trash",
     purgingTrash: "Emptying Trash",
+    removingLinkedFolder: "Removing linked folder",
     deletingFiles: "{processed}/{total} processed",
     deleting: "Deleting files…",
     validating: "Validating…",
@@ -1980,9 +1988,8 @@ export const en = {
     libraryDeleteFailed: "Failed to delete library.",
     libraryRemoved: "Removed library \"{name}\" (disk files kept).",
     libraryRemoveFailed: "Failed to remove library.",
-    linkedFolderRemoved: "Removed linked folder \"{name}\" from the library ({count} records); source folder unchanged.",
+    linkedFolderRemoved: "Removed linked folder \"{name}\" ({count} records); only the link record was removed, the source folder and its files are untouched.",
     linkedFolderRemoveFailed: "Failed to remove linked folder from the library.",
-    linkedSubtreeTrashed: "Moved linked subfolder \"{name}\" to the system Trash ({count} items).",
     linkedSubtreeDeletedFromDisk: "Deleted linked subfolder \"{name}\" from disk ({count} items).",
     convertLinkedConfirm: "Copy \"{name}\" into the library and remove the link? The external source folder will not be deleted.",
     convertLinkedDone: "Converted {count} items; external source folder unchanged.",
@@ -2009,12 +2016,9 @@ export const en = {
     permanentDeleteFailed: "Permanent delete failed.",
     emptyTrashSkipped: ", {count} not cleaned: {reasons}",
     emptyTrashFailed: "Failed to empty Trash.",
-    deleteLinkedPartial: "Linked asset delete incomplete: deleted {deleted}, kept {failed}. Reasons: {reasons}",
-    deleteLinkedWithTrash: "Removed {count} linked asset records; source files that still existed were moved to the system Trash.",
     refreshListManually: "Please refresh the asset list manually.",
     deleteDoneRefreshFailed: "Delete finished, but refreshing the UI failed: {reason}",
     deleteOutcomeRefreshFailed: "{outcome} Also, refreshing the UI failed: {reason}",
-    deleteLinkedFailed: "Failed to delete linked assets.",
     relinkSuccess: "Asset relinked successfully.",
     relinkFailed: "Failed to relink asset.",
     batchRelinkPreviewFailed: "Batch relink preview failed.",

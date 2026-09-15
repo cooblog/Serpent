@@ -2722,7 +2722,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       };
     }
     case 'linked-folder.remove': {
-      const result = libraryService.removeLinkedFolder(request.command);
+      const result = await libraryService.removeLinkedFolder(request.command);
       recordPermanentDeleteBarrier({
         libraryId: request.command.libraryId,
         commandId: request.command.type,
