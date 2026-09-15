@@ -4,9 +4,14 @@ import {
   buildUnifiedDirectoryNavEntries,
   filterCollapsedDirectoryEntries,
   managedFolderIdsWithChildren,
+  sortCollectionTree,
   sortManagedTreeEntries,
 } from "../../src/renderer/unified-directory-nav";
-import type { LinkedFolderSummary, ManagedFolderSummary } from "../../src/shared/asset-types";
+import type {
+  CollectionSummary,
+  LinkedFolderSummary,
+  ManagedFolderSummary,
+} from "../../src/shared/asset-types";
 
 const managed = (
   overrides: Partial<ManagedFolderSummary> & Pick<ManagedFolderSummary, "folderId" | "name" | "relativePath">,
@@ -420,5 +425,57 @@ describe("sortManagedTreeEntries", () => {
       "z",
     ]);
     expect(ids(sortManagedTreeEntries(entries, "count", "desc"))).toEqual(["a", "z", "m"]);
+  });
+});
+
+describe("sortCollectionTree", () => {
+  const collection = (
+    overrides: Partial<CollectionSummary> &
+      Pick<CollectionSummary, "collectionId" | "name">,
+  ): CollectionSummary => ({
+    parentId: null,
+    description: null,
+    coverAssetId: null,
+    position: 0,
+    assetCount: 0,
+    childCollectionCount: 0,
+    ...overrides,
+  });
+
+  it("sorts every collection level with the shared sidebar fields", () => {
+    const parent = collection({
+      collectionId: "parent",
+      name: "Parent",
+      assetCount: 1,
+    });
+    const children = [
+      collection({
+        collectionId: "child-b",
+        parentId: parent.collectionId,
+        name: "Beta",
+        assetCount: 2,
+      }),
+      collection({
+        collectionId: "child-a",
+        parentId: parent.collectionId,
+        name: "Alpha",
+        assetCount: 8,
+      }),
+    ];
+    const tree = new Map<string | null, CollectionSummary[]>([
+      [null, [parent]],
+      [parent.collectionId, children],
+    ]);
+
+    expect(
+      sortCollectionTree(tree, "count", "desc")
+        .get(parent.collectionId)
+        ?.map((item) => item.collectionId),
+    ).toEqual(["child-a", "child-b"]);
+    expect(
+      sortCollectionTree(tree, "name", "asc")
+        .get(parent.collectionId)
+        ?.map((item) => item.collectionId),
+    ).toEqual(["child-a", "child-b"]);
   });
 });

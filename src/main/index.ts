@@ -2934,6 +2934,7 @@ async function commandFor(
         libraryId: request.libraryId,
         collectionId: request.collectionId,
         name: request.name,
+        parentId: request.parentId,
         description: request.description,
         coverAssetId: request.coverAssetId,
         position: request.position,

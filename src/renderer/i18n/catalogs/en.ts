@@ -208,6 +208,7 @@ export const en = {
     folders: "Folders",
     showIgnored: "Show hidden items",
     sortFolders: "Sort folders",
+    sortCollections: "Sort collections",
     sortBy: "Sort by",
     sortByName: "By name",
     sortByCreated: "By date",

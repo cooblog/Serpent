@@ -1,5 +1,7 @@
 # Serpent 项目状态
 
+- **2026-09-15 合集根级操作与侧栏排序（`Serpent-01cff7`）**：合集新增入口固定在资源库根级；合集栏空白区复用文件夹根级拖放语义，把嵌套合集移回根级；文件夹与合集共用侧栏排序比较器、控件和偏好编解码，合集使用独立偏好键，字段为名称和资产数量（不提供创建时间）。定向单测 49 passed、Worker 67 passed、类型检查、改动文件 ESLint 和资源库可用性门禁（9 files / 214 passed / 1 skipped）已通过；合集根级定向 Electron 用例 1 passed。完整合集回归文件为 3 passed / 1 failed，失败是超出本范围的既有文件夹磁盘路径断言；Computer Use、packaged、Windows 和人类验收未执行。见[开发日志](development/2026-09-15-collection-root-and-sort-development-log.md)与清单 `COLLECTION-ROOT-001` / `DND-COLLECTION-ROOT-001` / `COLLECTION-SORT-001`。
+
 - **2026-09-14 同 ID 开库提示（`Serpent-79b839`）**：已打开一份库后再打开同一 `library_id` 的另一条路径（网络位置的不同到达方式，或复制出的副本），不再报 `LIBRARY_CORRUPT`、不走备份抢救、不从最近列表删除。Worker 抛 `LIBRARY_ALREADY_OPEN`；界面标题为「资源库已打开」。取消留在当前库；确认打开刚选择的路径。同一规范化路径再打开仍静默复用。**用户 2026-09-14 验收通过**，清单 `LIB-OPEN-001`。packaged 未验证。见[开发日志](development/2026-09-14-same-library-id-open-prompt-development-log.md)。
 
 - **2026-09-14 切文件夹假死第二轮（`Serpent-52eed4`）**：用户确认切文件夹**卡顿仍在，但不再阻碍操作**。已交付：侧栏选中即时更新、导航挡板不吞点击、浏览会话先返回有界首屏；路径查询/状态轮询让出 interactive 槽，协议读 2 路并发门。内容切换变快仍属 PERF2（`Serpent-e9a66b`），本单保持 open。见[开发日志](development/2026-09-14-network-library-interactive-starvation-development-log.md)。清单 `NAS-NAV-001`。

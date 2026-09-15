@@ -6512,6 +6512,42 @@ function AppInner() {
     }
   }
 
+  async function moveCollectionToRoot(collectionId: string) {
+    if (!api || !library) return;
+    const source = collections.find(
+      (collection) => collection.collectionId === collectionId,
+    );
+    if (!source || source.parentId === null) return;
+    const targetLibraryId = library.libraryId;
+    const viewSession = ensureLibraryView(targetLibraryId);
+    if (!viewSession) return;
+    setDraggedCollectionId(null);
+    setUiState("loading");
+    try {
+      const moved = await api.updateCollection({
+        libraryId: targetLibraryId,
+        collectionId,
+        parentId: null,
+        position: (collectionTree.get(null) ?? []).length,
+      });
+      if (!moved.ok) throw new LibraryOperationError(moved.error);
+      if (!isCurrentLibraryView(viewSession)) return;
+      const result = await api.listCollections({
+        libraryId: targetLibraryId,
+      });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      if (!isCurrentLibraryView(viewSession)) return;
+      setCollections(result.value);
+      setNotice(t("toast.collectionOrderUpdated"), moved.value.historyEntryId);
+    } catch (caught) {
+      if (isCurrentLibraryView(viewSession)) {
+        setError(toMessage(caught, t("toast.collectionReorderFailed"), locale));
+      }
+    } finally {
+      if (isCurrentLibraryView(viewSession)) setUiState("ready");
+    }
+  }
+
   async function reorderCollectionMember(sourceId: string, targetId: string) {
     if (!api || !library || !activeCollectionId || sourceId === targetId)
       return;
@@ -12193,6 +12229,9 @@ function AppInner() {
         onOpenContextMenu={openContextMenu}
         onReorderCollection={(sourceId, targetId) =>
           void reorderCollectionSibling(sourceId, targetId)
+        }
+        onMoveCollectionToRoot={(collectionId) =>
+          void moveCollectionToRoot(collectionId)
         }
         onImportDroppedFiles={(files, targetFolderId, targetCollectionId, webPayload) =>
           void importDroppedFiles(files, targetFolderId, targetCollectionId, webPayload)

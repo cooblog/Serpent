@@ -126,6 +126,7 @@ function createNavigationProps(
     onInlineSmartCollectionEditCancel: noop,
     onOpenContextMenu: noop,
     onReorderCollection: noop,
+    onMoveCollectionToRoot: noop,
     onImportDroppedFiles: noop,
     onCopyManagedToLinked: noop,
     ...overrides,
@@ -618,6 +619,177 @@ describe("NavigationSidebar virtual library root", () => {
       ["asset-1"],
       "move",
     );
+  });
+
+  it("creates collections at the library root from the section plus button", async () => {
+    const onAddCollection = vi.fn();
+    const nested = {
+      collectionId: "collection-nested",
+      parentId: "collection-parent",
+      name: "Nested",
+      description: null,
+      coverAssetId: null,
+      position: 0,
+      assetCount: 0,
+      childCollectionCount: 0,
+    };
+    const parent = {
+      collectionId: "collection-parent",
+      parentId: null,
+      name: "Parent",
+      description: null,
+      coverAssetId: null,
+      position: 0,
+      assetCount: 0,
+      childCollectionCount: 1,
+    };
+    const props = createNavigationProps({
+      activeCollectionId: nested.collectionId,
+      collections: [parent, nested],
+      collectionTree: new Map([
+        [null, [parent]],
+        [parent.collectionId, [nested]],
+      ]),
+      onAddCollection,
+    });
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root?.render(
+        createElement(
+          LocaleProvider,
+          null,
+          createElement(NavigationSidebar, props),
+        ),
+      );
+    });
+
+    const collectionSection = [
+      ...container.querySelectorAll<HTMLElement>(".nav-section"),
+    ].find((section) =>
+      section.querySelector(".nav-section-heading")?.textContent?.match(/Collections|合集/u),
+    );
+    const addButton = [...(collectionSection?.querySelectorAll("button") ?? [])]
+      .find((button) => button.getAttribute("aria-label")?.match(/Add|新建|添加/u));
+    expect(addButton).toBeDefined();
+
+    await act(async () => addButton?.click());
+
+    expect(onAddCollection).toHaveBeenCalledWith(null);
+  });
+
+  it("moves a nested collection to the root from the collection list blank area", async () => {
+    const onMoveCollectionToRoot = vi.fn();
+    const parent = {
+      collectionId: "collection-parent",
+      parentId: null,
+      name: "Parent",
+      description: null,
+      coverAssetId: null,
+      position: 0,
+      assetCount: 0,
+      childCollectionCount: 1,
+    };
+    const child = {
+      collectionId: "collection-child",
+      parentId: parent.collectionId,
+      name: "Child",
+      description: null,
+      coverAssetId: null,
+      position: 0,
+      assetCount: 0,
+      childCollectionCount: 0,
+    };
+    const props = createNavigationProps({
+      collections: [parent, child],
+      collectionTree: new Map([
+        [null, [parent]],
+        [parent.collectionId, [child]],
+      ]),
+      draggedCollectionId: child.collectionId,
+      onMoveCollectionToRoot,
+    });
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root?.render(
+        createElement(
+          LocaleProvider,
+          null,
+          createElement(NavigationSidebar, props),
+        ),
+      );
+    });
+
+    const childRow = container.querySelector<HTMLButtonElement>(
+      `button[data-nav-collection-id="${child.collectionId}"]`,
+    );
+    const list = container.querySelector<HTMLElement>(".nav-collection-list");
+    expect(childRow).not.toBeNull();
+    expect(list).not.toBeNull();
+    const transfer = createDragTransfer([]);
+
+    await act(async () => {
+      dispatchDragEvent(list!, "dragenter", transfer);
+      dispatchDragEvent(list!, "dragover", transfer);
+    });
+    expect(list?.classList.contains("is-root-drop-target")).toBe(true);
+
+    await act(async () => {
+      const drop = dispatchDropEvent(list!, transfer);
+      expect(drop.defaultPrevented).toBe(true);
+    });
+    expect(onMoveCollectionToRoot).toHaveBeenCalledWith(child.collectionId);
+  });
+
+  it("does not highlight the collection blank area for a root collection", async () => {
+    const onMoveCollectionToRoot = vi.fn();
+    const rootCollection = {
+      collectionId: "collection-root",
+      parentId: null,
+      name: "Root",
+      description: null,
+      coverAssetId: null,
+      position: 0,
+      assetCount: 0,
+      childCollectionCount: 0,
+    };
+    const props = createNavigationProps({
+      collections: [rootCollection],
+      collectionTree: new Map([[null, [rootCollection]]]),
+      draggedCollectionId: rootCollection.collectionId,
+      onMoveCollectionToRoot,
+    });
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root?.render(
+        createElement(
+          LocaleProvider,
+          null,
+          createElement(NavigationSidebar, props),
+        ),
+      );
+    });
+
+    const list = container.querySelector<HTMLElement>(".nav-collection-list");
+    expect(list).not.toBeNull();
+    const transfer = createDragTransfer([]);
+
+    await act(async () => {
+      dispatchDragEvent(list!, "dragenter", transfer);
+      dispatchDragEvent(list!, "dragover", transfer);
+      dispatchDropEvent(list!, transfer);
+    });
+
+    expect(list?.classList.contains("is-root-drop-target")).toBe(false);
+    expect(onMoveCollectionToRoot).not.toHaveBeenCalled();
   });
 });
 

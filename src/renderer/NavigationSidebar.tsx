@@ -54,6 +54,7 @@ import {
   buildUnifiedDirectoryNavEntries,
   filterCollapsedDirectoryEntries,
   managedFolderIdsWithChildren,
+  sortCollectionTree,
   sortManagedTreeEntries,
   type FolderTreeSortMode,
 } from "./unified-directory-nav";
@@ -79,10 +80,14 @@ import {
 } from "./nav-tree-preferences";
 import {
   loadFolderSortPreferences,
+  loadCollectionSortPreferences,
   saveFolderSortPreferences,
+  saveCollectionSortPreferences,
   withFolderSort,
+  withCollectionSort,
   type FolderSortOrder,
   type FolderSortPreferences,
+  type CollectionSortPreferences,
 } from "./folder-sort-preferences";
 import { PortaledPopover } from "./PortaledPopover";
 import { PaneSurface } from "./ui/surfaces";
@@ -574,7 +579,7 @@ function Section({
 }
 
 // ---------------------------------------------------------------------------
-// FolderSortTrigger — folder tree sort control (Serpent-db1835).
+// SidebarSortTrigger — shared folder/collection tree sort control
 // Mirrors the browse sort panel (SortModeControl): a direction radio group
 // plus a field list, so adding a new field is one array entry, never an N-way
 // option explosion.
@@ -590,6 +595,9 @@ const FOLDER_SORT_FIELDS: readonly {
   { mode: "created", labelKey: "nav.sortByCreated" },
   { mode: "count", labelKey: "nav.sortByCount" },
 ];
+const COLLECTION_SORT_FIELDS = FOLDER_SORT_FIELDS.filter(
+  ({ mode }) => mode !== "created",
+);
 
 const FOLDER_SORT_ORDERS: readonly FolderSortOrder[] = ["asc", "desc"];
 
@@ -600,13 +608,20 @@ function folderSortOrderLabel(
   return order === "asc" ? t("nav.sortAsc") : t("nav.sortDesc");
 }
 
-function FolderSortTrigger({
+function SidebarSortTrigger({
   mode,
   order,
+  labelKey,
+  fields = FOLDER_SORT_FIELDS,
   onChange,
 }: {
   mode: FolderTreeSortMode;
   order: FolderSortOrder;
+  labelKey: string;
+  fields?: readonly {
+    mode: FolderTreeSortMode;
+    labelKey: string;
+  }[];
   onChange: (mode: FolderTreeSortMode, order: FolderSortOrder) => void;
 }) {
   const t = useT();
@@ -672,7 +687,7 @@ function FolderSortTrigger({
     <span className="nav-section-sort" ref={anchorRef}>
       <IconActionButton
         icon={order === "asc" ? "sort-asc" : "sort-desc"}
-        label={t("nav.sortFolders")}
+        label={t(labelKey)}
         onClick={() => setOpen((current) => !current)}
         className={`tiny-action${open || nonDefault ? " is-active" : ""}`}
       />
@@ -717,7 +732,7 @@ function FolderSortTrigger({
             role="listbox"
           >
             <div className="sort-mode-section-label">{t("nav.sortBy")}</div>
-            {FOLDER_SORT_FIELDS.map((field) => (
+            {fields.map((field) => (
               <button
                 aria-selected={mode === field.mode}
                 className={`sort-mode-option${mode === field.mode ? " is-active" : ""}`}
@@ -892,6 +907,7 @@ export interface NavigationSidebarProps {
 
   // --- Collection drag/drop ---
   onReorderCollection: (sourceId: string, targetId: string) => void;
+  onMoveCollectionToRoot: (collectionId: string) => void;
   onImportDroppedFiles: (
     files: File[],
     targetFolderId: string | null | undefined,
@@ -986,6 +1002,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     onInlineSmartCollectionEditCancel,
     onOpenContextMenu,
     onReorderCollection,
+    onMoveCollectionToRoot,
     onImportDroppedFiles,
     onCopyManagedToLinked,
   } = props;
@@ -1007,6 +1024,8 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
   // Serpent-b29bc4: a managed-folder drag hovering the folder section's blank
   // area (indentation gutter / space below the last row) targets the root.
   const [folderListDropActive, setFolderListDropActive] = useState(false);
+  // Collections use the same root-drop interaction as folders.
+  const [collectionListDropActive, setCollectionListDropActive] = useState(false);
   // Serpent-374266: ids of the folder drag started from this sidebar. The HTML5
   // payload is unreadable during dragover, so the drop-target validity check
   // needs its own copy (cleared on every dragend/drop).
@@ -1026,16 +1045,25 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
   const [folderSortPrefs, setFolderSortPrefs] = useState<FolderSortPreferences>(
     () => loadFolderSortPreferences(),
   );
+  const [collectionSortPrefs, setCollectionSortPrefs] =
+    useState<CollectionSortPreferences>(() => loadCollectionSortPreferences());
   function changeFolderSort(mode: FolderTreeSortMode, order: FolderSortOrder) {
     const next = withFolderSort(folderSortPrefs, { mode, order });
     setFolderSortPrefs(next);
     saveFolderSortPreferences(next);
   }
+  function changeCollectionSort(mode: FolderTreeSortMode, order: FolderSortOrder) {
+    if (mode === "created") return;
+    const next = withCollectionSort(collectionSortPrefs, { mode, order });
+    setCollectionSortPrefs(next);
+    saveCollectionSortPreferences(next);
+  }
   useEffect(() => {
-    if (!assetDropTarget && !folderListDropActive) return;
+    if (!assetDropTarget && !folderListDropActive && !collectionListDropActive) return;
     const clear = () => {
       setAssetDropTarget(null);
       setFolderListDropActive(false);
+      setCollectionListDropActive(false);
     };
     window.addEventListener("dragend", clear);
     window.addEventListener("drop", clear);
@@ -1043,7 +1071,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
       window.removeEventListener("dragend", clear);
       window.removeEventListener("drop", clear);
     };
-  }, [assetDropTarget, folderListDropActive]);
+  }, [assetDropTarget, collectionListDropActive, folderListDropActive]);
 
   // Serpent-374266: the folder-drag snapshot must not outlive its gesture, even
   // when the drag ends without ever highlighting a target (e.g. dropped back on
@@ -1440,6 +1468,64 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     };
   }
 
+  function acceptsCollectionRootDrop(): boolean {
+    if (!draggedCollectionId) return false;
+    const dragged = collections.find(
+      (collection) => collection.collectionId === draggedCollectionId,
+    );
+    return dragged?.parentId !== null && dragged !== undefined;
+  }
+
+  /**
+   * Collections mirror the folder section's blank-area root target. A drop
+   * outside a collection row reparents the dragged collection to the root;
+   * row drops keep their existing same-level reorder behavior.
+   */
+  function collectionListBlankHandlers() {
+    return {
+      onDragEnter: (event: React.DragEvent<HTMLElement>) => {
+        if (
+          !isFolderListBlankTarget(event) ||
+          !acceptsCollectionRootDrop()
+        ) {
+          return;
+        }
+        setCollectionListDropActive(true);
+      },
+      onDragOver: (event: React.DragEvent<HTMLElement>) => {
+        if (
+          !isFolderListBlankTarget(event) ||
+          !acceptsCollectionRootDrop()
+        ) {
+          setCollectionListDropActive(false);
+          return;
+        }
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+        setCollectionListDropActive(true);
+      },
+      onDragLeave: (event: React.DragEvent<HTMLElement>) => {
+        if (event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          return;
+        }
+        setCollectionListDropActive(false);
+      },
+      onDrop: (event: React.DragEvent<HTMLElement>) => {
+        if (
+          !isFolderListBlankTarget(event) ||
+          !acceptsCollectionRootDrop() ||
+          !draggedCollectionId
+        ) {
+          return;
+        }
+        event.preventDefault();
+        setCollectionListDropActive(false);
+        onMoveCollectionToRoot(draggedCollectionId);
+        onSetDraggedCollectionId(null);
+      },
+    };
+  }
+
   const directoryEntries = filterCollapsedDirectoryEntries(
     sortManagedTreeEntries(
       buildUnifiedDirectoryNavEntries(folders, linkedFolders),
@@ -1450,6 +1536,11 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
   );
   const foldersWithChildren = managedFolderIdsWithChildren(
     buildUnifiedDirectoryNavEntries(folders, linkedFolders),
+  );
+  const sortedCollectionTree = sortCollectionTree(
+    collectionTree,
+    collectionSortPrefs.mode,
+    collectionSortPrefs.order,
   );
 
   function renderDirectoryEntries(): ReactNode {
@@ -1755,7 +1846,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     parentId: string | null,
     depth: number,
   ): ReactNode {
-    const children = collectionTree.get(parentId) ?? [];
+    const children = sortedCollectionTree.get(parentId) ?? [];
     const rows: ReactNode[] = [];
     if (showCollectionInput && newCollectionParentId === parentId) {
       rows.push(
@@ -1879,7 +1970,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
         ) : (
           <NavRow
             disclosure={
-              (collectionTree.get(c.collectionId) ?? []).length > 0 ? (
+              (sortedCollectionTree.get(c.collectionId) ?? []).length > 0 ? (
                 <button
                   aria-expanded={!collapsedCollectionIds.has(c.collectionId)}
                   aria-label={
@@ -2122,7 +2213,8 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           onSecondaryActionMouseLeave={onLinkedFolderHintHoverEnd}
           extraAction={
             library ? (
-              <FolderSortTrigger
+              <SidebarSortTrigger
+                labelKey="nav.sortFolders"
                 mode={folderSortPrefs.mode}
                 order={folderSortPrefs.order}
                 onChange={changeFolderSort}
@@ -2145,12 +2237,26 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           title={t("nav.collections")}
           action={
             library
-              ? () => onAddCollection(activeCollectionId)
+              ? () => onAddCollection(null)
               : undefined
+          }
+          extraAction={
+            library ? (
+              <SidebarSortTrigger
+                fields={COLLECTION_SORT_FIELDS}
+                labelKey="nav.sortCollections"
+                mode={collectionSortPrefs.mode}
+                order={collectionSortPrefs.order}
+                onChange={changeCollectionSort}
+              />
+            ) : undefined
           }
         >
           {library ? (
-            <>
+            <div
+              className={`nav-collection-list${collectionListDropActive ? " is-root-drop-target" : ""}`}
+              {...collectionListBlankHandlers()}
+            >
               {collections.length ? (
                 renderCollectionNodes(null, 0)
               ) : (
@@ -2160,7 +2266,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
                   <p className="nav-empty">{t("nav.emptyCollections")}</p>
                 )
               )}
-            </>
+            </div>
           ) : (
             <p className="nav-empty">{t("nav.openLibraryHint")}</p>
           )}

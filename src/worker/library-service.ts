@@ -17711,7 +17711,9 @@ export class LibraryService {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     const existing = openLibrary.connection
       .prepare(
-        'SELECT collection_id, parent_id, name, description, cover_asset_id, position FROM collections WHERE collection_id = ? AND library_id = ?',
+        `SELECT collection_id, parent_id, name, description, cover_asset_id, position
+           FROM collections
+          WHERE collection_id = ? AND library_id = ?`,
       )
       .get(input.collectionId, openLibrary.summary.libraryId) as {
         collection_id: string;

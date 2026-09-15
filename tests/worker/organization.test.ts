@@ -646,6 +646,36 @@ describe('collections', () => {
     service.closeAll();
   });
 
+  it('moves a nested collection back to the library root', () => {
+    const { service, libraryId } = createLibraryWithAsset();
+    const parent = service.createCollection({ libraryId, name: 'Parent' });
+    const child = service.createCollection({
+      libraryId,
+      parentId: parent.collectionId,
+      name: 'Child',
+    });
+
+    const moved = service.updateCollection({
+      libraryId,
+      collectionId: child.collectionId,
+      parentId: null,
+      position: 1,
+    });
+
+    expect(moved).toMatchObject({
+      collectionId: child.collectionId,
+      parentId: null,
+      position: 1,
+    });
+    expect(
+      service.listCollections(libraryId)
+        .filter((collection) => collection.parentId === null)
+        .map((collection) => collection.collectionId),
+    ).toEqual([parent.collectionId, child.collectionId]);
+
+    service.closeAll();
+  });
+
   it('rejects creating a collection under a nonexistent parent', () => {
     const { service, libraryId } = createLibraryWithAsset();
     expectServiceCode(

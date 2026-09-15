@@ -1,4 +1,8 @@
-import type { LinkedFolderSummary, ManagedFolderSummary } from "../shared/asset-types";
+import type {
+  CollectionSummary,
+  LinkedFolderSummary,
+  ManagedFolderSummary,
+} from "../shared/asset-types";
 import { linkedFolderDepth } from "../shared/linked-folder-tree";
 
 export type UnifiedDirectoryNavEntry =
@@ -161,7 +165,15 @@ export function filterCollapsedDirectoryEntries(
 
 export type FolderTreeSortMode = "name" | "created" | "count";
 
+export type CollectionTreeSortMode = Exclude<FolderTreeSortMode, "created">;
+
 export type FolderTreeSortOrder = "asc" | "desc";
+
+type SortableSidebarEntry = {
+  name: string;
+  createdAt?: string;
+  assetCount: number;
+};
 
 type ManagedNavEntry = Extract<
   UnifiedDirectoryNavEntry,
@@ -173,9 +185,9 @@ type ManagedNavEntry = Extract<
  * "desc" orientation (newest / most / Z first) then flipped for "asc", so a
  * single switch covers both directions with one stable name tie-break.
  */
-function compareManagedFolders(
-  left: ManagedNavEntry,
-  right: ManagedNavEntry,
+function compareSortableSidebarEntries(
+  left: SortableSidebarEntry,
+  right: SortableSidebarEntry,
   mode: FolderTreeSortMode,
   order: FolderTreeSortOrder,
 ): number {
@@ -206,7 +218,7 @@ function compareManagedFolders(
     }
     case "count":
       // Badge shows the displayed descendant total; sort by it, larger first.
-      primary = (right.directAssetCount ?? 0) - (left.directAssetCount ?? 0);
+      primary = (right.assetCount ?? 0) - (left.assetCount ?? 0);
       break;
   }
   if (primary !== 0) return order === "asc" ? -primary : primary;
@@ -214,6 +226,28 @@ function compareManagedFolders(
     numeric: true,
     sensitivity: "base",
   });
+}
+
+function compareManagedFolders(
+  left: ManagedNavEntry,
+  right: ManagedNavEntry,
+  mode: FolderTreeSortMode,
+  order: FolderTreeSortOrder,
+): number {
+  return compareSortableSidebarEntries(
+    {
+      name: left.name,
+      createdAt: left.createdAt,
+      assetCount: left.directAssetCount,
+    },
+    {
+      name: right.name,
+      createdAt: right.createdAt,
+      assetCount: right.directAssetCount,
+    },
+    mode,
+    order,
+  );
 }
 
 /**
@@ -282,4 +316,38 @@ export function sortManagedTreeEntries(
   visit(null);
 
   return [...sorted, ...rootLinked];
+}
+
+/**
+ * Sort each collection level with the shared name/count field and direction
+ * semantics. Collections do not expose folder creation-time sorting. The tree
+ * shape is preserved so collapse and inline-create logic can continue to
+ * consume the existing parent map.
+ */
+export function sortCollectionTree(
+  tree: ReadonlyMap<string | null, readonly CollectionSummary[]>,
+  mode: CollectionTreeSortMode,
+  order: FolderTreeSortOrder,
+): Map<string | null, CollectionSummary[]> {
+  const sorted = new Map<string | null, CollectionSummary[]>();
+  for (const [parentId, children] of tree) {
+    sorted.set(
+      parentId,
+      [...children].sort((left, right) =>
+        compareSortableSidebarEntries(
+          {
+            name: left.name,
+            assetCount: left.assetCount,
+          },
+          {
+            name: right.name,
+            assetCount: right.assetCount,
+          },
+          mode,
+          order,
+        ),
+      ),
+    );
+  }
+  return sorted;
 }

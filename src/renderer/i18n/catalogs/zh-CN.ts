@@ -196,6 +196,7 @@ export const zhCN = {
     folders: "文件夹",
     showIgnored: "显示隐藏项目",
     sortFolders: "排序文件夹",
+    sortCollections: "排序合集",
     sortBy: "排序方式",
     sortByName: "按字母",
     sortByCreated: "按时间",
