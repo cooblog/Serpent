@@ -378,3 +378,61 @@ preview-cache: 281 miss / 281 store，其中 15:29:37 → 15:30:19 有 42 秒完
 
 - `mf`（指纹计算）**10.4 s** 成为第一自耗，`lstat` 11.6 s、`readdir` 1.3 s、`all()` ≈ 2.5 s（对应 §3.1/§3.9 与 `Serpent-26f22b`）。
 - 用户实例日志里仍可见：`sync.poll-remote` 把维护队列堆到 45 条；`ai.test-connection` 反复占用后台槽 2–3 秒。两者都需要 single-flight/合并/退避。
+
+## 14. v0.2.3 发布期间的全量门禁证据有效性（2026-09-15）
+
+### 14.1 现象：一次「4 failed」的运行整体不可用
+
+发布分支上跑 `npm run verify:mainline`：wall time 从 00:47:59 到 11:36:59（≈10.8 小时），
+结果 `4 failed | 4843 passed | 29 skipped (578 files)`。四项失败都很可疑：
+
+| 失败项 | 该次运行中的表现 |
+| --- | --- |
+| `large-batch-import-reliability` | 报 `Test timed out in 900000ms`，同一行却记录 `38934769ms` |
+| `reconciliation-performance`（事件循环 p95） | `expected 121.95169999999962 to be less than 75` |
+| `import-planning` / `library-zip` | `afterEach` 清理临时目录时 `ENOTEMPTY` |
+| 其余 | 大量 `[vitest-pool]: Timeout terminating forks worker` |
+
+同一份代码在发布前的全量运行里这四项是绿的，且这四项都不是本次改动新增的用例。
+
+### 14.2 根因：宿主在运行中途进入睡眠，vitest 定时器被冻结
+
+系统日志给出了直接证据（时区为宿主本地时间）：
+
+- `Kernel-Power 42`（00:53:14 进入睡眠）→ `107`（00:53:18 短暂恢复）
+- `Kernel-Power 130/131`（11:34:03 固件 S4 转换）→ `Power-Troubleshooter 1`（11:34:06 从低功耗状态恢复）
+
+也就是 00:53–11:34 这段宿主不执行桌面任务：wall clock 继续走，定时器不走。于是
+900 秒的超时回调在约 10.8 小时后才触发（记录值 38,934,769 ms），恢复瞬间的调度抖动把
+事件循环 p95 抬到 122 ms，句柄/杀毒在恢复后短暂占用导致临时目录删不掉。
+
+### 14.3 逐项复现（宿主清醒，单文件跑 Electron runner）
+
+命令：`node scripts/run-vitest-with-electron.mjs run --config vitest.config.ts <file>`；宿主 CPU 7–18%。
+
+| 用例 | 结果 |
+| --- | --- |
+| `reconciliation-performance` | 7 passed；`elapsedMs 1276.5`、`eventLoopLagP95Ms 41.6`、`eventLoopLagMaxMs 61.5`（门槛 75 / 1000） |
+| `import-planning` | 57 passed / 1 skipped |
+| `library-zip` | 29 passed |
+| `large-batch-import-reliability`（5 万小文件） | 1 passed，466 s（< 900 s 超时） |
+
+结论：四项失败全部是宿主睡眠/恢复造成的假红，不是回归。
+
+### 14.4 判读规则（下次照此执行）
+
+1. 全量门禁的 wall time 明显超过历史水平（本套件正常在几十分钟量级）时，**先查宿主电源事件**
+   （`Kernel-Power` 42/107/130/131、`Power-Troubleshooter` 1）再判定回归。
+2. 超时类与 event-loop lag 类断言在睡眠/恢复之后**不能作为证据**；必须在清醒宿主上单跑复现。
+3. 跑长门禁时用 `SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)` 挡住空闲睡眠
+   （不改持久电源设置，进程退出即释放）；人为睡眠/合盖仍会打断，跑完必须核对起止时间。
+4. 单文件复现不要用裸 `npx vitest`：`npm run test` 走
+   `scripts/run-vitest-with-electron.mjs`（Electron ABI），系统 Node 加载 `better_sqlite3.node`
+   会报 `NODE_MODULE_VERSION 148 / 137` 不匹配，把「环境错」误读成「测试失败」。
+
+### 14.5 顺带修掉的确定性红灯：迁移黄金快照落后一个版本
+
+`tests/worker/migration-checksum-snapshot.test.ts` 的 `GOLDEN_CHECKSUMS` 停在 v48，
+而 `MIGRATIONS` 已有 v49（`LINKED_FOLDER_PARENT_SCHEMA_SQL`，链接文件夹父级，2026-09-12 落地时未同步）。
+逐项核对 v1–48 的 checksum 与快照完全一致（说明已发布迁移的 SQL 没有被改动），只追加 v49 一项；
+`migration-checksum-snapshot` + `migration-discipline` 共 9 passed。迁移本身未改动。
