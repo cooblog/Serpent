@@ -185,6 +185,36 @@ describe('schema v9 migration', () => {
     db.close();
     service.closeAll();
   });
+
+  it('uses the recent-job ordering index for bounded task-panel pages', () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'RecentJobIdx', selectedParentPath: root });
+
+    const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    const plan = db.prepare(
+      `EXPLAIN QUERY PLAN
+       SELECT j.job_id
+         FROM jobs j
+         LEFT JOIN assets a ON a.asset_id = j.asset_id
+        WHERE j.library_id = ?
+          AND j.kind IN (
+            'generate_thumbnail', 'generate_video_poster', 'extract_metadata',
+            'generate_contact_sheet', 'generate_webm_proxy', 'generate_audio_proxy',
+            'extract_palette'
+          )
+          AND (j.error_code IS NULL OR j.error_code <> 'ASSET_IGNORED')
+          AND (j.asset_id IS NULL OR a.deleted_at IS NULL)
+        ORDER BY j.created_at DESC, j.job_id DESC
+        LIMIT 500`,
+    ).all(created.libraryId) as Array<{ detail: string }>;
+    const details = plan.map((step) => step.detail).join('\n');
+    expect(details).toContain('jobs_library_created_desc');
+    expect(details).not.toContain('USE TEMP B-TREE FOR ORDER BY');
+
+    db.close();
+    service.closeAll();
+  });
 });
 
 describe('detectMediaType', () => {
@@ -1294,6 +1324,15 @@ describe('processThumbnailQueue', () => {
 
     let status = service.listMediaJobs(created.libraryId);
     expect(status.queued).toBe(1);
+    expect(service.listMediaJobs(created.libraryId, { summaryOnly: true })).toMatchObject({
+      queued: 1,
+      running: 0,
+      succeeded: 0,
+      failed: 0,
+      paused: 0,
+      cancelled: 0,
+      jobs: [],
+    });
     expect(status.jobs[0]).toMatchObject({
       kind: 'generate_thumbnail',
       status: 'queued',

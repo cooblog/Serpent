@@ -1188,6 +1188,7 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     type: z.literal('media.list-jobs.request'),
+    summaryOnly: z.boolean().optional(),
     libraryId: identifierSchema,
   }),
   z.strictObject({
@@ -2299,6 +2300,7 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
   }),
   z.strictObject({
     type: z.literal('media.list-jobs'),
+    summaryOnly: z.boolean().optional(),
     libraryId: identifierSchema,
   }),
   z.strictObject({

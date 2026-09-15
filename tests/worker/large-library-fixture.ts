@@ -261,7 +261,6 @@ async function seedDatabase(
         width, height, duration_ms, generator_version, status, generated_at)
      VALUES (?, ?, 'extracted_metadata', 'application/json', ?, ?, ?, ?, ?, ?, 'ready', ?)`,
   );
-
   const planned: PlannedAsset[] = Array.from({ length: counts.assetCount }, (_, index) => {
     const kind = kindForIndex(index, counts);
     const extension = extensionForKind(kind, index);
@@ -283,6 +282,12 @@ async function seedDatabase(
   const artifactsDir = path.join(libraryPath, '.serpent', 'artifacts');
   if (writeFiles) mkdirSync(artifactsDir, { recursive: true });
   const byteSizes = new Map<string, number>();
+  const modifiedAts = new Map<string, string>();
+  const recordSourceMetadata = (relativePath: string, absolutePath: string): void => {
+    const stat = statSync(absolutePath);
+    byteSizes.set(relativePath, stat.size);
+    modifiedAts.set(relativePath, stat.mtime.toISOString());
+  };
 
   if (writeFiles) {
     await mapPool(planned, FILE_WRITE_CONCURRENCY, async (item) => {
@@ -294,19 +299,19 @@ async function seedDatabase(
           : videoPool[item.index % videoPool.length];
         if (!source) throw new Error('Video pool was empty.');
         copyFileSync(source, absolutePath);
-        byteSizes.set(item.relativePath, statSync(absolutePath).size);
+        recordSourceMetadata(item.relativePath, absolutePath);
         return;
       }
       if (item.kind === 'image' && item.geometry) {
         const source = imagePool.get(imagePoolKey(item.extension, item.geometry));
         if (!source) throw new Error(`Image pool missed ${item.extension} ${item.geometry.width}x${item.geometry.height}.`);
         copyFileSync(source, absolutePath);
-        byteSizes.set(item.relativePath, statSync(absolutePath).size);
+        recordSourceMetadata(item.relativePath, absolutePath);
         return;
       }
       const bytes = await createAssetBytes(item.kind, item.index, item.extension);
       writeFileSync(absolutePath, bytes);
-      byteSizes.set(item.relativePath, bytes.byteLength);
+      recordSourceMetadata(item.relativePath, absolutePath);
     });
   }
 
@@ -346,7 +351,14 @@ async function seedDatabase(
         now,
         now,
       );
-      insertRevision.run(revisionId, assetId, byteSize, now, item.filename, now);
+      insertRevision.run(
+        revisionId,
+        assetId,
+        byteSize,
+        modifiedAts.get(item.relativePath) ?? now,
+        item.filename,
+        now,
+      );
       if (writeFiles && item.geometry && (item.kind === 'image' || item.kind === 'video')) {
         const durationMs = item.kind === 'video' ? videoDurationMs() : null;
         writeExtractedMetadataArtifact(
@@ -425,7 +437,6 @@ export async function ensureLargeLibraryFixture(
   const counts = assetProfile === 'images-only'
     ? imageOnlyCountsFor(assetCount)
     : mixCountsFor(assetCount);
-
   const existing = readExistingManifest(outputPath);
   if (existing && !options.reset) {
     if (

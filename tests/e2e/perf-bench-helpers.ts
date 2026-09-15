@@ -30,9 +30,10 @@ export function benchmarkLogEnv(logDirectory: string): Record<string, string> {
     SERPENT_OPEN_STAGE_LOG: "1",
     SERPENT_CLOSE_TRACE: "1",
     SERPENT_VIEWER_TIMING_LOG: "1",
-    // The preview cache is disabled under SERPENT_E2E unless forced; the hot
-    // preview path is one of the measured scenarios, so force it on.
-    SERPENT_PREVIEW_CACHE_FORCE: "1",
+    // The preview cache is disabled under SERPENT_E2E unless forced. Default
+    // benchmark runs exercise the production cache path, while an explicit
+    // SERPENT_PREVIEW_CACHE_FORCE=0 lets cold-origin reads be profiled too.
+    SERPENT_PREVIEW_CACHE_FORCE: process.env.SERPENT_PREVIEW_CACHE_FORCE ?? "1",
     SERPENT_PREVIEW_CACHE_LOG: "1",
     SERPENT_E2E_LIBRARY_TRACE: "1",
     SERPENT_LAG_LOG_DIR: logDirectory,
@@ -475,14 +476,32 @@ type CommandAggregate = {
 
 export type BenchLogSummary = {
   commands: CommandAggregate[];
+  unmatchedRoundTripCount: number;
   lagEvents: { count: number; maxDriftMs: number; activities: Record<string, number> };
   mainLagEvents: { count: number; maxDriftMs: number };
   schedulerStalls: { count: number; maxWaitMs: number; owners: Record<string, number> };
-  mediaWaves: { waves: number; jobs: number; maxWaveMs: number; kinds: Record<string, number> };
+  mediaWaves: {
+    waves: number;
+    jobs: number;
+    startedJobs: number;
+    maxWaveMs: number;
+    maxJobMs: number;
+    kinds: Record<string, number>;
+  };
   reconcileStages: Array<{ stage: string; count: number; maxMs: number; totalMs: number }>;
   openStages: Array<{ stage: string; count: number; maxMs: number; totalMs: number }>;
   previewCache: Record<string, number>;
   viewerSpans: Array<{ stage: string; count: number; maxMs: number }>;
+};
+
+export type MediaQueueWindowSummary = {
+  elapsedMs: number;
+  finishedJobs: number;
+  jobsPerMinute: number;
+  jobKinds: Record<string, number>;
+  jobElapsedMs: TimingSummary;
+  startedWaves: number;
+  finishedWaves: number;
 };
 
 function parsedLogLines(logText: string): Array<Record<string, unknown>> {
@@ -526,6 +545,49 @@ function collectStageTimings(
     .sort((left, right) => right.totalMs - left.totalMs);
 }
 
+/** Count only media work that finished inside the explicitly profiled window. */
+export function summarizeMediaQueueWindow(
+  logText: string,
+  startedAtEpochMs: number,
+  endedAtEpochMs: number,
+): MediaQueueWindowSummary {
+  const elapsedMs = Math.max(0, endedAtEpochMs - startedAtEpochMs);
+  const windowEvents = parsedLogLines(logText).filter((line) => {
+    if (line.scope !== "worker.media-queue") return false;
+    const context = (line.context ?? {}) as Record<string, unknown>;
+    const timestamp = Date.parse(String(context.timestamp ?? line.timestamp ?? ""));
+    return Number.isFinite(timestamp) && timestamp >= startedAtEpochMs && timestamp <= endedAtEpochMs;
+  });
+  const eventStage = (line: Record<string, unknown>): string =>
+    String((line.context as Record<string, unknown> | undefined)?.mediaStage ?? "unknown");
+  const finished = windowEvents.filter((line) => eventStage(line) === "job-finish");
+  const jobKinds: Record<string, number> = {};
+  const durations: number[] = [];
+  for (const line of finished) {
+    const context = (line.context ?? {}) as Record<string, unknown>;
+    const kind = String(context.kind ?? "unknown");
+    jobKinds[kind] = (jobKinds[kind] ?? 0) + 1;
+    const duration = Number(context.elapsedMs);
+    if (Number.isFinite(duration) && duration >= 0) durations.push(duration);
+  }
+  return {
+    elapsedMs,
+    finishedJobs: finished.length,
+    jobsPerMinute: elapsedMs > 0 ? Number((finished.length * 60_000 / elapsedMs).toFixed(2)) : 0,
+    jobKinds,
+    jobElapsedMs: summarizeTimings(durations),
+    startedWaves: windowEvents.filter((line) => eventStage(line) === "wave-start").length,
+    finishedWaves: windowEvents.filter((line) => eventStage(line) === "wave-finish").length,
+  };
+}
+
+function stableDiagnosticLabel(value: unknown): string {
+  return String(value ?? "unknown")
+    .replace(/:[0-9a-f]{8}-[0-9a-f-]{27,}/gi, "")
+    .replace(/[^a-zA-Z0-9._:-]/g, "")
+    .slice(0, 96) || "unknown";
+}
+
 /**
  * Aggregate the gated diagnostics into the spans Serpent-217028 asks for.
  * `queueMs` is time to receipt, `schedulerWaitMs` is receipt to admission
@@ -534,22 +596,52 @@ function collectStageTimings(
  */
 export function summarizeBenchLog(logText: string): BenchLogSummary {
   const lines = parsedLogLines(logText);
+  const commandByRequestId = new Map<string, {
+    commandType: string;
+    queueMs: number;
+    schedulerWaitMs: number;
+    runMs: number;
+    roundTripMs?: number;
+  }>();
+  const roundTripByRequestId = new Map<string, { commandType: string; roundTripMs: number }>();
+  for (const line of lines) {
+    const context = (line.context ?? {}) as Record<string, unknown>;
+    if (line.scope === "worker.cmd") {
+      const requestId = String(context.requestId ?? line.requestId ?? "");
+      if (!requestId || commandByRequestId.has(requestId)) continue;
+      commandByRequestId.set(requestId, {
+        commandType: String(context.type ?? context.commandType ?? line.type ?? "unknown"),
+        queueMs: Number(context.queueMs ?? line.queueMs ?? 0),
+        schedulerWaitMs: Number(context.schedulerWaitMs ?? line.schedulerWaitMs ?? 0),
+        runMs: Number(context.runMs ?? line.runMs ?? 0),
+      });
+    } else if (line.scope === "worker.cmd.roundtrip") {
+      const requestId = String(context.requestId ?? line.requestId ?? "");
+      if (!requestId || roundTripByRequestId.has(requestId)) continue;
+      roundTripByRequestId.set(requestId, {
+        commandType: String(context.commandType ?? context.type ?? "unknown"),
+        roundTripMs: Number(context.roundTripMs ?? context.totalMs ?? 0),
+      });
+    }
+  }
+  for (const [requestId, roundTrip] of roundTripByRequestId) {
+    const command = commandByRequestId.get(requestId);
+    if (command) command.roundTripMs = roundTrip.roundTripMs;
+  }
   const byCommand = new Map<string, {
     queue: number[];
     schedulerWait: number[];
     run: number[];
     roundTrip: number[];
   }>();
-  for (const line of lines) {
-    if (line.scope !== "worker.cmd" && line.scope !== "worker.cmd.roundtrip") continue;
-    const context = (line.context ?? {}) as Record<string, unknown>;
-    const commandType = String(context.type ?? context.commandType ?? "unknown");
-    const entry = byCommand.get(commandType) ?? { queue: [], schedulerWait: [], run: [], roundTrip: [] };
-    entry.queue.push(Number(context.queueMs ?? 0));
-    entry.schedulerWait.push(Number(context.schedulerWaitMs ?? 0));
-    entry.run.push(Number(context.runMs ?? 0));
-    entry.roundTrip.push(Number(context.roundTripMs ?? context.totalMs ?? context.runMs ?? 0));
-    byCommand.set(commandType, entry);
+  for (const command of commandByRequestId.values()) {
+    const entry = byCommand.get(command.commandType)
+      ?? { queue: [], schedulerWait: [], run: [], roundTrip: [] };
+    entry.queue.push(command.queueMs);
+    entry.schedulerWait.push(command.schedulerWaitMs);
+    entry.run.push(command.runMs);
+    if (command.roundTripMs !== undefined) entry.roundTrip.push(command.roundTripMs);
+    byCommand.set(command.commandType, entry);
   }
   const commands: CommandAggregate[] = [...byCommand.entries()]
     .map(([commandType, samples]) => ({
@@ -566,9 +658,10 @@ export function summarizeBenchLog(logText: string): BenchLogSummary {
   const lagActivities: Record<string, number> = {};
   let maxDriftMs = 0;
   for (const event of lagEvents) {
-    const activity = String(event.activity ?? "unknown");
+    const context = (event.context ?? {}) as Record<string, unknown>;
+    const activity = stableDiagnosticLabel(context.activity ?? event.activity);
     lagActivities[activity] = (lagActivities[activity] ?? 0) + 1;
-    maxDriftMs = Math.max(maxDriftMs, Number(event.driftMs ?? 0));
+    maxDriftMs = Math.max(maxDriftMs, Number(context.driftMs ?? event.driftMs ?? 0));
   }
   const mainLagEvents = lines.filter((line) => line.scope === "main.eventLoop.lag");
 
@@ -577,9 +670,18 @@ export function summarizeBenchLog(logText: string): BenchLogSummary {
   let maxStallWaitMs = 0;
   for (const stall of stalls) {
     const context = (stall.context ?? {}) as Record<string, unknown>;
-    const owner = String(context.owner ?? context.activity ?? "unknown");
-    stallOwners[owner] = (stallOwners[owner] ?? 0) + 1;
-    maxStallWaitMs = Math.max(maxStallWaitMs, Number(context.waitMs ?? context.stallMs ?? 0));
+    const active = Array.isArray(context.active)
+      ? context.active as Array<Record<string, unknown>>
+      : [];
+    if (active.length === 0) {
+      const owner = stableDiagnosticLabel(context.owner ?? context.activity);
+      stallOwners[owner] = (stallOwners[owner] ?? 0) + 1;
+    }
+    for (const entry of active) {
+      const owner = `${stableDiagnosticLabel(entry.lane)}:${stableDiagnosticLabel(entry.label)}`;
+      stallOwners[owner] = (stallOwners[owner] ?? 0) + 1;
+    }
+    maxStallWaitMs = Math.max(maxStallWaitMs, Number(context.waitedMs ?? context.waitMs ?? context.stallMs ?? 0));
   }
 
   const waveStarts = lines.filter((line) => line.scope === "worker.media-queue"
@@ -588,6 +690,8 @@ export function summarizeBenchLog(logText: string): BenchLogSummary {
     && (line.context as Record<string, unknown> | undefined)?.mediaStage === "job-start");
   const jobFinish = lines.filter((line) => line.scope === "worker.media-queue"
     && (line.context as Record<string, unknown> | undefined)?.mediaStage === "job-finish");
+  const waveFinish = lines.filter((line) => line.scope === "worker.media-queue"
+    && (line.context as Record<string, unknown> | undefined)?.mediaStage === "wave-finish");
   const mediaKinds: Record<string, number> = {};
   let maxJobMs = 0;
   for (const event of jobFinish) {
@@ -596,27 +700,41 @@ export function summarizeBenchLog(logText: string): BenchLogSummary {
     mediaKinds[kind] = (mediaKinds[kind] ?? 0) + 1;
     maxJobMs = Math.max(maxJobMs, Number(context.elapsedMs ?? 0));
   }
+  const maxWaveMs = Math.max(0, ...waveFinish.map((event) => {
+    const context = (event.context ?? {}) as Record<string, unknown>;
+    return Number(context.elapsedMs ?? 0);
+  }));
 
   const previewCache: Record<string, number> = {};
   for (const line of lines) {
-    if (line.scope !== "main.preview-cache") continue;
-    const context = (line.context ?? {}) as Record<string, unknown>;
-    const event = String(context.event ?? context.cache ?? context.stage ?? "unknown");
+    // AppLogger stores the PreviewCache event kind in its message ("hit <ids>",
+    // "miss <ids>", ...) rather than a structured context field. Keep only the
+    // first token so diagnostics never copy library or artifact identifiers
+    // into the benchmark report.
+    if (line.scope !== "preview-cache") continue;
+    const event = String(line.message ?? "unknown").trim().split(/\s+/u)[0] || "unknown";
     previewCache[event] = (previewCache[event] ?? 0) + 1;
   }
 
   return {
     commands,
+    unmatchedRoundTripCount: [...roundTripByRequestId.keys()]
+      .filter((requestId) => !commandByRequestId.has(requestId)).length,
     lagEvents: { count: lagEvents.length, maxDriftMs, activities: lagActivities },
     mainLagEvents: {
       count: mainLagEvents.length,
-      maxDriftMs: Math.max(0, ...mainLagEvents.map((line) => Number(line.driftMs ?? 0))),
+      maxDriftMs: Math.max(0, ...mainLagEvents.map((line) => {
+        const context = (line.context ?? {}) as Record<string, unknown>;
+        return Number(context.driftMs ?? line.driftMs ?? 0);
+      })),
     },
     schedulerStalls: { count: stalls.length, maxWaitMs: maxStallWaitMs, owners: stallOwners },
     mediaWaves: {
       waves: waveStarts.length,
-      jobs: jobStarts.length,
-      maxWaveMs: maxJobMs,
+      jobs: jobFinish.length,
+      startedJobs: jobStarts.length,
+      maxWaveMs,
+      maxJobMs,
       kinds: mediaKinds,
     },
     reconcileStages: collectStageTimings(lines, "open.refresh-managed-assets.stage"),

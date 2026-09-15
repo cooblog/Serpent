@@ -84,7 +84,11 @@ export class JobStatusCoordinator {
   readonly #stats: JobStatusCoordinatorStats = { requests: 0, coalesced: 0, maxPending: 0 };
 
   #panelOpen = false;
-  #eventDrivenQueries = true;
+  // Default to the closed-panel budget before React's first effect applies
+  // the actual panel state. A thumbnail burst can arrive while that initial
+  // effect is still pending; it must not turn every completion into a full
+  // status/list query.
+  #eventDrivenQueries = false;
   #hidden = false;
   #running = false;
   #generation = 0;

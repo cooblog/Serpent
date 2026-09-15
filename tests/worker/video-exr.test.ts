@@ -2252,6 +2252,12 @@ describe('EXR/TGA (oiiotool)', () => {
     expect(service.listMediaJobs(created.libraryId).jobs.filter(
       (job) => job.kind === 'extract_metadata',
     )).toHaveLength(50);
+    // The background backfill must not scan/admit another batch while its
+    // bounded metadata lane is already full.
+    expect(service.enqueueRawImageMetadataBackfill(created.libraryId, 50)).toBe(0);
+    expect(service.listMediaJobs(created.libraryId).jobs.filter(
+      (job) => job.kind === 'extract_metadata',
+    )).toHaveLength(50);
     await service.processThumbnailQueue(created.libraryId, {
       maxJobs: 100,
       jobKinds: ['extract_metadata'],

@@ -2251,8 +2251,12 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: { assetId: result.assetId, kind: result.kind } };
   },
 
-  async listMediaJobs({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<MediaJobStatus>> {
-    const result = await request({ type: 'media.list-jobs.request', libraryId });
+  async listMediaJobs({ libraryId, summaryOnly }: { libraryId: string; summaryOnly?: boolean }): Promise<LibraryApiResult<MediaJobStatus>> {
+    const result = await request({
+      type: 'media.list-jobs.request',
+      libraryId,
+      ...(summaryOnly === undefined ? {} : { summaryOnly }),
+    });
     if (!result.ok) return failure(result);
     if (result.type !== 'media.jobs.listed') throw new Error('Unexpected media list-jobs response.');
     const { queued, running, succeeded, failed, paused, cancelled, jobs } = result;

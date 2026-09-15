@@ -2284,6 +2284,7 @@ function AppInner() {
   const [thumbnailFailures, setThumbnailFailures] = useState<
     Map<string, string>
   >(new Map());
+  const mediaJobsOpenRef = useRef(false);
   const [mediaJobsOpen, setMediaJobsOpen] = useState(false);
   const [mediaJobs, setMediaJobs] = useState<MediaJobStatus | null>(null);
   const [aiJobs, setAiJobs] = useState<AiJobStatus | null>(null);
@@ -11330,7 +11331,10 @@ function AppInner() {
     const coordinator = new JobStatusCoordinator({
       probes: {
         media: async () => {
-          const result = await api.listMediaJobs({ libraryId });
+          const result = await api.listMediaJobs({
+            libraryId,
+            summaryOnly: !mediaJobsOpenRef.current,
+          });
           return result.ok ? { value: result.value, active: mediaActive(result.value) } : null;
         },
         ai: async () => {
@@ -11375,6 +11379,7 @@ function AppInner() {
   useEffect(() => {
     // Opening the panel tightens the cadence and re-enables event-driven
     // refreshes; closing it drops browsing back to the slow fallback so the
+    mediaJobsOpenRef.current = mediaJobsOpen;
     // canvas does not pay for status queries it never displays.
     jobStatusCoordinatorRef.current?.setPanelOpen(mediaJobsOpen);
     jobStatusCoordinatorRef.current?.setEventDrivenQueries(mediaJobsOpen);

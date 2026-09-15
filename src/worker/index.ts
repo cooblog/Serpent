@@ -134,6 +134,8 @@ import {
   StartupBurstGateRegistry,
   type StartupBurstGateToken,
 } from './startup-burst-gate';
+import { DeferredThumbnailAdmission } from './deferred-thumbnail-admission';
+import { RawMetadataBackfillAdmissionGate } from './raw-metadata-backfill-gate';
 
 const parentPort: ParentPort | undefined = process.parentPort;
 const aiJobAbortRegistry = new AiJobAbortRegistry();
@@ -183,6 +185,7 @@ const lastVisibleWindowKeyByLibrary = new Map<string, string>();
 /** The key alone cannot distinguish geometry churn from real navigation. */
 const lastVisibleWindowAssetIdsByLibrary = new Map<string, string[]>();
 const deferredStartupThumbnailGenerations = new Map<string, number>();
+const pendingStartupThumbnailAdmission = new DeferredThumbnailAdmission();
 type VisibleDimensionProbeState = {
   assetIds: Set<string>;
   controller: AbortController;
@@ -702,12 +705,17 @@ function scheduleThumbnailQueue(
      * running and let the latest visible ids run at the next safe boundary.
      */
     preemptVisible?: boolean;
+    /** Resume/retry existing durable jobs before admitting more catalogue work. */
+    skipInitialEnqueue?: boolean;
   } = {},
 ): number {
   if (!automaticMediaAdmissionAllowed(libraryId)) return 0;
   let enqueued: number;
   try {
-    enqueued = libraryService.enqueueThumbnailJobs(libraryId, options);
+    const { skipInitialEnqueue, ...enqueueOptions } = options;
+    enqueued = skipInitialEnqueue
+      ? 0
+      : libraryService.enqueueThumbnailJobs(libraryId, enqueueOptions);
   } catch (error) {
     libraryService.reportDiagnostic('thumbnail-schedule.enqueue', error, { libraryId });
     throw error;
@@ -942,6 +950,7 @@ function scheduleThumbnailQueue(
     // the gap and competes with the wave that the user is waiting for.
     if (rescheduledThumbnailQueues.delete(libraryId)) {
       if (completedVisibleWaveIsCurrent) {
+        if (resumePendingStartupThumbnailAdmission(libraryId)) return;
         scheduleSecondaryMediaQueue(libraryId);
         return;
       }
@@ -949,6 +958,7 @@ function scheduleThumbnailQueue(
       setTimeout(() => void runBatch(), 0);
       return;
     }
+    if (resumePendingStartupThumbnailAdmission(libraryId)) return;
     scheduleSecondaryMediaQueue(libraryId);
   };
 
@@ -1082,10 +1092,36 @@ function deferStartupThumbnailScene(
 
 function cancelDeferredStartupThumbnailScene(libraryId: string): void {
   deferredStartupThumbnailGenerations.delete(libraryId);
+  pendingStartupThumbnailAdmission.cancel(libraryId);
   startupThumbnailVisibleWindows.delete(libraryId);
   pendingVisibleThumbnailWaves.delete(libraryId);
   lastVisibleWindowKeyByLibrary.delete(libraryId);
   lastVisibleWindowAssetIdsByLibrary.delete(libraryId);
+}
+
+function admitStartupThumbnailScene(libraryId: string, libraryGeneration: number): void {
+  if (
+    !automaticMediaAdmissionAllowed(libraryId)
+    || libraryGenerationRegistry.current(libraryId) !== libraryGeneration
+  ) return;
+  if (activeThumbnailQueues.has(libraryId)) {
+    pendingStartupThumbnailAdmission.defer({ libraryId, generation: libraryGeneration });
+    return;
+  }
+  scheduleThumbnailScene(libraryId, 'startup');
+}
+
+/** Start the one-shot startup fill after the active visible wave releases ownership. */
+function resumePendingStartupThumbnailAdmission(libraryId: string): boolean {
+  const generation = pendingStartupThumbnailAdmission.takeWhenIdle(
+    libraryId,
+    libraryGenerationRegistry.current(libraryId),
+    activeThumbnailQueues.has(libraryId),
+  );
+  if (generation === undefined) return false;
+  // Let the current runBatch stack finish before the next queue registers itself.
+  setTimeout(() => admitStartupThumbnailScene(libraryId, generation), 0);
+  return true;
 }
 
 function startDeferredStartupThumbnailScene(
@@ -1099,9 +1135,7 @@ function startDeferredStartupThumbnailScene(
   // time-based viewport wait before this gate is reached.
   const token = { libraryId, generation: libraryGeneration };
   void startupBurstGates.waitForDrain(token).then(() => {
-    if (automaticMediaAdmissionAllowed(libraryId)) {
-      scheduleThumbnailScene(libraryId, 'startup');
-    }
+    admitStartupThumbnailScene(libraryId, libraryGeneration);
     return undefined;
   }).catch(() => {
     // Never let automatic media work surface as an unhandled rejection.
@@ -1229,6 +1263,7 @@ const urgentSecondaryMediaQueues = new Set<string>();
 const urgentSecondaryMediaAssetIds = new Map<string, Set<string>>();
 const secondaryMediaRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const secondaryMediaFairnessTurns = new Map<string, number>();
+const rawMetadataBackfillAdmissionGate = new RawMetadataBackfillAdmissionGate();
 const RAW_METADATA_BACKFILL_BATCH_SIZE = 256;
 
 function cancelSecondaryMediaRetry(libraryId: string): void {
@@ -1315,11 +1350,13 @@ function cancelAutomaticMediaForLibrary(libraryId: string): void {
     pendingThumbnailQueueAborts.delete(libraryId);
   }
   rescheduledThumbnailQueues.delete(libraryId);
+  pendingStartupThumbnailAdmission.cancel(libraryId);
   const secondaryController = activeSecondaryMediaQueueControllers.get(libraryId);
   if (secondaryController) secondaryController.abort();
   rescheduledSecondaryMediaQueues.delete(libraryId);
   cancelSecondaryMediaRetry(libraryId);
   secondaryMediaFairnessTurns.delete(libraryId);
+  rawMetadataBackfillAdmissionGate.cancel(libraryId);
   secondaryMediaIdleUntil.delete(libraryId);
   urgentSecondaryMediaQueues.delete(libraryId);
   urgentSecondaryMediaAssetIds.delete(libraryId);
@@ -1421,17 +1458,25 @@ function scheduleSecondaryMediaQueue(
     try {
       const urgentAssetIds = urgentSecondaryMediaAssetIds.get(libraryId);
       let admittedRawMetadata = 0;
-      if (!urgent) {
+      const attemptedRawMetadataBackfill = !urgent
+        && rawMetadataBackfillAdmissionGate.shouldAttempt(libraryId);
+      if (attemptedRawMetadataBackfill) {
         // A startup scene only admits one bounded RAW batch. Keep admitting
         // the next batch here after the current secondary queue drains so a
-        // 50k-camera library eventually reaches every Inspector record.
-        admittedRawMetadata = await traceActivity(
-          `raw-metadata-enqueue:${libraryId}`,
-          async () => libraryService.enqueueRawImageMetadataBackfill(
-            libraryId,
-            RAW_METADATA_BACKFILL_BATCH_SIZE,
-          ),
-        );
+        // 50k-camera library eventually reaches every Inspector record. The
+        // full-catalog probe is throttled; explicit-asset admission remains
+        // immediate in enqueueThumbnailJobs.
+        try {
+          admittedRawMetadata = await traceActivity(
+            `raw-metadata-enqueue:${libraryId}`,
+            async () => libraryService.enqueueRawImageMetadataBackfill(
+              libraryId,
+              RAW_METADATA_BACKFILL_BATCH_SIZE,
+            ),
+          );
+        } finally {
+          rawMetadataBackfillAdmissionGate.deferNextAttempt(libraryId);
+        }
       }
       const fairnessTurn = (secondaryMediaFairnessTurns.get(libraryId) ?? 0) + 1;
       secondaryMediaFairnessTurns.set(libraryId, fairnessTurn);
@@ -1503,6 +1548,17 @@ function scheduleSecondaryMediaQueue(
       if (!urgent && !queueController.signal.aborted) {
         const retryDelay = libraryService.rawImageMetadataRetryDelayMs(libraryId);
         if (retryDelay !== null) scheduleSecondaryMediaRetry(libraryId, retryDelay);
+        if (
+          retryDelay === null
+          && !attemptedRawMetadataBackfill
+          && !rawMetadataBackfillAdmissionGate.shouldAttempt(libraryId)
+        ) {
+          const backfillDelay = rawMetadataBackfillAdmissionGate.remainingDelayMs(libraryId);
+          if (backfillDelay > 0) {
+            setTimeout(() => void runOne(), backfillDelay);
+            return;
+          }
+        }
         // `admittedRawMetadata` is intentionally read here: if a new batch
         // was admitted but no job was claimable, keep the pump alive for one
         // more turn so a race with a terminal artifact cannot strand it.
@@ -4265,7 +4321,9 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       return { ok: true, type: 'media.jobs.processed', libraryId: request.command.libraryId, processed };
     }
     case 'media.list-jobs': {
-      const status = libraryService.listMediaJobs(request.command.libraryId);
+      const status = libraryService.listMediaJobs(request.command.libraryId, {
+        summaryOnly: request.command.summaryOnly,
+      });
       return {
         ok: true,
         type: 'media.jobs.listed',
@@ -4290,7 +4348,11 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         request.command.libraryId,
         request.command.jobIds,
       );
-      scheduleThumbnailQueue(request.command.libraryId);
+      // Resuming persisted jobs must not synchronously rescan and insert the
+      // entire catalogue before the command can return. The queue pump below
+      // still admits missing thumbnails in its existing bounded 500-row
+      // continuation after active jobs make progress.
+      scheduleThumbnailQueue(request.command.libraryId, { skipInitialEnqueue: true });
       return {
         ok: true,
         type: 'media.jobs.resumed',
@@ -4315,7 +4377,7 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         request.command.libraryId,
         request.command.jobIds,
       );
-      scheduleThumbnailQueue(request.command.libraryId);
+      scheduleThumbnailQueue(request.command.libraryId, { skipInitialEnqueue: true });
       return {
         ok: true,
         type: 'media.jobs.retried',
@@ -4927,6 +4989,7 @@ parentPort.on('message', async (event) => {
       for (const libraryId of new Set([
         ...activeThumbnailQueues,
         ...activeThumbnailQueueControllers.keys(),
+        ...deferredStartupThumbnailGenerations.keys(),
         ...activeSecondaryMediaQueues,
         ...activeSecondaryMediaQueueControllers.keys(),
         ...secondaryMediaRetryTimers.keys(),

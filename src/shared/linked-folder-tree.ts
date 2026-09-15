@@ -83,6 +83,56 @@ export function collectLinkedDirectoryPrefixes(
   return [...prefixes].sort();
 }
 
+export interface LinkedDirectoryAssetCounts {
+  direct: number;
+  recursive: number;
+}
+
+/**
+ * Count assets for every virtual directory in one pass over each asset's
+ * ancestors. Recursive counts were previously computed by filtering the full
+ * asset list once per directory, which becomes O(assets × directories).
+ */
+export function countLinkedDirectoryAssets(
+  relativeFilePaths: readonly string[],
+): Map<string, LinkedDirectoryAssetCounts> {
+  const counts = new Map<string, LinkedDirectoryAssetCounts>();
+  const ensure = (directory: string): LinkedDirectoryAssetCounts => {
+    let count = counts.get(directory);
+    if (!count) {
+      count = { direct: 0, recursive: 0 };
+      counts.set(directory, count);
+    }
+    return count;
+  };
+
+  for (const filePath of relativeFilePaths) {
+    const directory = linkedAssetDirectory(filePath);
+    ensure(directory).direct += 1;
+
+    let ancestor = directory;
+    while (ancestor !== "") {
+      ensure(ancestor).recursive += 1;
+      ancestor = parentLinkedRelativePath(ancestor) ?? "";
+    }
+    ensure("").recursive += 1;
+  }
+
+  return counts;
+}
+
+/** Number of direct virtual subdirectories under each virtual directory. */
+export function countLinkedDirectoryChildren(
+  relativeDirectoryPaths: readonly string[],
+): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const directory of relativeDirectoryPaths) {
+    const parent = parentLinkedRelativePath(directory) ?? "";
+    counts.set(parent, (counts.get(parent) ?? 0) + 1);
+  }
+  return counts;
+}
+
 export function directChildLinkedDirectories(
   prefixes: readonly string[],
   parentRelativePath: string,

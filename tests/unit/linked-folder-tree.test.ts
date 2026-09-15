@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  countLinkedDirectoryAssets,
+  countLinkedDirectoryChildren,
   collectLinkedDirectoryPrefixes,
   directChildLinkedDirectories,
   encodeLinkedVirtualFolderId,
@@ -42,6 +44,27 @@ describe("linked-folder-tree", () => {
     expect(linkedAssetIsUnderDirectory("other/a.png", "notes")).toBe(false);
     expect(linkedFolderDepth("")).toBe(1);
     expect(linkedFolderDepth("notes/2024")).toBe(3);
+  });
+
+  it("counts direct and recursive assets by walking each path's ancestors", () => {
+    const counts = countLinkedDirectoryAssets([
+      "root.png",
+      "notes/readme.md",
+      "notes/2024/draft.txt",
+      "notes/2024/final.txt",
+      "other/image.webp",
+    ]);
+
+    expect(counts.get("")).toEqual({ direct: 1, recursive: 5 });
+    expect(counts.get("notes")).toEqual({ direct: 1, recursive: 3 });
+    expect(counts.get("notes/2024")).toEqual({ direct: 2, recursive: 2 });
+    expect(counts.get("other")).toEqual({ direct: 1, recursive: 1 });
+    expect(counts.get("missing")).toBeUndefined();
+  });
+
+  it("counts direct virtual children in a single pass", () => {
+    expect(countLinkedDirectoryChildren(["notes", "notes/2024", "notes/2025", "other"]))
+      .toEqual(new Map([["", 2], ["notes", 2]]));
   });
 
   it("resolves reveal ids for linked subdirectories", () => {

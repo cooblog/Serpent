@@ -477,6 +477,82 @@ describe('InteractiveScheduler', () => {
     await expect(mutation).resolves.toBe('imported');
   });
 
+  it('admits a bounded set of read-only status snapshots alongside maintenance', async () => {
+    const scheduler = new InteractiveScheduler();
+    const events: string[] = [];
+    let releaseMaintenance!: () => void;
+    const maintenance = scheduler.schedule(
+      { requestId: 'reconcile', lane: 'maintenance', libraryId: 'library-1', label: 'reconciliation' },
+      () => new Promise<void>((resolve) => { releaseMaintenance = resolve; }),
+    );
+    await Promise.resolve();
+
+    const releaseStatus: Array<() => void> = [];
+    const statusReads = ['media.list-jobs', 'ai.status', 'plugin.jobs.list'].map((label, index) =>
+      scheduler.schedule(
+        { requestId: `status-${index}`, lane: 'background-secondary', libraryId: 'library-1', label },
+        () => new Promise<void>((resolve) => {
+          events.push(`${label}-start`);
+          releaseStatus.push(() => {
+            events.push(`${label}-end`);
+            resolve();
+          });
+        }),
+      ),
+    );
+    let releaseFourthStatus!: () => void;
+    let fourthStatusStarted = false;
+    const fourthStatus = scheduler.schedule(
+      { requestId: 'status-history', lane: 'background-secondary', libraryId: 'library-1', label: 'history.status' },
+      () => new Promise<void>((resolve) => {
+        fourthStatusStarted = true;
+        events.push('history.status-start');
+        releaseFourthStatus = () => {
+          events.push('history.status-end');
+          resolve();
+        };
+      }),
+    );
+    let maintenanceWorkStarted = false;
+    const maintenanceWork = scheduler.schedule(
+      {
+        requestId: 'analysis',
+        lane: 'background-secondary',
+        libraryId: 'library-1',
+        label: 'ai.process-queue',
+      },
+      () => {
+        maintenanceWorkStarted = true;
+      },
+    );
+    let browseStarted = false;
+    const browse = scheduler.schedule(
+      { requestId: 'browse', lane: 'interactive-control', libraryId: 'library-1', label: 'browse.session.open' },
+      () => {
+        browseStarted = true;
+      },
+    );
+
+    expect(events.filter((event) => event.endsWith('-start'))).toHaveLength(3);
+    expect(fourthStatusStarted).toBe(false);
+    expect(maintenanceWorkStarted).toBe(false);
+    expect(browseStarted).toBe(true);
+    await browse;
+
+    releaseStatus[0]!();
+    await statusReads[0];
+    await vi.waitFor(() => expect(fourthStatusStarted).toBe(true));
+    releaseFourthStatus();
+    for (const release of releaseStatus.slice(1)) release();
+    await Promise.all([...statusReads.slice(1), fourthStatus]);
+    expect(maintenanceWorkStarted).toBe(false);
+
+    releaseMaintenance();
+    await maintenance;
+    await maintenanceWork;
+    expect(maintenanceWorkStarted).toBe(true);
+  });
+
   it('keeps interaction latest-wins keys isolated per consumerId', async () => {
     const scheduler = new InteractiveScheduler();
     let releaseBlocking!: () => void;

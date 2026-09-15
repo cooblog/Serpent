@@ -1297,6 +1297,11 @@ describe('renderer request protocol', () => {
       libraryId: 'library-01',
     })).toMatchObject({ type: 'media.list-jobs.request' });
     expect(parseRendererRequest({
+      type: 'media.list-jobs.request',
+      libraryId: 'library-01',
+      summaryOnly: true,
+    })).toMatchObject({ type: 'media.list-jobs.request', summaryOnly: true });
+    expect(parseRendererRequest({
       type: 'plugin.list-jobs.request',
       libraryId: 'library-01',
     })).toMatchObject({ type: 'plugin.list-jobs.request' });

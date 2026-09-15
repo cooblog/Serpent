@@ -4,7 +4,7 @@ import { performance } from 'node:perf_hooks';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { LibraryService } from '../../src/worker/library-service';
 
@@ -247,6 +247,54 @@ describe('open reconciliation performance', () => {
     expect(statementsDuringHash).toBe(0);
     expect(new Map(afterAssets.map((asset) => [asset.relativeFilePath, asset.currentRevisionId])))
       .toEqual(beforeRevisionIds);
+  }, 120_000);
+
+  it('skips path revalidation for unchanged discovered assets but keeps it for changed files', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'serpent-reconciliation-path-check-'));
+    roots.push(root);
+    const linkedRoot = path.join(root, 'linked');
+    mkdirSync(linkedRoot);
+    const service = new LibraryService({ observerFactory: () => ({ close() {} }) });
+    services.push(service);
+    const created = service.createLibrary({
+      displayName: 'Reconciliation path validation',
+      selectedParentPath: root,
+    });
+    const managedPath = path.join(created.libraryPath, 'Assets', 'managed.txt');
+    const linkedPath = path.join(linkedRoot, 'linked.txt');
+    writeFileSync(managedPath, 'managed');
+    writeFileSync(linkedPath, 'linked');
+    service.importFolderAsLinked({
+      libraryId: created.libraryId,
+      sourceRootPath: linkedRoot,
+    });
+    await service.runOpenBackgroundReconciliation(created.libraryId);
+
+    const internals = service as unknown as {
+      folderPath: (library: unknown, relativePath: string) => string;
+      linkedAssetPath: (library: unknown, folderId: string | null, relativePath: string) => string;
+    };
+    const managedPathResolver = vi.spyOn(internals, 'folderPath');
+    const linkedPathResolver = vi.spyOn(internals, 'linkedAssetPath');
+
+    expect(service.refreshManagedAssets(created.libraryId)).toMatchObject({
+      changedCount: 0,
+      missingCount: 0,
+    });
+    expect(managedPathResolver).not.toHaveBeenCalled();
+    expect(linkedPathResolver).not.toHaveBeenCalled();
+
+    managedPathResolver.mockClear();
+    linkedPathResolver.mockClear();
+    const changedAt = new Date(Date.now() + 60_000);
+    writeFileSync(managedPath, 'managed changed');
+    utimesSync(managedPath, changedAt, changedAt);
+    writeFileSync(linkedPath, 'linked changed');
+    utimesSync(linkedPath, changedAt, changedAt);
+
+    expect(service.refreshManagedAssets(created.libraryId).changedCount).toBeGreaterThan(0);
+    expect(managedPathResolver).toHaveBeenCalled();
+    expect(linkedPathResolver).toHaveBeenCalled();
   }, 120_000);
 
   it('keeps background reconciliation parked until the interactive idle window expires', async () => {

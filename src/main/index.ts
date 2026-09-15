@@ -3445,7 +3445,11 @@ async function commandFor(
         ...(request.fields ? { fields: request.fields } : {}),
       };
     case "media.list-jobs.request":
-      return { type: "media.list-jobs", libraryId: request.libraryId };
+      return {
+        type: "media.list-jobs",
+        libraryId: request.libraryId,
+        ...(request.summaryOnly === undefined ? {} : { summaryOnly: request.summaryOnly }),
+      };
     case "plugin.list-jobs.request":
       return { type: "plugin.jobs.list", libraryId: request.libraryId };
     case "media.pause-jobs.request":
