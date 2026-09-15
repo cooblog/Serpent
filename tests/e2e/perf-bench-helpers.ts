@@ -535,6 +535,18 @@ export type BenchLogSummary = {
     rebuilds: number;
     lastTotalJobs: number;
   };
+  /**
+   * Serpent-288cd9: RAW metadata backfill admission. `drainedProbes` counts
+   * probes that found nothing left to do — after the first one the gate must
+   * stop rescanning until the validation token changes.
+   */
+  rawMetadataAdmission: {
+    probes: number;
+    drainedProbes: number;
+    cappedProbes: number;
+    admitted: number;
+    exhaustedSkips: number;
+  };
   unmatchedRoundTripCount: number;
   lagEvents: { count: number; maxDriftMs: number; activities: Record<string, number> };
   mainLagEvents: { count: number; maxDriftMs: number };
@@ -665,6 +677,24 @@ function summarizeJobSummary(lines: Array<Record<string, unknown>>): BenchLogSum
     else if (source === "rebuild") summary.rebuilds += 1;
     const totalJobs = finiteNumber(context.totalJobs);
     if (totalJobs !== null) summary.lastTotalJobs = totalJobs;
+  }
+  return summary;
+}
+
+function summarizeRawMetadataAdmission(
+  lines: Array<Record<string, unknown>>,
+): BenchLogSummary["rawMetadataAdmission"] {
+  const summary = { probes: 0, drainedProbes: 0, cappedProbes: 0, admitted: 0, exhaustedSkips: 0 };
+  for (const line of lines) {
+    if (line.scope !== "raw-metadata.admission") continue;
+    const context = (line.context ?? {}) as Record<string, unknown>;
+    summary.probes += 1;
+    if (context.budgetCapped === true) summary.cappedProbes += 1;
+    else summary.drainedProbes += 1;
+    const admitted = finiteNumber(context.admitted);
+    if (admitted !== null) summary.admitted += admitted;
+    const exhaustedSkips = finiteNumber(context.exhaustedSkips);
+    if (exhaustedSkips !== null) summary.exhaustedSkips = Math.max(summary.exhaustedSkips, exhaustedSkips);
   }
   return summary;
 }
@@ -918,6 +948,7 @@ export function summarizeBenchLog(logText: string): BenchLogSummary {
     commands,
     navigations: summarizeNavigations(lines),
     jobSummary: summarizeJobSummary(lines),
+    rawMetadataAdmission: summarizeRawMetadataAdmission(lines),
     unmatchedRoundTripCount: [...roundTripByRequestId.keys()]
       .filter((requestId) => !commandByRequestId.has(requestId)).length,
     lagEvents: { count: lagEvents.length, maxDriftMs, activities: lagActivities },

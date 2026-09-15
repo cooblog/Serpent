@@ -81,6 +81,7 @@ import {
   mediaJobCountTotal,
   mediaJobCountsFromRows,
 } from './media-job-status-summary';
+import type { RawMetadataBackfillProbeOutcome } from './raw-metadata-backfill-gate';
 import {
   countLinkedDirectoryAssets,
   countLinkedDirectoryChildren,
@@ -24339,9 +24340,12 @@ export class LibraryService {
   private enqueueRawImageMetadataJobs(
     openLibrary: OpenLibrary,
     options: { assetIds?: readonly string[]; limit?: number } = {},
-  ): number {
+  ): RawMetadataBackfillProbeOutcome {
+    const targeted = options.assetIds !== undefined;
     const selectedIds = [...new Set(options.assetIds ?? [])].slice(0, 500);
-    if (options.assetIds !== undefined && selectedIds.length === 0) return 0;
+    if (targeted && selectedIds.length === 0) {
+      return { admitted: 0, probed: 0, budgetCapped: true };
+    }
     const selectedSql = selectedIds.length > 0
       ? `AND a.asset_id IN (${selectedIds.map(() => '?').join(',')})`
       : '';
@@ -24371,7 +24375,11 @@ export class LibraryService {
           .get(openLibrary.summary.libraryId) as { count: number } | undefined)?.count ?? 0)
       : 0;
     const availableAdmissionLimit = Math.max(0, limit - pendingMetadataCount);
-    if (availableAdmissionLimit === 0) return 0;
+    // 全局上限已满：本轮 0 结果是「排队预算用尽」而不是「候选扫完」，不得据此标记
+    // exhausted（Serpent-288cd9）。
+    if (availableAdmissionLimit === 0) {
+      return { admitted: 0, probed: 0, budgetCapped: true };
+    }
     const retryCutoff = new Date(Date.now() - RAW_IMAGE_METADATA_RETRY_DELAY_MS).toISOString();
     const retryRows = openLibrary.connection
       .prepare(
@@ -24436,7 +24444,9 @@ export class LibraryService {
     })();
 
     const remainingLimit = Math.max(0, availableAdmissionLimit - enqueued);
-    if (remainingLimit === 0) return enqueued;
+    if (remainingLimit === 0) {
+      return { admitted: enqueued, probed: retryRows.length, budgetCapped: true };
+    }
     const rows = openLibrary.connection
       .prepare(
         `SELECT a.asset_id, a.current_revision_id
@@ -24503,7 +24513,15 @@ export class LibraryService {
         openLibrary.summary.libraryId,
         remainingLimit,
       ) as Array<{ asset_id: string; current_revision_id: string }>;
-    if (rows.length === 0) return enqueued;
+    if (rows.length === 0) {
+      // 候选查询没有用满剩余预算 → 当前没有待处理的 RAW 资产。
+      // 定向（显式 assetIds）探测永不参与「扫完」判定。
+      return {
+        admitted: enqueued,
+        probed: retryRows.length,
+        budgetCapped: targeted,
+      };
+    }
 
     const insert = openLibrary.connection.prepare(
       `INSERT INTO jobs
@@ -24536,7 +24554,12 @@ export class LibraryService {
         ).changes;
       }
     })();
-    return enqueued;
+    return {
+      admitted: enqueued,
+      probed: retryRows.length + rows.length,
+      // 候选填满预算说明可能还有下一批；定向探测与全局上限一律不参与判定。
+      budgetCapped: targeted || rows.length >= remainingLimit,
+    };
   }
 
   /**
@@ -24545,9 +24568,14 @@ export class LibraryService {
    * large RAW catalogue is eventually drained without expanding the card
    * queue or putting EXIF work on the first-content path.
    */
-  enqueueRawImageMetadataBackfill(libraryId: string, limit = 256): number {
+  enqueueRawImageMetadataBackfill(
+    libraryId: string,
+    limit = 256,
+  ): RawMetadataBackfillProbeOutcome {
     const openLibrary = this.requireOpenLibrary(libraryId);
-    if (!columnsFor(openLibrary.connection, 'revision_artifacts').has('status')) return 0;
+    if (!columnsFor(openLibrary.connection, 'revision_artifacts').has('status')) {
+      return { admitted: 0, probed: 0, budgetCapped: true };
+    }
     return this.enqueueRawImageMetadataJobs(openLibrary, { limit });
   }
 
@@ -29779,7 +29807,7 @@ export class LibraryService {
     enqueued += this.enqueueRawImageMetadataJobs(openLibrary, {
       ...(options.assetIds === undefined ? {} : { assetIds: selectedIds }),
       ...(limit === undefined ? {} : { limit }),
-    });
+    }).admitted;
 
     // Native audio is source-first just like native video. Its waveform cover
     // and viewer strip are still generated above, but an Ogg playback proxy is

@@ -597,3 +597,60 @@ scope 未变、可见卡数 20→20，而同轮另两次跳转 270 ms / 1,105 ms
 少约 55 KB（约 219 行），不是两行笔误。同时该文件在工作树里还带着**另一条轨道的未提交改动**
 （334 增 / 119 删、93 个 hunk）。已开 `Serpent-74aaed`（P1）。在作者轨道提交完好版本之前，
 本轨先落地与之无关的部分（新模块、测试、harness、本日志），接线随后补。
+
+## 17. P0D 实施：RAW metadata 回填的「扫完即停」游标（`Serpent-288cd9`）
+
+计划 §3.9 的第二个 `all()` 热区来自 RAW metadata 准入：旧实现只有一个 **2 秒节流**
+（`RawMetadataBackfillAdmissionGate`），即使全库 RAW 都已有任务/产物，secondary pump 每 2 秒仍会
+重跑一次昂贵候选探测（真实库单次约 94 ms，profile 里累计约 22.6 秒）。
+
+### 17.1 关键区分：节流 ≠ 扫完
+
+旧门控无法区分两件事，而修复的关键是让服务把**候选探测的真实结果**回报出来：
+
+- **节流**：两次探测之间至少间隔 2 秒（保留）；
+- **扫完（exhausted）**：探测没有用满准入预算 → 当前没有待处理的 RAW 资产；
+- **上限截断**：已有 queued/running/paused 的 `extract_metadata` 占满预算时也会返回 0 结果，
+  这**不算扫完**（否则会在还有 RAW 待处理时停止重扫）。
+
+因此 `enqueueRawImageMetadataJobs` / `enqueueRawImageMetadataBackfill` 现在返回
+`{ admitted, probed, budgetCapped }`：`probed` 是候选查询返回行数，`budgetCapped` 在「用满预算」
+或「全局上限已满」或「定向（显式 assetIds）探测」时为真——定向探测永不参与扫完判定。
+
+### 17.2 精确失效：复用两个持久序号
+
+门控的 `exhausted` 状态带一个有效性 token = 库变更序号 + 忽略规则序号（`getChangeSequence` /
+`getBrowseChangeSequence`）。四类失效天然覆盖：新增 RAW、revision 变化、retry 都会 bump
+`library_change_sequence`；忽略规则变化 bump `browse_change_sequence`。取不到 token（老库缺表等）
+时退化为纯节流，不阻塞 pump。
+
+诊断行 `raw-metadata.admission`（`SERPENT_WORKER_CMD_LOG=1`）输出 admitted/probed/budgetCapped/
+exhaustedSkips，并进入 benchmark 报告；`SERPENT_RAW_METADATA_EXHAUSTION=0` 可回到旧行为用于 A/B。
+
+### 17.3 验证
+
+- `tests/unit/raw-metadata-backfill-gate.test.ts`（6 passed）：节流窗口、按库隔离与关闭清理、
+  **「扫完后连续 100 个 turn 不再探测」**（工单验收条目）、token 变化精确重新武装、
+  上限截断不得判为扫完、无 token 时退化为节流。
+- `tests/worker/raw-metadata-admission.test.ts`（2 passed）：排空的库回报
+  `{admitted:0, probed:0, budgetCapped:false}` 且重复探测保持该信号；用 64 个 queued
+  `extract_metadata` 占满预算时回报 `budgetCapped:true`（不会误判为扫完）。
+- `npm run test:library-availability`：9 files / 216 passed / 1 skipped（本轮改了 `library-service.ts`，强制）。
+- 真实库 40 秒 idle profile：开启游标后**只发生 1 次探测**并判定 drained
+  （`probes 1 / drainedProbes 1 / cappedProbes 0`），无 timeout。
+
+### 17.4 未取得有效 A/B，如实记录
+
+同一对 idle profile 没能构成对照：先跑的那一轮库里仍有大积压（40 秒完成 1,768 个缩略图任务），
+secondary pump 每轮都在处理积压、**从未走到 RAW 探测分支**（`probes 0`）；后一轮队列已排空
+（87 个任务）才走到 1 次探测。两轮起点不同、pump 是否到达探测分支也不同，所以
+「探测次数 / 累计探测耗时」的前后差**不能归因于本次改动**。旧实现累计 22.6 秒的证据来自
+忙库 profile，要复现对照需要在「pump 持续有活可干且 RAW 已排空」的同一状态下交错测量。
+
+### 17.5 未完成边界
+
+- 游标只在进程内（Worker 重启后从「未扫完」开始，会重扫一次再判定），未持久化；
+- 未落地「持久化规范化扩展名/媒体分类 + 候选索引」，因此候选查询仍是 9 个 `LIKE` 后缀 +
+  多组反连接（计划 §3.9 要求以 `EXPLAIN QUERY PLAN` 和 20k/真实库扫描行数证明索引命中，
+  本轮未做，也没有把简单 RAW-id 临时表方案照搬——计划已指出它会退化到约 250 ms）；
+- 每片「条数 + 连续毫秒」双预算尚未实现（当前仍是准入预算 + 2 秒节流）。

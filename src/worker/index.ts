@@ -968,6 +968,9 @@ function scheduleThumbnailQueue(
 
 // Serpent-onch/9e1d8d: per-command timing log, off by default.
 const WORKER_CMD_LOG = process.env.SERPENT_WORKER_CMD_LOG === '1';
+// Serpent-288cd9: RAW metadata 回填的「扫完即停」游标。置 0 即回到「只按 2 秒节流重扫」
+// 的旧行为，用于同树 A/B 归因（生产不设即启用）。
+const RAW_METADATA_EXHAUSTION_ENABLED = process.env.SERPENT_RAW_METADATA_EXHAUSTION !== '0';
 
 /**
  * Commands the user is actively waiting on across a library transition. They
@@ -1458,8 +1461,20 @@ function scheduleSecondaryMediaQueue(
     try {
       const urgentAssetIds = urgentSecondaryMediaAssetIds.get(libraryId);
       let admittedRawMetadata = 0;
+      // Serpent-288cd9：有效性 token = 库变更序号 + 忽略规则序号。新增资产、revision
+      // 变化、retry 与忽略规则变化都会让它变化，因此「扫完」状态可以精确失效，而不用
+      // 每 2 秒重跑一次候选全扫。取不到 token（老库缺表等）时退化为纯节流。
+      const rawMetadataBackfillToken = RAW_METADATA_EXHAUSTION_ENABLED
+        ? (() => {
+          try {
+            return `${libraryService.getChangeSequence(libraryId)}:${libraryService.getBrowseChangeSequence(libraryId)}`;
+          } catch {
+            return null;
+          }
+        })()
+        : null;
       const attemptedRawMetadataBackfill = !urgent
-        && rawMetadataBackfillAdmissionGate.shouldAttempt(libraryId);
+        && rawMetadataBackfillAdmissionGate.shouldAttempt(libraryId, rawMetadataBackfillToken);
       if (attemptedRawMetadataBackfill) {
         // A startup scene only admits one bounded RAW batch. Keep admitting
         // the next batch here after the current secondary queue drains so a
@@ -1467,15 +1482,39 @@ function scheduleSecondaryMediaQueue(
         // full-catalog probe is throttled; explicit-asset admission remains
         // immediate in enqueueThumbnailJobs.
         try {
-          admittedRawMetadata = await traceActivity(
+          const rawMetadataAdmission = await traceActivity(
             `raw-metadata-enqueue:${libraryId}`,
             async () => libraryService.enqueueRawImageMetadataBackfill(
               libraryId,
               RAW_METADATA_BACKFILL_BATCH_SIZE,
             ),
           );
-        } finally {
-          rawMetadataBackfillAdmissionGate.deferNextAttempt(libraryId);
+          admittedRawMetadata = rawMetadataAdmission.admitted;
+          rawMetadataBackfillAdmissionGate.noteResult(
+            libraryId,
+            rawMetadataBackfillToken,
+            rawMetadataAdmission,
+          );
+          // Serpent-288cd9：候选探测的准入结果必须可观测，否则「扫完之后不再重扫」
+          // 只能靠代码阅读而不是证据。
+          if (WORKER_CMD_LOG) {
+            console.error(JSON.stringify({
+              timestamp: new Date().toISOString(),
+              scope: 'raw-metadata.admission',
+              admitted: rawMetadataAdmission.admitted,
+              probed: rawMetadataAdmission.probed,
+              budgetCapped: rawMetadataAdmission.budgetCapped,
+              exhaustedSkips: rawMetadataBackfillAdmissionGate.stats().exhaustedSkips,
+            }));
+          }
+        } catch (error) {
+          // 探测失败不能让 secondary pump 停摆：按节流重试，且不标记扫完。
+          rawMetadataBackfillAdmissionGate.noteResult(
+            libraryId,
+            rawMetadataBackfillToken,
+            { admitted: 0, probed: 0, budgetCapped: true },
+          );
+          throw error;
         }
       }
       const fairnessTurn = (secondaryMediaFairnessTurns.get(libraryId) ?? 0) + 1;
@@ -1551,7 +1590,7 @@ function scheduleSecondaryMediaQueue(
         if (
           retryDelay === null
           && !attemptedRawMetadataBackfill
-          && !rawMetadataBackfillAdmissionGate.shouldAttempt(libraryId)
+          && !rawMetadataBackfillAdmissionGate.shouldAttempt(libraryId, rawMetadataBackfillToken)
         ) {
           const backfillDelay = rawMetadataBackfillAdmissionGate.remainingDelayMs(libraryId);
           if (backfillDelay > 0) {
