@@ -3,6 +3,7 @@ import type {
   LinkedFolderSummary,
   ManagedFolderSummary,
 } from "../shared/asset-types";
+import type { EntityAppearance } from "../shared/entity-appearance";
 import { linkedFolderDepth } from "../shared/linked-folder-tree";
 
 export type UnifiedDirectoryNavEntry =
@@ -16,6 +17,7 @@ export type UnifiedDirectoryNavEntry =
       directAssetCount: number;
       /** Row creation time (ISO-8601) for sidebar folder sorting (Serpent-db1835). */
       createdAt?: string;
+      appearance?: EntityAppearance | null;
     }
   | {
       kind: "linked";
@@ -27,6 +29,9 @@ export type UnifiedDirectoryNavEntry =
       assetCount: number;
       linkedFolderId: string;
       relativePath: string;
+      /** Linked-root creation time; virtual children omit this. */
+      createdAt?: string;
+      appearance?: EntityAppearance | null;
     };
 
 /**
@@ -54,7 +59,8 @@ export function buildUnifiedDirectoryNavEntries(
     depth: relativePathDepth(folder.relativePath),
     parentFolderId: folder.parentFolderId,
     directAssetCount: folder.directAssetCount,
-    createdAt: folder.createdAt,
+    ...(folder.createdAt ? { createdAt: folder.createdAt } : {}),
+    ...(folder.appearance ? { appearance: folder.appearance } : {}),
   }));
   const managedDepthById = new Map(
     managedEntries.map((entry) => [entry.folderId, entry.depth]),
@@ -114,6 +120,10 @@ export function buildUnifiedDirectoryNavEntries(
       assetCount: folder.assetCount,
       linkedFolderId,
       relativePath,
+      ...(folder.createdAt ? { createdAt: folder.createdAt } : {}),
+      ...(relativePath === "" && folder.appearance
+        ? { appearance: folder.appearance }
+        : {}),
     });
   }
 
@@ -175,11 +185,6 @@ type SortableSidebarEntry = {
   assetCount: number;
 };
 
-type ManagedNavEntry = Extract<
-  UnifiedDirectoryNavEntry,
-  { kind: "managed" }
->;
-
 /**
  * Sibling comparison for the sidebar folder tree. `primary` is computed in
  * "desc" orientation (newest / most / Z first) then flipped for "asc", so a
@@ -217,7 +222,7 @@ function compareSortableSidebarEntries(
       break;
     }
     case "count":
-      // Badge shows the displayed descendant total; sort by it, larger first.
+      // Badge shows the displayed row count; sort by it, larger first.
       primary = (right.assetCount ?? 0) - (left.assetCount ?? 0);
       break;
   }
@@ -228,94 +233,53 @@ function compareSortableSidebarEntries(
   });
 }
 
-function compareManagedFolders(
-  left: ManagedNavEntry,
-  right: ManagedNavEntry,
-  mode: FolderTreeSortMode,
-  order: FolderTreeSortOrder,
-): number {
-  return compareSortableSidebarEntries(
-    {
-      name: left.name,
-      createdAt: left.createdAt,
-      assetCount: left.directAssetCount,
-    },
-    {
-      name: right.name,
-      createdAt: right.createdAt,
-      assetCount: right.directAssetCount,
-    },
-    mode,
-    order,
-  );
+function directoryNavSortKey(entry: UnifiedDirectoryNavEntry): SortableSidebarEntry {
+  return {
+    name: entry.name,
+    createdAt: entry.createdAt,
+    assetCount: entry.kind === "managed" ? entry.directAssetCount : entry.assetCount,
+  };
 }
 
 /**
- * Reorder managed folders into a depth-first tree with siblings sorted by
- * `mode` + `order` at every level; linked folders keep their existing order
- * appended after the managed tree (their grouping is defined by linked root
- * + path).
+ * Reorder the unified folder tree depth-first. Siblings at every parent —
+ * managed folders, linked roots, and virtual linked subdirectories — use the
+ * same name / created / count comparator as the folder-pane sort control.
+ * Missing parents fall back to the library root so no row is dropped.
  */
 export function sortManagedTreeEntries(
   entries: readonly UnifiedDirectoryNavEntry[],
   mode: FolderTreeSortMode,
   order: FolderTreeSortOrder,
 ): UnifiedDirectoryNavEntry[] {
-  const managed = entries.filter((entry): entry is Extract<UnifiedDirectoryNavEntry, { kind: "managed" }> =>
-    entry.kind === "managed",
-  );
-  const linked = entries.filter((entry) => entry.kind === "linked");
-  if (managed.length === 0) return [...entries];
-
-  const compare = (a: ManagedNavEntry, b: ManagedNavEntry) =>
-    compareManagedFolders(a, b, mode, order);
-  const childrenByParent = new Map<string | null, ManagedNavEntry[]>();
-  for (const entry of managed) {
-    const group = childrenByParent.get(entry.parentFolderId) ?? [];
+  const ids = new Set(entries.map((entry) => entry.folderId));
+  const childrenByParent = new Map<string | null, UnifiedDirectoryNavEntry[]>();
+  for (const entry of entries) {
+    const parentId = entry.parentFolderId;
+    const key = parentId !== null && ids.has(parentId) ? parentId : null;
+    const group = childrenByParent.get(key) ?? [];
     group.push(entry);
-    childrenByParent.set(entry.parentFolderId, group);
+    childrenByParent.set(key, group);
   }
+  const compare = (left: UnifiedDirectoryNavEntry, right: UnifiedDirectoryNavEntry) =>
+    compareSortableSidebarEntries(
+      directoryNavSortKey(left),
+      directoryNavSortKey(right),
+      mode,
+      order,
+    );
   for (const [, group] of childrenByParent) {
     group.sort(compare);
   }
-
-  // Serpent-316493: a linked root that hangs under a managed folder is emitted
-  // after that folder's own subtree (linked rows carry no creation time, and the
-  // tree already sends un-comparable siblings to the end of their level), each
-  // followed by its virtual subdirectories. Linked rows without a visible parent
-  // keep today's behaviour and stay at the end of the list.
-  const managedIds = new Set(managed.map((entry) => entry.folderId));
-  const linkedIds = new Set(linked.map((entry) => entry.folderId));
-  const linkedByParent = new Map<string, UnifiedDirectoryNavEntry[]>();
-  const rootLinked: UnifiedDirectoryNavEntry[] = [];
-  for (const entry of linked) {
-    const parentId = entry.parentFolderId;
-    if (parentId !== null && (managedIds.has(parentId) || linkedIds.has(parentId))) {
-      const group = linkedByParent.get(parentId) ?? [];
-      group.push(entry);
-      linkedByParent.set(parentId, group);
-    } else {
-      rootLinked.push(entry);
-    }
-  }
-
   const sorted: UnifiedDirectoryNavEntry[] = [];
-  const emitLinked = (parentId: string) => {
-    for (const child of linkedByParent.get(parentId) ?? []) {
-      sorted.push(child);
-      emitLinked(child.folderId);
-    }
-  };
   const visit = (parentId: string | null) => {
     for (const child of childrenByParent.get(parentId) ?? []) {
       sorted.push(child);
       visit(child.folderId);
-      emitLinked(child.folderId);
     }
   };
   visit(null);
-
-  return [...sorted, ...rootLinked];
+  return sorted;
 }
 
 /**

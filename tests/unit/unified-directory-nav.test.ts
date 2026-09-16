@@ -295,6 +295,21 @@ describe("sortManagedTreeEntries", () => {
   const ids = (entries: ReturnType<typeof buildUnifiedDirectoryNavEntries>) =>
     entries.map((entry) => entry.folderId);
 
+  const virtualChild = (
+    rootId: string,
+    relativePath: string,
+    parentFolderId: string,
+    displayName = relativePath.split("/").at(-1) ?? relativePath,
+  ) =>
+    linked({
+      folderId: `lfv:${rootId}/${relativePath}`,
+      displayName,
+      assetCount: 1,
+      linkedFolderId: rootId,
+      relativePath,
+      parentFolderId,
+    });
+
   // Serpent-316493: a linked root under a managed folder is emitted after that
   // folder's own subtree, followed by its virtual children.
   it("emits a nested linked root after its managed parent's subtree", () => {
@@ -306,18 +321,10 @@ describe("sortManagedTreeEntries", () => {
       relativePath: "",
       parentFolderId: "apple",
     });
-    const nestedChild = linked({
-      folderId: "lfv:l2/notes",
-      displayName: "notes",
-      assetCount: 1,
-      linkedFolderId: "l2",
-      relativePath: "notes",
-      parentFolderId: "l2",
-    });
     const entries = buildUnifiedDirectoryNavEntries(treeFolders, [
       linkedRoot,
       nested,
-      nestedChild,
+      virtualChild("l2", "notes", "l2"),
     ]);
     expect(ids(sortManagedTreeEntries(entries, "name", "asc"))).toEqual([
       "apple",
@@ -332,7 +339,162 @@ describe("sortManagedTreeEntries", () => {
     ]);
   });
 
-  it("sorts managed siblings by name ascending at every depth, keeping linked appended", () => {
+  it("keeps virtual children of a library-root linked folder when managed folders exist", () => {
+    const entries = buildUnifiedDirectoryNavEntries(treeFolders, [
+      linkedRoot,
+      virtualChild("l1", "notes", "l1"),
+      virtualChild("l1", "notes/2024", "lfv:l1/notes"),
+    ]);
+    expect(ids(sortManagedTreeEntries(entries, "name", "asc"))).toEqual([
+      "apple",
+      "apple/grape",
+      "apple/kiwi",
+      "banana",
+      "banana/fig",
+      "cherry",
+      "l1",
+      "lfv:l1/notes",
+      "lfv:l1/notes/2024",
+    ]);
+  });
+
+  it("keeps children on both nested and library-root linked folders in one tree", () => {
+    const nested = linked({
+      folderId: "l2",
+      displayName: "Nested link",
+      assetCount: 2,
+      linkedFolderId: "l2",
+      relativePath: "",
+      parentFolderId: "apple",
+    });
+    const entries = buildUnifiedDirectoryNavEntries(treeFolders, [
+      linkedRoot,
+      virtualChild("l1", "notes", "l1"),
+      nested,
+      virtualChild("l2", "shots", "l2"),
+    ]);
+    expect(ids(sortManagedTreeEntries(entries, "name", "asc"))).toEqual([
+      "apple",
+      "apple/grape",
+      "apple/kiwi",
+      "l2",
+      "lfv:l2/shots",
+      "banana",
+      "banana/fig",
+      "cherry",
+      "l1",
+      "lfv:l1/notes",
+    ]);
+  });
+
+  it("emits each library-root linked folder followed by its own children", () => {
+    const alpha = linked({
+      folderId: "alpha",
+      displayName: "Alpha link",
+      assetCount: 2,
+      linkedFolderId: "alpha",
+      relativePath: "",
+      parentFolderId: null,
+    });
+    const zeta = linked({
+      folderId: "zeta",
+      displayName: "Zeta link",
+      assetCount: 2,
+      linkedFolderId: "zeta",
+      relativePath: "",
+      parentFolderId: null,
+    });
+    const entries = buildUnifiedDirectoryNavEntries(treeFolders, [
+      zeta,
+      virtualChild("zeta", "b", "zeta"),
+      alpha,
+      virtualChild("alpha", "a", "alpha"),
+    ]);
+    expect(ids(sortManagedTreeEntries(entries, "name", "asc"))).toEqual([
+      "alpha",
+      "lfv:alpha/a",
+      "apple",
+      "apple/grape",
+      "apple/kiwi",
+      "banana",
+      "banana/fig",
+      "cherry",
+      "zeta",
+      "lfv:zeta/b",
+    ]);
+  });
+
+  it("keeps library-root linked children when there are no managed folders", () => {
+    const entries = buildUnifiedDirectoryNavEntries([], [
+      linkedRoot,
+      virtualChild("l1", "notes", "l1"),
+    ]);
+    expect(ids(sortManagedTreeEntries(entries, "name", "asc"))).toEqual([
+      "l1",
+      "lfv:l1/notes",
+    ]);
+  });
+
+  it("keeps children of a linked root that fell back to the library root", () => {
+    const entries = buildUnifiedDirectoryNavEntries(treeFolders, [
+      linked({
+        folderId: "orphan",
+        displayName: "Orphan link",
+        assetCount: 2,
+        linkedFolderId: "orphan",
+        relativePath: "",
+        parentFolderId: "gone-folder",
+      }),
+      virtualChild("orphan", "notes", "orphan"),
+    ]);
+    expect(ids(sortManagedTreeEntries(entries, "name", "asc"))).toEqual([
+      "apple",
+      "apple/grape",
+      "apple/kiwi",
+      "banana",
+      "banana/fig",
+      "cherry",
+      "orphan",
+      "lfv:orphan/notes",
+    ]);
+  });
+
+  it("still hides collapsed library-root linked children after sorting", () => {
+    const unified = buildUnifiedDirectoryNavEntries(treeFolders, [
+      linkedRoot,
+      virtualChild("l1", "notes", "l1"),
+      virtualChild("l1", "notes/2024", "lfv:l1/notes"),
+    ]);
+    const sorted = sortManagedTreeEntries(unified, "name", "asc");
+    expect(managedFolderIdsWithChildren(unified).has("l1")).toBe(true);
+    expect(managedFolderIdsWithChildren(sorted).has("l1")).toBe(true);
+    expect(
+      ids(filterCollapsedDirectoryEntries(sorted, new Set(["l1"]))),
+    ).toEqual([
+      "apple",
+      "apple/grape",
+      "apple/kiwi",
+      "banana",
+      "banana/fig",
+      "cherry",
+      "l1",
+    ]);
+    expect(
+      ids(filterCollapsedDirectoryEntries(sorted, new Set())),
+    ).toEqual([
+      "apple",
+      "apple/grape",
+      "apple/kiwi",
+      "banana",
+      "banana/fig",
+      "cherry",
+      "l1",
+      "lfv:l1/notes",
+      "lfv:l1/notes/2024",
+    ]);
+  });
+
+  it("sorts managed and linked siblings together by name ascending", () => {
     const entries = buildUnifiedDirectoryNavEntries(treeFolders, [linkedRoot]);
     expect(ids(sortManagedTreeEntries(entries, "name", "asc"))).toEqual([
       "apple",
@@ -345,16 +507,47 @@ describe("sortManagedTreeEntries", () => {
     ]);
   });
 
-  it("reverses name order when descending", () => {
+  it("reverses name order for managed and linked siblings", () => {
     const entries = buildUnifiedDirectoryNavEntries(treeFolders, [linkedRoot]);
     expect(ids(sortManagedTreeEntries(entries, "name", "desc"))).toEqual([
+      "l1",
       "cherry",
       "banana",
       "banana/fig",
       "apple",
       "apple/kiwi",
       "apple/grape",
+    ]);
+  });
+
+  it("sorts linked roots by creation time with managed siblings", () => {
+    const dated = linked({
+      folderId: "l1",
+      displayName: "Linked",
+      assetCount: 3,
+      linkedFolderId: "l1",
+      relativePath: "",
+      parentFolderId: null,
+      createdAt: "2022-01-01T00:00:00.000Z",
+    });
+    const entries = buildUnifiedDirectoryNavEntries(treeFolders, [dated]);
+    expect(ids(sortManagedTreeEntries(entries, "created", "desc"))).toEqual([
+      "apple",
+      "apple/grape",
+      "apple/kiwi",
       "l1",
+      "cherry",
+      "banana",
+      "banana/fig",
+    ]);
+    expect(ids(sortManagedTreeEntries(entries, "created", "asc"))).toEqual([
+      "banana",
+      "banana/fig",
+      "cherry",
+      "l1",
+      "apple",
+      "apple/kiwi",
+      "apple/grape",
     ]);
   });
 
@@ -384,29 +577,96 @@ describe("sortManagedTreeEntries", () => {
     ]);
   });
 
-  it("sorts by descendant badge count most-first (desc) at every depth", () => {
+  it("sorts by badge count most-first including linked folders", () => {
     const entries = buildUnifiedDirectoryNavEntries(treeFolders, [linkedRoot]);
     expect(ids(sortManagedTreeEntries(entries, "count", "desc"))).toEqual([
       "apple",
       "apple/kiwi",
       "apple/grape",
       "cherry",
+      "l1",
       "banana",
       "banana/fig",
-      "l1",
     ]);
   });
 
-  it("sorts by descendant badge count fewest-first (asc)", () => {
+  it("sorts by badge count fewest-first including linked folders", () => {
     const entries = buildUnifiedDirectoryNavEntries(treeFolders, [linkedRoot]);
     expect(ids(sortManagedTreeEntries(entries, "count", "asc"))).toEqual([
       "banana",
       "banana/fig",
+      "l1",
       "cherry",
       "apple",
       "apple/grape",
       "apple/kiwi",
+    ]);
+  });
+
+  it("sorts virtual children of a linked folder by the same control", () => {
+    const entries = buildUnifiedDirectoryNavEntries([], [
+      linkedRoot,
+      virtualChild("l1", "zeta", "l1", "zeta"),
+      virtualChild("l1", "alpha", "l1", "alpha"),
+    ]);
+    expect(ids(sortManagedTreeEntries(entries, "name", "asc"))).toEqual([
       "l1",
+      "lfv:l1/alpha",
+      "lfv:l1/zeta",
+    ]);
+    expect(ids(sortManagedTreeEntries(entries, "name", "desc"))).toEqual([
+      "l1",
+      "lfv:l1/zeta",
+      "lfv:l1/alpha",
+    ]);
+    const counted = buildUnifiedDirectoryNavEntries([], [
+      linkedRoot,
+      linked({
+        folderId: "lfv:l1/few",
+        displayName: "few",
+        assetCount: 1,
+        linkedFolderId: "l1",
+        relativePath: "few",
+        parentFolderId: "l1",
+      }),
+      linked({
+        folderId: "lfv:l1/many",
+        displayName: "many",
+        assetCount: 9,
+        linkedFolderId: "l1",
+        relativePath: "many",
+        parentFolderId: "l1",
+      }),
+    ]);
+    expect(ids(sortManagedTreeEntries(counted, "count", "desc"))).toEqual([
+      "l1",
+      "lfv:l1/many",
+      "lfv:l1/few",
+    ]);
+  });
+
+  it("interleaves a nested linked root with managed siblings by name", () => {
+    const nested = linked({
+      folderId: "l2",
+      displayName: "avocado",
+      assetCount: 2,
+      linkedFolderId: "l2",
+      relativePath: "",
+      parentFolderId: "apple",
+    });
+    const entries = buildUnifiedDirectoryNavEntries(treeFolders, [
+      nested,
+      virtualChild("l2", "notes", "l2"),
+    ]);
+    expect(ids(sortManagedTreeEntries(entries, "name", "asc"))).toEqual([
+      "apple",
+      "l2",
+      "lfv:l2/notes",
+      "apple/grape",
+      "apple/kiwi",
+      "banana",
+      "banana/fig",
+      "cherry",
     ]);
   });
 

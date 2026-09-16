@@ -141,9 +141,12 @@ describe('Linked folder import', () => {
 
     const listed = service.listLinkedFolders(created.libraryId);
     expect(listed.map((folder) => folder.relativePath).sort()).toEqual(['', 'notes', 'notes/2024']);
+    const listedRoot = listed.find((folder) => folder.relativePath === '');
+    expect(listedRoot?.createdAt).toEqual(expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/));
     const notes = listed.find((folder) => folder.relativePath === 'notes');
     expect(notes?.parentFolderId).toBe(linked.folderId);
     expect(notes?.folderId).toBe(`lfv:${linked.folderId}/notes`);
+    expect(notes?.createdAt).toBeUndefined();
 
     const cards = service.listFolderBrowseEntries({
       libraryId: created.libraryId,

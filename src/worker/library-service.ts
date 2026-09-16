@@ -16674,6 +16674,7 @@ export class LibraryService {
         status: 'available' | 'offline';
         absolute_root_path: string;
         parent_folder_id: string | null;
+        created_at: string;
         appearance_glyph_kind?: string | null;
         appearance_glyph_value?: string | null;
         appearance_color_id?: string | null;
@@ -16703,6 +16704,7 @@ export class LibraryService {
           relativePath: '',
           // Serpent-316493: a linked root may hang under a managed folder.
           parentFolderId: row.parent_folder_id ?? null,
+          createdAt: row.created_at,
           appearance: sanitizeEntityAppearance({
             glyphKind: row.appearance_glyph_kind,
             glyphValue: row.appearance_glyph_value,
@@ -17960,6 +17962,7 @@ export class LibraryService {
         relativePath: '',
         // Serpent-316493: echo the requested parent (null = library root).
         parentFolderId,
+        createdAt: now,
       };
     } catch (error) {
       emitLinkedProgress('failed', 0, 0, 0, 0, true);
@@ -17978,9 +17981,11 @@ export class LibraryService {
     this.cancelReconciliationForClientMutation(input.libraryId);
     const folder = openLibrary.connection
       .prepare(
-        'SELECT folder_id, display_name FROM linked_folders WHERE folder_id = ?',
+        'SELECT folder_id, display_name, created_at FROM linked_folders WHERE folder_id = ?',
       )
-      .get(input.folderId) as { folder_id: string; display_name: string } | undefined;
+      .get(input.folderId) as
+        | { folder_id: string; display_name: string; created_at: string }
+        | undefined;
     if (!folder) throw new LibraryServiceError('FOLDER_NOT_FOUND');
 
     let newRoot: string;
@@ -18107,6 +18112,7 @@ export class LibraryService {
       linkedFolderId: input.folderId,
       relativePath: '',
       parentFolderId: null,
+      createdAt: folder.created_at,
     };
   }
 
