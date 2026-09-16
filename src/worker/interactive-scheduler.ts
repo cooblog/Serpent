@@ -123,6 +123,7 @@ const LANE_PRIORITY: Record<PerformanceLane, number> = {
 const MAINTENANCE_STATUS_READ_LABELS = new Set([
   'library.navigation-summary',
   'media.list-jobs',
+  'media.job-summary',
   'ai.status',
   'plugin.jobs.list',
   'history.status',

@@ -672,6 +672,8 @@ describe('Serpent MCP jobs, idempotency and reconnect (Serpent-8b5b.4)', () => {
       failed: 0,
       paused: 0,
       cancelled: 0,
+      nextCursor: null,
+      hasMore: false,
       jobs: [
         { jobId: 'job-1', assetId: 'asset-1', revisionId: null, kind: 'generate_thumbnail', status: 'queued', progress: 0, attemptCount: 0, errorCode: null, errorDetail: null, createdAt: '2026-08-10T00:00:00.000Z', updatedAt: '2026-08-10T00:00:00.000Z' },
         { jobId: 'job-2', assetId: 'asset-2', revisionId: null, kind: 'generate_webm_proxy', status: 'succeeded', progress: 1, attemptCount: 1, errorCode: null, errorDetail: null, createdAt: '2026-08-10T00:00:00.000Z', updatedAt: '2026-08-10T00:00:00.000Z' },

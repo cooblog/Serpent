@@ -71,6 +71,8 @@ export type ImportOverlayDetail = {
     | "progress.validating"
     | "progress.copyingFiles"
     | "progress.copying"
+    | "progress.processingFiles"
+    | "progress.processing"
     | "progress.extractingFiles"
     | "progress.extracting"
     | "progress.verifyingFiles"
@@ -96,10 +98,11 @@ export function importOverlayDetail(
             },
           }
         : { key: "progress.validating" };
-    case "copy":
+    case "copy": {
+      const processing = progress.copiesFiles === false;
       return progress.totalFiles > 0
         ? {
-            key: "progress.copyingFiles",
+            key: processing ? "progress.processingFiles" : "progress.copyingFiles",
             params: {
               processed: progress.filesProcessed,
               total: progress.totalFiles,
@@ -107,7 +110,8 @@ export function importOverlayDetail(
               bytesTotal: formatBytes(progress.totalBytes),
             },
           }
-        : { key: "progress.copying" };
+        : { key: processing ? "progress.processing" : "progress.copying" };
+    }
     case "extract":
       return progress.totalFiles > 0
         ? {

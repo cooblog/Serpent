@@ -154,7 +154,7 @@ describe('linked folder import progress', () => {
     expect(events.some((event) => event.phase === 'copy' && event.totalFiles === 3)).toBe(true);
     expect(events.at(-1)?.phase).toBe('complete');
     expect(events.at(-1)?.filesProcessed).toBe(3);
-    expect(events.every((event) => event.cancelable === false && event.importId.length > 0)).toBe(true);
+    expect(events.every((event) => event.cancelable === false && event.copiesFiles === false && event.importId.length > 0)).toBe(true);
 
     service.closeAll();
   });

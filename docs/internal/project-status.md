@@ -1,5 +1,11 @@
 # Serpent 项目状态
 
+- **2026-09-16 链接导入「处理中」与浏览争用**：链接文件夹登记阶段不再显示「复制中」。导入命令是独占 mutation，约 8 万行在同一事务登记，期间浏览排队。导入结束后不再为 50 条缩略图场景列出整棵链接树，也不再无界入队整库缩略图任务。见[记录](development/2026-09-16-linked-import-browse-contention.md)。
+
+- **2026-09-16 PERF2 任务摘要 O(1) 与列表分页**：`Serpent-e97c00` 增加 schema v53 `media_job_status_counts`（jobs 触发器在同一事务维护六个状态计数），独立 `media.job-summary` 供面板关闭时的兜底轮询，`media.list-jobs` 改为 created_at/job_id 游标分页。任务面板「加载更多」不丢已加载行。定向单测 168 passed、Worker 摘要/checksum 5 passed、`npm run test:library-availability` 9 files / 222 passed / 1 skipped、typecheck 与定向 ESLint 通过。工单仍打开；忽略规则批量修正、面板 E2E、2000 事件现场回放与 9k 混合队列未完成。见[开发记录](development/2026-09-16-media-job-summary-pagination-development-log.md)。
+- **2026-09-16 PERF2 队列收敛增量**：`Serpent-1de919` 的 claim-prune 现在按当前 revision、artifact 用途与 generator family 判定，不再把旧生成器产物误认为满足当前任务；启动对账发现缺失主预览后，只针对本批 asset IDs 补入任务；普通长队列在每个 bounded wave 边界优先让出给 exact scope，可见波次抢占时回放未完成批次；`Serpent-e97c00` 的手动 pause/resume/cancel/retry 在真实改变任务后立即失效摘要缓存。真实 Worker 调度回归 1 passed，完整 `thumbnails.test.ts` 77/77、`npm run test:library-availability` 9 files / 216 passed / 1 skipped、typecheck 与定向 ESLint 通过。两工单仍打开；O(1) 事件增量、分页、20k 队列吞吐 A/B、真实 9k 混合队列与面板 E2E 未完成。本增量无性能 A/B 结论。见[claim-prune 记录](development/2026-09-16-ready-artifact-queue-prune-development-log.md)、[缺失预览记录](development/2026-09-16-missing-artifact-requeue-development-log.md)及[任务状态回执记录](development/2026-09-16-media-job-control-summary-refresh-development-log.md)。
+- **2026-09-16 RAW metadata admission 游标与可索引分类**：`Serpent-288cd9` 新增 v51 持久化每库 token、`asset_id` keyset cursor 与 exhausted 状态；v54 增加 `assets.normalized_extension` 及部分索引，RAW 候选改为 equality/IN，不再每轮 `LIKE` 扫路径。raw admission 5 passed、checksum 含 v54、`npm run test:library-availability` 9 files / 224 passed / 1 skipped。dual time budget、真实 20k A/B、完整 UtilityProcess 重启和 packaged/Windows 未验证；工单仍 `in_progress`。见[RAW 游标开发记录](development/2026-09-16-raw-metadata-cursor-development-log.md)。
+
 - **2026-09-15 合集拖放（`Serpent-01cff7`）**：用户确认 `DND-COLLECTION-ROOT-001` 通过。拖到另一合集行改为嵌套成子合集，不再做同层重排；同层顺序仍用合集排序控件。清单 `DND-COLLECTION-NEST-001` 待复验。合集嵌套行高亮已与文件夹 `is-drop-target` 对齐。
 
 - **2026-09-15 递归文件夹卡片（`Serpent-4e9caa`）**：用户确认 `FOLDER-CARDS-001` 通过。开关从设置 → 常规挪到设置 → 浏览。

@@ -52,6 +52,7 @@ describe('performance command classification', () => {
     expect(performanceLaneForCommand({ type: 'ai.enqueue-analysis' })).toBe('background-secondary');
     expect(performanceLaneForCommand({ type: 'library.navigation-summary' })).toBe('background-secondary');
     expect(performanceLaneForCommand({ type: 'media.list-jobs' })).toBe('background-secondary');
+    expect(performanceLaneForCommand({ type: 'media.job-summary' })).toBe('background-secondary');
     expect(performanceLaneForCommand({ type: 'ai.status' })).toBe('background-secondary');
     expect(performanceLaneForCommand({ type: 'plugin.jobs.list' })).toBe('background-secondary');
     expect(performanceLaneForCommand({ type: 'ai.test-connection' })).toBe('background-secondary');

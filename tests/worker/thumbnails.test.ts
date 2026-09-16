@@ -1133,7 +1133,7 @@ describe('enqueueThumbnailJobs', () => {
 });
 
 describe('processThumbnailQueue', () => {
-  it('prunes legacy source-direct and already-ready thumbnail rows in one SQL pass', async () => {
+  it('prunes legacy source-direct and current thumbnail rows', async () => {
     const root = temporaryRoot();
     const service = new LibraryService();
     const created = service.createLibrary({ displayName: 'LegacyAdmissionPrune', selectedParentPath: root });
@@ -1172,8 +1172,9 @@ describe('processThumbnailQueue', () => {
     db.close();
 
     expect(await service.processThumbnailQueue(created.libraryId, {
-      maxJobs: 1,
+      maxJobs: 2,
       jobKinds: ['generate_thumbnail'],
+      assetIds: [sourceDirect.assetId, derived.assetId],
     })).toBe(0);
 
     const verify = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
@@ -1186,6 +1187,634 @@ describe('processThumbnailQueue', () => {
     verify.close();
     service.closeAll();
   });
+
+  it('regenerates an obsolete current thumbnail instead of pruning its queued job', async () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'ObsoleteThumbnailGenerator', selectedParentPath: root });
+    const sourcePath = path.join(root, 'obsolete-generator.png');
+    // Exceed the source-direct pixel budget so claim-time admission must
+    // regenerate instead of serving the source image directly.
+    writeFileSync(sourcePath, await createPngBytes(2048, 1024));
+    importNoConflict(service, created.libraryId, sourcePath);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+
+    const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    db.prepare('DELETE FROM jobs').run();
+    db.prepare(
+      `INSERT INTO revision_artifacts
+         (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+          generator_version, status, generated_at)
+       VALUES (?, ?, 'thumbnail', 'image/jpeg', 1024, 'obsolete-thumbnail.jpg',
+               'obsolete-sharp@0', 'ready', ?)`,
+    ).run('obsolete-thumbnail', asset.currentRevisionId, new Date().toISOString());
+    const now = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO jobs
+         (job_id, library_id, asset_id, revision_id, kind, status, priority, progress,
+          attempt_count, created_at, updated_at)
+       VALUES ('obsolete-generator-job', ?, ?, ?, 'generate_thumbnail', 'queued', 100, 0.0, 0, ?, ?)`,
+    ).run(created.libraryId, asset.assetId, asset.currentRevisionId, now, now);
+    db.close();
+
+    expect(await service.processThumbnailQueue(created.libraryId, {
+      maxJobs: 1,
+      jobKinds: ['generate_thumbnail'],
+      assetIds: [asset.assetId],
+    })).toBe(1);
+
+    const verify = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    expect(verify.prepare(
+      'SELECT status, error_code FROM jobs WHERE kind = ? AND asset_id = ? ORDER BY created_at DESC LIMIT 1',
+    ).get('generate_thumbnail', asset.assetId)).toEqual({ status: 'succeeded', error_code: null });
+    const artifacts = verify.prepare(
+      `SELECT artifact_id, status, generator_version, invalidated_at
+         FROM revision_artifacts
+        WHERE revision_id = ? AND kind = 'thumbnail'
+        ORDER BY artifact_id`,
+    ).all(asset.currentRevisionId) as Array<{
+      artifact_id: string;
+      status: string;
+      generator_version: string;
+      invalidated_at: string | null;
+    }>;
+    expect(artifacts.find((row) => row.artifact_id === 'obsolete-thumbnail'))
+      .toMatchObject({ status: 'ready', generator_version: 'obsolete-sharp@0' });
+    expect(artifacts.find((row) => row.artifact_id === 'obsolete-thumbnail')?.invalidated_at)
+      .toBeTruthy();
+    expect(artifacts.some((row) => row.status === 'ready'
+      && row.invalidated_at === null
+      && row.generator_version !== 'obsolete-sharp@0')).toBe(true);
+    verify.close();
+    service.closeAll();
+  });
+
+  it('prunes ready current video posters for legacy generate_thumbnail jobs without decoding', async () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'ReadyVideoPosterPrune', selectedParentPath: root });
+    const validPath = path.join(root, 'ready.mp4');
+    const stalePath = path.join(root, 'stale.mp4');
+    const invalidatedPath = path.join(root, 'invalidated.mp4');
+    for (const sourcePath of [validPath, stalePath, invalidatedPath]) {
+      writeFileSync(sourcePath, Buffer.alloc(1024, 0));
+      importNoConflict(service, created.libraryId, sourcePath);
+    }
+
+    const beforeRefresh = service.listAssets({ libraryId: created.libraryId, recursive: true });
+    const staleAsset = beforeRefresh.find((asset) => asset.displayName === 'stale.mp4')!;
+    const staleRevisionId = staleAsset.currentRevisionId;
+    const managedStalePath = service.resolveAssetPath(created.libraryId, staleAsset.assetId);
+    writeFileSync(managedStalePath, Buffer.concat([Buffer.alloc(1024, 0), Buffer.from('new revision')]));
+    service.refreshManagedAssets(created.libraryId);
+
+    const assets = service.listAssets({ libraryId: created.libraryId, recursive: true });
+    const readyAsset = assets.find((asset) => asset.displayName === 'ready.mp4')!;
+    const currentStaleAsset = assets.find((asset) => asset.displayName === 'stale.mp4')!;
+    const invalidatedAsset = assets.find((asset) => asset.displayName === 'invalidated.mp4')!;
+    expect(currentStaleAsset.currentRevisionId).not.toBe(staleRevisionId);
+
+    const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    db.prepare('DELETE FROM jobs').run();
+    const now = new Date().toISOString();
+    const insertJob = db.prepare(
+      `INSERT INTO jobs
+         (job_id, library_id, asset_id, revision_id, kind, status, priority, progress,
+          attempt_count, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'generate_thumbnail', ?, 100, 0.0, 0, ?, ?)`,
+    );
+    const insertVideoPoster = db.prepare(
+      `INSERT INTO revision_artifacts
+         (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+          generator_version, status, generated_at, invalidated_at)
+       VALUES (?, ?, 'video_poster', 'image/jpeg', 1024, ?, ?, ?, ?, ?)`,
+    );
+    const artifactDirectory = path.join(created.libraryPath, '.serpent', 'artifacts');
+    mkdirSync(artifactDirectory, { recursive: true });
+    writeFileSync(
+      path.join(artifactDirectory, 'test-video-poster.jpg'),
+      await createJpegBytes(64, 48),
+    );
+    insertVideoPoster.run(
+      'ready-current-video-poster', readyAsset.currentRevisionId,
+      'test-video-poster.jpg', 'ffmpeg@8.1', 'ready', now, null,
+    );
+    // A ready artifact from an older revision must not satisfy the current job.
+    insertVideoPoster.run(
+      'stale-video-poster', staleRevisionId,
+      'test-video-poster.jpg', 'ffmpeg@8.1', 'ready', now, null,
+    );
+    // Nor may a ready row that has been invalidated satisfy it.
+    insertVideoPoster.run(
+      'invalidated-video-poster', invalidatedAsset.currentRevisionId,
+      'test-video-poster.jpg', 'ffmpeg@8.1', 'ready', now, now,
+    );
+    db.prepare(
+      `INSERT INTO revision_artifacts
+         (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+          generator_version, status, error_code, generated_at)
+       VALUES (?, ?, 'video_poster', 'image/jpeg', 0, 'failed-poster.jpg',
+               'ffmpeg@8.1', 'failed', 'MEDIA_PROCESSING_FAILED', ?)`
+    ).run('failed-video-poster', invalidatedAsset.currentRevisionId, now);
+
+    insertJob.run('ready-video-queued', created.libraryId, readyAsset.assetId,
+      readyAsset.currentRevisionId, 'queued', now, now);
+    insertJob.run('stale-video-queued', created.libraryId, currentStaleAsset.assetId,
+      currentStaleAsset.currentRevisionId, 'queued', now, now);
+    insertJob.run('stale-video-running', created.libraryId, currentStaleAsset.assetId,
+      currentStaleAsset.currentRevisionId, 'running', now, now);
+    insertJob.run('invalidated-video-queued', created.libraryId, invalidatedAsset.assetId,
+      invalidatedAsset.currentRevisionId, 'queued', now, now);
+    insertJob.run('invalidated-video-running', created.libraryId, invalidatedAsset.assetId,
+      invalidatedAsset.currentRevisionId, 'running', now, now);
+    db.prepare(
+      `INSERT INTO jobs
+         (job_id, library_id, asset_id, revision_id, kind, status, priority, progress,
+          attempt_count, error_code, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'generate_thumbnail', 'failed', 100, 0.0, 1,
+               'MEDIA_PROCESSING_FAILED', ?, ?)`
+    ).run(
+      'invalidated-video-failed', created.libraryId, invalidatedAsset.assetId,
+      invalidatedAsset.currentRevisionId, now, now,
+    );
+    db.close();
+
+    expect(await service.processThumbnailQueue(created.libraryId, {
+      maxJobs: 3,
+      jobKinds: ['generate_thumbnail'],
+      assetIds: [readyAsset.assetId, currentStaleAsset.assetId, invalidatedAsset.assetId],
+    })).toBe(2);
+
+    const verify = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    expect(verify.prepare(
+      'SELECT job_id, status, error_code FROM jobs ORDER BY job_id',
+    ).all()).toEqual([
+      { job_id: 'invalidated-video-failed', status: 'failed', error_code: 'MEDIA_PROCESSING_FAILED' },
+      { job_id: 'invalidated-video-queued', status: 'cancelled', error_code: 'SINGLE_FLIGHT' },
+      { job_id: 'invalidated-video-running', status: 'running', error_code: null },
+      { job_id: 'ready-video-queued', status: 'cancelled', error_code: 'ARTIFACT_READY' },
+      { job_id: 'stale-video-queued', status: 'cancelled', error_code: 'SINGLE_FLIGHT' },
+      { job_id: 'stale-video-running', status: 'running', error_code: null },
+    ]);
+    verify.close();
+    service.closeAll();
+  });
+
+  it('bounds scoped ready-artifact pruning and skips the unscoped pre-scan', async () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'BoundedReadyPrune', selectedParentPath: root });
+    for (let index = 0; index < 6; index += 1) {
+      const sourcePath = path.join(root, `bounded-${index}.mp4`);
+      writeFileSync(sourcePath, Buffer.alloc(1024, index));
+      importNoConflict(service, created.libraryId, sourcePath);
+    }
+    const assets = service.listAssets({ libraryId: created.libraryId, recursive: true })
+      .toSorted((left, right) => left.displayName.localeCompare(right.displayName));
+    const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    db.prepare('DELETE FROM jobs').run();
+    const now = new Date().toISOString();
+    const insertArtifact = db.prepare(
+      `INSERT INTO revision_artifacts
+         (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+          generator_version, status, generated_at)
+       VALUES (?, ?, 'video_poster', 'image/jpeg', 1024, 'bounded-poster.jpg',
+               'ffmpeg@8.1', 'ready', ?)`,
+    );
+    const insertJob = db.prepare(
+      `INSERT INTO jobs
+         (job_id, library_id, asset_id, revision_id, kind, status, priority, progress,
+          attempt_count, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'generate_thumbnail', 'queued', ?, 0.0, 0, ?, ?)`,
+    );
+    assets.forEach((asset, index) => {
+      insertArtifact.run(`bounded-poster-${index}`, asset.currentRevisionId, now);
+      insertJob.run(
+        `bounded-ready-job-${index}`,
+        created.libraryId,
+        asset.assetId,
+        asset.currentRevisionId,
+        100 - index,
+        now,
+        now,
+      );
+    });
+    const scopedAssetIds = assets.slice(2, 4).map((asset) => asset.assetId);
+    const prunePlan = db.prepare(
+      `EXPLAIN QUERY PLAN
+       SELECT jobs.job_id
+         FROM jobs INDEXED BY jobs_asset_kind_status
+         JOIN assets ready_asset
+           ON ready_asset.asset_id = jobs.asset_id
+          AND ready_asset.current_revision_id = jobs.revision_id
+         JOIN revision_artifacts ready_artifact
+           ON ready_artifact.revision_id = jobs.revision_id
+          AND ready_artifact.kind IN ('thumbnail', 'video_poster')
+          AND ready_artifact.status = 'ready'
+          AND ready_artifact.invalidated_at IS NULL
+        WHERE jobs.library_id = ?
+          AND jobs.status = 'queued'
+          AND jobs.kind IN ('generate_thumbnail')
+          AND COALESCE(jobs.error_code, '') <> 'IMPORTED_THUMBNAIL_NORMALIZATION'
+          AND jobs.asset_id IN (?, ?)
+        ORDER BY jobs.priority DESC, jobs.created_at, jobs.job_id
+        LIMIT ?`,
+    ).all(created.libraryId, ...scopedAssetIds, 2) as Array<{ detail: string }>;
+    const prunePlanDetails = prunePlan.map((step) => step.detail).join('\n');
+    expect(prunePlanDetails).not.toBe('');
+    expect(prunePlanDetails).toContain('jobs_asset_kind_status');
+    expect(prunePlanDetails).not.toContain('SCAN jobs');
+    console.info(`READY_ARTIFACT_PRUNE_PLAN ${prunePlanDetails}`);
+    db.close();
+
+    // With no explicit asset scope, claim-time admission is the only ready
+    // check. It claims at most maxJobs and does not run a queue-wide JOIN.
+    expect(await service.processThumbnailQueue(created.libraryId, {
+      maxJobs: 2,
+      jobKinds: ['generate_thumbnail'],
+    })).toBe(2);
+
+    const verify = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    expect(verify.prepare(
+      `SELECT status, error_code, COUNT(*) AS count
+         FROM jobs
+        WHERE kind = 'generate_thumbnail'
+        GROUP BY status, error_code
+        ORDER BY status, error_code`,
+    ).all()).toEqual([
+      { status: 'cancelled', error_code: 'ARTIFACT_READY', count: 2 },
+      { status: 'queued', error_code: null, count: 4 },
+    ]);
+    verify.close();
+
+    // An explicit 2-ID scope enables the bounded prune and consumes only
+    // those IDs; the remaining two rows stay queued for a later wave.
+    expect(await service.processThumbnailQueue(created.libraryId, {
+      maxJobs: 2,
+      jobKinds: ['generate_thumbnail'],
+      assetIds: scopedAssetIds,
+    })).toBe(0);
+    const afterScopedPrune = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    expect(afterScopedPrune.prepare(
+      `SELECT status, error_code, COUNT(*) AS count
+         FROM jobs
+        WHERE kind = 'generate_thumbnail'
+        GROUP BY status, error_code
+        ORDER BY status, error_code`,
+    ).all()).toEqual([
+      { status: 'cancelled', error_code: 'ARTIFACT_READY', count: 4 },
+      { status: 'queued', error_code: null, count: 2 },
+    ]);
+    afterScopedPrune.close();
+    service.closeAll();
+  });
+
+  it('re-enqueues a missing primary preview found after the startup queue prunes it', async () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'MissingStartupArtifact', selectedParentPath: root });
+    const sourcePath = path.join(root, 'missing-startup-artifact.png');
+    createTestImage(sourcePath);
+    importNoConflict(service, created.libraryId, sourcePath);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+    expect(service.enqueueThumbnailJobs(created.libraryId, { assetIds: [asset.assetId] })).toBe(1);
+    expect(await service.processThumbnailQueue(created.libraryId, {
+      maxJobs: 1,
+      jobKinds: ['generate_thumbnail'],
+      assetIds: [asset.assetId],
+    })).toBe(1);
+    const readyArtifact = service.getCurrentArtifact(created.libraryId, asset.assetId, 'thumbnail');
+    expect(readyArtifact).toMatchObject({ status: 'ready' });
+    const artifactPath = service.getArtifactAbsolutePath(
+      created.libraryId,
+      readyArtifact!.artifactId,
+    );
+    expect(existsSync(artifactPath)).toBe(true);
+
+    const beforeClose = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    beforeClose.prepare('DELETE FROM jobs WHERE asset_id = ?').run(asset.assetId);
+    const now = new Date().toISOString();
+    beforeClose.prepare(
+      `INSERT INTO jobs
+         (job_id, library_id, asset_id, revision_id, kind, status, priority, progress,
+          attempt_count, created_at, updated_at)
+       VALUES ('startup-missing-preview', ?, ?, ?, 'generate_thumbnail', 'queued', 100, 0.0, 0, ?, ?)`,
+    ).run(created.libraryId, asset.assetId, asset.currentRevisionId, now, now);
+    beforeClose.close();
+    service.closeAll();
+    rmSync(artifactPath);
+
+    const reopenedService = new LibraryService();
+    const reopened = reopenedService.openLibrary(created.libraryPath);
+    // The first browse can still see the stale ready row; the visible startup
+    // queue is admitted before the deferred missing-file reconciliation.
+    expect(reopenedService.listAssets({ libraryId: reopened.libraryId, recursive: true })[0])
+      .toMatchObject({ thumbnailStatus: 'ready' });
+    expect(reopenedService.enqueueThumbnailJobs(reopened.libraryId, {
+      assetIds: [asset.assetId],
+      priority: 100,
+    })).toBe(0);
+    expect(await reopenedService.processThumbnailQueue(reopened.libraryId, {
+      maxJobs: 1,
+      jobKinds: ['generate_thumbnail'],
+      assetIds: [asset.assetId],
+    })).toBe(0);
+
+    const afterPrune = new TestDatabase(path.join(reopened.libraryPath, '.serpent', 'library.db'));
+    expect(afterPrune.prepare(
+      'SELECT status, error_code FROM jobs WHERE job_id = ?',
+    ).get('startup-missing-preview')).toEqual({ status: 'cancelled', error_code: 'ARTIFACT_READY' });
+    afterPrune.close();
+
+    const notifiedAssetIds: string[] = [];
+    let requeued = 0;
+    await reopenedService.runOpenBackgroundReconciliation(reopened.libraryId, {
+      onMissingPrimaryArtifacts: (assetIds: string[]) => {
+        notifiedAssetIds.push(...assetIds);
+        requeued += reopenedService.enqueueThumbnailJobs(reopened.libraryId, {
+          assetIds,
+          priority: 50,
+          skipStaleRepair: true,
+        });
+      },
+    });
+
+    expect(notifiedAssetIds).toEqual([asset.assetId]);
+    expect(requeued).toBe(1);
+    const afterReconciliation = new TestDatabase(path.join(reopened.libraryPath, '.serpent', 'library.db'));
+    expect(afterReconciliation.prepare(
+      "SELECT COUNT(*) AS count FROM jobs WHERE asset_id = ? AND kind = 'generate_thumbnail' AND status = 'queued'",
+    ).get(asset.assetId)).toEqual({ count: 1 });
+    afterReconciliation.close();
+
+    expect(await reopenedService.processThumbnailQueue(reopened.libraryId, {
+      maxJobs: 1,
+      jobKinds: ['generate_thumbnail'],
+      assetIds: [asset.assetId],
+    })).toBe(1);
+    const regenerated = reopenedService.getCurrentArtifact(
+      reopened.libraryId,
+      asset.assetId,
+      'thumbnail',
+    );
+    expect(regenerated).toMatchObject({ status: 'ready' });
+    expect(existsSync(reopenedService.getArtifactAbsolutePath(
+      reopened.libraryId,
+      regenerated!.artifactId,
+    ))).toBe(true);
+    expect(reopenedService.enqueueThumbnailJobs(reopened.libraryId, {
+      assetIds: [asset.assetId],
+      skipStaleRepair: true,
+    })).toBe(0);
+    expect(await reopenedService.processThumbnailQueue(reopened.libraryId, {
+      maxJobs: 1,
+      jobKinds: ['generate_thumbnail'],
+      assetIds: [asset.assetId],
+    })).toBe(0);
+
+    reopenedService.closeAll();
+  });
+
+  it('re-enqueues a missing video poster through the reconciliation callback', async () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'MissingVideoPoster', selectedParentPath: root });
+    const sourcePath = path.join(root, 'missing-video-poster.mp4');
+    writeFileSync(sourcePath, Buffer.alloc(1024, 0));
+    importNoConflict(service, created.libraryId, sourcePath);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+    const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    db.prepare('DELETE FROM jobs').run();
+    const now = new Date().toISOString();
+    const artifactsDirectory = path.join(created.libraryPath, '.serpent', 'artifacts');
+    mkdirSync(artifactsDirectory, { recursive: true });
+    writeFileSync(path.join(artifactsDirectory, 'missing-video-poster.jpg'), await createJpegBytes(64, 48));
+    db.prepare(
+      `INSERT INTO revision_artifacts
+         (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+          generator_version, status, generated_at)
+       VALUES ('missing-video-poster', ?, 'video_poster', 'image/jpeg', 1024,
+               'missing-video-poster.jpg', 'ffmpeg@8.1', 'ready', ?)`,
+    ).run(asset.currentRevisionId, now);
+    db.prepare(
+      `INSERT INTO jobs
+         (job_id, library_id, asset_id, revision_id, kind, status, priority, progress,
+          attempt_count, created_at, updated_at)
+       VALUES ('missing-video-poster-job', ?, ?, ?, 'generate_thumbnail', 'queued',
+               100, 0.0, 0, ?, ?)`,
+    ).run(created.libraryId, asset.assetId, asset.currentRevisionId, now, now);
+    db.close();
+    service.closeAll();
+    rmSync(path.join(artifactsDirectory, 'missing-video-poster.jpg'));
+
+    const reopenedService = new LibraryService();
+    const reopened = reopenedService.openLibrary(created.libraryPath);
+    expect(await reopenedService.processThumbnailQueue(reopened.libraryId, {
+      maxJobs: 1,
+      jobKinds: ['generate_thumbnail'],
+      assetIds: [asset.assetId],
+    })).toBe(0);
+    const afterPrune = new TestDatabase(path.join(reopened.libraryPath, '.serpent', 'library.db'));
+    expect(afterPrune.prepare(
+      'SELECT status, error_code FROM jobs WHERE job_id = ?',
+    ).get('missing-video-poster-job')).toEqual({ status: 'cancelled', error_code: 'ARTIFACT_READY' });
+    afterPrune.close();
+
+    const notifiedAssetIds: string[] = [];
+    let enqueued = 0;
+    await reopenedService.runOpenBackgroundReconciliation(reopened.libraryId, {
+      onMissingPrimaryArtifacts: (assetIds: string[]) => {
+        notifiedAssetIds.push(...assetIds);
+        enqueued += reopenedService.enqueueThumbnailJobs(reopened.libraryId, {
+          assetIds,
+          limit: assetIds.length,
+          priority: 50,
+          skipStaleRepair: true,
+        });
+      },
+    });
+    expect(notifiedAssetIds).toEqual([asset.assetId]);
+    expect(enqueued).toBe(1);
+    const afterReconciliation = new TestDatabase(path.join(reopened.libraryPath, '.serpent', 'library.db'));
+    expect(afterReconciliation.prepare(
+      "SELECT COUNT(*) AS count FROM jobs WHERE asset_id = ? AND kind = 'generate_thumbnail' AND status = 'queued'",
+    ).get(asset.assetId)).toEqual({ count: 1 });
+    afterReconciliation.close();
+    reopenedService.closeAll();
+  });
+
+  it('reports every missing primary asset when reconciliation exceeds one claim wave', async () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'MissingPrimaryScope', selectedParentPath: root });
+    const assetCount = 101;
+    for (let index = 0; index < assetCount; index += 1) {
+      const sourcePath = path.join(root, `missing-primary-${index}.png`);
+      createTestImage(sourcePath);
+      importNoConflict(service, created.libraryId, sourcePath);
+    }
+    const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    const assets = db.prepare(
+      `SELECT asset_id, current_revision_id
+         FROM assets
+        WHERE deleted_at IS NULL
+        ORDER BY relative_file_path`,
+    ).all() as Array<{
+      asset_id: string;
+      current_revision_id: string;
+    }>;
+    expect(assets).toHaveLength(assetCount);
+    db.prepare('DELETE FROM jobs').run();
+    const now = new Date().toISOString();
+    const insertArtifact = db.prepare(
+      `INSERT INTO revision_artifacts
+         (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+          generator_version, status, generated_at)
+       VALUES (?, ?, 'thumbnail', 'image/jpeg', 1024, ?, 'sharp@1', 'ready', ?)`
+    );
+    assets.forEach((asset, index) => {
+      insertArtifact.run(
+        `missing-primary-artifact-${index}`,
+        asset.current_revision_id,
+        `missing-primary-${index}.jpg`,
+        now,
+      );
+    });
+    db.close();
+
+    const notifiedAssetIds: string[] = [];
+    let requeued = 0;
+    await service.runOpenBackgroundReconciliation(created.libraryId, {
+      onMissingPrimaryArtifacts: (assetIds: string[]) => {
+        notifiedAssetIds.push(...assetIds);
+        requeued += service.enqueueThumbnailJobs(created.libraryId, {
+          assetIds,
+          limit: assetIds.length,
+          priority: 50,
+          skipStaleRepair: true,
+        });
+      },
+    });
+
+    expect(notifiedAssetIds).toHaveLength(assetCount);
+    expect(new Set(notifiedAssetIds).size).toBe(assetCount);
+    expect(requeued).toBe(assetCount);
+    const verify = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    expect(verify.prepare(
+      "SELECT COUNT(*) AS count FROM jobs WHERE kind = 'generate_thumbnail' AND status = 'queued'",
+    ).get()).toEqual({ count: assetCount });
+    verify.close();
+    service.closeAll();
+  }, 30_000);
+
+  it('keeps a reconciliation asset exact while an ordinary queue wave is active', async () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'ConcurrentMissingPrimary', selectedParentPath: root });
+    const busyModelPath = path.join(root, 'busy-model.glb');
+    writeFileSync(busyModelPath, Buffer.from('glTF'));
+    importNoConflict(service, created.libraryId, busyModelPath);
+    const missingSourcePath = path.join(root, 'concurrent-missing.png');
+    createTestImage(missingSourcePath);
+    importNoConflict(service, created.libraryId, missingSourcePath);
+    const assets = service.listAssets({ libraryId: created.libraryId, recursive: true });
+    const busyModel = assets.find((asset) => asset.displayName === 'busy-model.glb')!;
+    const missingAsset = assets.find((asset) => asset.displayName === 'concurrent-missing.png')!;
+
+    const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    db.prepare('DELETE FROM jobs').run();
+    const now = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO revision_artifacts
+         (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+          generator_version, status, generated_at)
+       VALUES ('concurrent-missing-artifact', ?, 'thumbnail', 'image/jpeg', 1024,
+               'concurrent-missing.jpg', 'sharp@1', 'ready', ?)`,
+    ).run(missingAsset.currentRevisionId, now);
+    const insertJob = db.prepare(
+      `INSERT INTO jobs
+         (job_id, library_id, asset_id, revision_id, kind, status, priority, progress,
+          attempt_count, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'generate_thumbnail', 'queued', ?, 0.0, 0, ?, ?)`,
+    );
+    insertJob.run(
+      'concurrent-busy-model', created.libraryId, busyModel.assetId,
+      busyModel.currentRevisionId, 100, now, now,
+    );
+    insertJob.run(
+      'concurrent-missing-preview', created.libraryId, missingAsset.assetId,
+      missingAsset.currentRevisionId, 50, now, now,
+    );
+    db.close();
+
+    let releaseRenderer!: () => void;
+    const rendererReady = new Promise<void>((resolve) => {
+      releaseRenderer = resolve;
+    });
+    let rendererStarted!: () => void;
+    const rendererStartedPromise = new Promise<void>((resolve) => {
+      rendererStarted = resolve;
+    });
+    const ordinaryWave = service.processThumbnailQueue(created.libraryId, {
+      maxJobs: 1,
+      jobKinds: ['generate_thumbnail'],
+      modelThumbnailRenderer: async () => {
+        rendererStarted();
+        await rendererReady;
+        return { status: 'failed', errorCode: 'MODEL_RENDER_FAILED' };
+      },
+    });
+    await rendererStartedPromise;
+
+    const notifiedAssetIds: string[] = [];
+    await service.runOpenBackgroundReconciliation(created.libraryId, {
+      onMissingPrimaryArtifacts: (assetIds: string[]) => {
+        notifiedAssetIds.push(...assetIds);
+        service.enqueueThumbnailJobs(created.libraryId, {
+          assetIds,
+          limit: assetIds.length,
+          priority: 50,
+          skipStaleRepair: true,
+        });
+      },
+    });
+    expect(notifiedAssetIds).toEqual([missingAsset.assetId]);
+
+    const whileBusy = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    expect(whileBusy.prepare(
+      'SELECT job_id, status FROM jobs ORDER BY job_id',
+    ).all()).toEqual([
+      { job_id: 'concurrent-busy-model', status: 'running' },
+      { job_id: 'concurrent-missing-preview', status: 'queued' },
+    ]);
+    whileBusy.close();
+
+    releaseRenderer();
+    await ordinaryWave;
+    const afterOrdinaryWave = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    expect(afterOrdinaryWave.prepare(
+      'SELECT job_id, status FROM jobs ORDER BY job_id',
+    ).all()).toEqual([
+      { job_id: 'concurrent-busy-model', status: 'failed' },
+      { job_id: 'concurrent-missing-preview', status: 'queued' },
+    ]);
+    afterOrdinaryWave.close();
+
+    expect(await service.processThumbnailQueue(created.libraryId, {
+      maxJobs: 1,
+      jobKinds: ['generate_thumbnail'],
+      assetIds: [missingAsset.assetId],
+    })).toBe(1);
+    const afterExactWave = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
+    expect(afterExactWave.prepare(
+      'SELECT job_id, status FROM jobs WHERE job_id IN (?, ?) ORDER BY job_id',
+    ).all('concurrent-busy-model', 'concurrent-missing-preview')).toEqual([
+      { job_id: 'concurrent-busy-model', status: 'failed' },
+      { job_id: 'concurrent-missing-preview', status: 'succeeded' },
+    ]);
+    afterExactWave.close();
+    service.closeAll();
+  }, 30_000);
 
   it('processes queued jobs', async () => {
     const root = temporaryRoot();
@@ -1341,9 +1970,23 @@ describe('processThumbnailQueue', () => {
     const jobId = status.jobs[0]!.jobId;
 
     expect(service.pauseMediaJobs(created.libraryId, [jobId])).toEqual({ pausedCount: 1 });
+    expect(service.listMediaJobs(created.libraryId)).toMatchObject({
+      queued: 0,
+      paused: 1,
+      cancelled: 0,
+    });
     expect(service.resumeMediaJobs(created.libraryId, [jobId])).toEqual({ resumedCount: 1 });
+    expect(service.listMediaJobs(created.libraryId)).toMatchObject({
+      queued: 1,
+      paused: 0,
+      cancelled: 0,
+    });
     expect(service.cancelMediaJobs(created.libraryId, [jobId])).toEqual({ cancelledCount: 1 });
-    expect(service.listMediaJobs(created.libraryId).cancelled).toBe(1);
+    expect(service.listMediaJobs(created.libraryId)).toMatchObject({
+      queued: 0,
+      paused: 0,
+      cancelled: 1,
+    });
 
     const db = new TestDatabase(path.join(created.libraryPath, '.serpent', 'library.db'));
     db.prepare(
@@ -1356,6 +1999,11 @@ describe('processThumbnailQueue', () => {
       status: 'queued',
       attemptCount: 0,
       errorCode: null,
+    });
+    expect(status).toMatchObject({
+      queued: 1,
+      failed: 0,
+      cancelled: 0,
     });
 
     service.closeAll();

@@ -21,8 +21,10 @@
  *  - a hidden window stops polling entirely and does one coalesced refresh when
  *    it becomes visible again.
  *
- * Worker events stay the primary source of truth; this is only the bounded
- * fallback that catches missed events.
+ * Worker events stay the primary source of truth for whether work is active;
+ * this coordinator is the bounded fallback. Media counts now come from
+ * `media.job-summary` (O(1)); `media.list-jobs` is only for the open panel's
+ * cursor pages.
  */
 
 export type JobStatusKind = "media" | "ai" | "plugin";

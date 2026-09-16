@@ -1199,9 +1199,18 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     kind: z.enum(['thumbnail', 'webm_proxy', 'audio_proxy']),
   }),
   z.strictObject({
+    type: z.literal('media.job-summary.request'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
     type: z.literal('media.list-jobs.request'),
     libraryId: identifierSchema,
     summaryOnly: z.boolean().optional(),
+    cursor: z.strictObject({
+      createdAt: nonBlankString,
+      jobId: identifierSchema,
+    }).optional(),
+    limit: z.number().int().min(1).max(500).optional(),
   }),
   z.strictObject({
     type: z.literal('plugin.list-jobs.request'),
@@ -2313,9 +2322,18 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
   }),
   z.strictObject({
+    type: z.literal('media.job-summary'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
     type: z.literal('media.list-jobs'),
     libraryId: identifierSchema,
     summaryOnly: z.boolean().optional(),
+    cursor: z.strictObject({
+      createdAt: nonBlankString,
+      jobId: identifierSchema,
+    }).optional(),
+    limit: z.number().int().min(1).max(500).optional(),
   }),
   z.strictObject({
     type: z.literal('media.pause-jobs'),

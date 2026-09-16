@@ -2293,16 +2293,49 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: { assetId: result.assetId, kind: result.kind } };
   },
 
-  async listMediaJobs({ libraryId, summaryOnly }: { libraryId: string; summaryOnly?: boolean }): Promise<LibraryApiResult<MediaJobStatus>> {
+  async getMediaJobSummary({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<{
+    queued: number;
+    running: number;
+    succeeded: number;
+    failed: number;
+    paused: number;
+    cancelled: number;
+  }>> {
+    const result = await request({
+      type: 'media.job-summary.request',
+      libraryId,
+    });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'media.job-summary.read') throw new Error('Unexpected media job-summary response.');
+    const { queued, running, succeeded, failed, paused, cancelled } = result;
+    return { ok: true, value: { queued, running, succeeded, failed, paused, cancelled } };
+  },
+
+  async listMediaJobs({
+    libraryId,
+    summaryOnly,
+    cursor,
+    limit,
+  }: {
+    libraryId: string;
+    summaryOnly?: boolean;
+    cursor?: { createdAt: string; jobId: string };
+    limit?: number;
+  }): Promise<LibraryApiResult<MediaJobStatus>> {
     const result = await request({
       type: 'media.list-jobs.request',
       libraryId,
       ...(summaryOnly === undefined ? {} : { summaryOnly }),
+      ...(cursor === undefined ? {} : { cursor }),
+      ...(limit === undefined ? {} : { limit }),
     });
     if (!result.ok) return failure(result);
     if (result.type !== 'media.jobs.listed') throw new Error('Unexpected media list-jobs response.');
-    const { queued, running, succeeded, failed, paused, cancelled, jobs } = result;
-    return { ok: true, value: { queued, running, succeeded, failed, paused, cancelled, jobs } };
+    const { queued, running, succeeded, failed, paused, cancelled, jobs, nextCursor, hasMore } = result;
+    return {
+      ok: true,
+      value: { queued, running, succeeded, failed, paused, cancelled, jobs, nextCursor, hasMore },
+    };
   },
 
   async listPluginJobs({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<PluginJobStatus>> {

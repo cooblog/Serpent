@@ -80,7 +80,20 @@ import {
   mediaJobCountTotal,
   mediaJobCountsFromRows,
 } from './media-job-status-summary';
+import {
+  clampMediaJobListLimit,
+  type MediaJobListCursor,
+  sliceMediaJobListPage,
+} from '../shared/media-jobs';
 import type { RawMetadataBackfillProbeOutcome } from './raw-metadata-backfill-gate';
+
+export interface RawMetadataBackfillAdmissionState {
+  token: string;
+  cursorAssetId: string | null;
+  exhausted: boolean;
+  /** Durable write time, exposed for diagnostics/tests without affecting admission. */
+  updatedAt?: string;
+}
 import {
   countLinkedDirectoryAssets,
   countLinkedDirectoryChildren,
@@ -2687,6 +2700,209 @@ const JOB_RECENT_LIST_INDEX_SCHEMA_CHECKSUM = createHash('sha256')
   .update(JOB_RECENT_LIST_INDEX_SCHEMA_SQL)
   .digest('hex');
 
+// Migration v51 (Serpent-288cd9): persist the bounded RAW metadata admission
+// cursor. The secondary pump is allowed to restart without losing the fact
+// that a library was exhausted; the browse token fences the cursor against
+// catalog and ignore-rule changes, while failed RAW retries use a separate
+// bounded requeue path.
+const RAW_METADATA_BACKFILL_STATE_SCHEMA_SQL = `
+  CREATE TABLE IF NOT EXISTS raw_metadata_backfill_state (
+    library_id TEXT PRIMARY KEY REFERENCES library(library_id) ON DELETE CASCADE,
+    token TEXT NOT NULL,
+    cursor_asset_id TEXT,
+    exhausted INTEGER NOT NULL DEFAULT 0 CHECK(exhausted IN (0, 1)),
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS raw_metadata_backfill_state_token
+    ON raw_metadata_backfill_state(library_id, token, exhausted, cursor_asset_id);
+`;
+const RAW_METADATA_BACKFILL_STATE_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(RAW_METADATA_BACKFILL_STATE_SCHEMA_SQL)
+  .digest('hex');
+const RAW_METADATA_BACKFILL_STATE_COLUMNS = [
+  'token',
+  'cursor_asset_id',
+  'exhausted',
+  'updated_at',
+] as const;
+
+function hasRawMetadataBackfillStateSchema(connection: DatabaseConnection): boolean {
+  const columns = columnsFor(connection, 'raw_metadata_backfill_state');
+  return RAW_METADATA_BACKFILL_STATE_COLUMNS.every((column) => columns.has(column));
+}
+
+// Migration v52 (Serpent-288cd9): the retry-only admission path must inspect
+// only due RAW failures rather than walking the general job history.
+const RAW_METADATA_RETRY_INDEX_SCHEMA_SQL = `
+  CREATE INDEX IF NOT EXISTS jobs_raw_metadata_retry
+    ON jobs(library_id, updated_at, job_id)
+    WHERE kind = 'extract_metadata'
+      AND status = 'failed'
+      AND error_code = 'RAW_METADATA_EXTRACTION_FAILED';
+`;
+const RAW_METADATA_RETRY_INDEX_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(RAW_METADATA_RETRY_INDEX_SCHEMA_SQL)
+  .digest('hex');
+
+const MEDIA_JOB_STATUS_COUNT_KINDS_SQL = `'generate_thumbnail', 'generate_video_poster', 'extract_metadata', 'generate_contact_sheet', 'generate_webm_proxy', 'generate_audio_proxy', 'extract_palette'`;
+const MEDIA_JOB_STATUS_COUNT_STATUSES_SQL = `'queued', 'running', 'succeeded', 'failed', 'paused', 'cancelled'`;
+
+// Migration v53 (Serpent-e97c00): media job status counts are maintained in the
+// same transaction as jobs writes. Panel/status reads then become a 6-row
+// primary-key lookup instead of GROUP BY over the whole job history.
+const MEDIA_JOB_STATUS_COUNTS_SCHEMA_SQL = `
+  CREATE TABLE IF NOT EXISTS media_job_status_counts (
+    library_id TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN (${MEDIA_JOB_STATUS_COUNT_STATUSES_SQL})),
+    count INTEGER NOT NULL CHECK(count >= 0),
+    PRIMARY KEY (library_id, status)
+  );
+  INSERT OR IGNORE INTO media_job_status_counts (library_id, status, count)
+  SELECT library_id, status, COUNT(*)
+    FROM jobs
+   WHERE kind IN (${MEDIA_JOB_STATUS_COUNT_KINDS_SQL})
+     AND status IN (${MEDIA_JOB_STATUS_COUNT_STATUSES_SQL})
+     AND (error_code IS NULL OR error_code <> 'ASSET_IGNORED')
+   GROUP BY library_id, status;
+  CREATE TRIGGER IF NOT EXISTS media_job_status_counts_ai
+  AFTER INSERT ON jobs
+  WHEN NEW.kind IN (${MEDIA_JOB_STATUS_COUNT_KINDS_SQL})
+   AND NEW.status IN (${MEDIA_JOB_STATUS_COUNT_STATUSES_SQL})
+   AND (NEW.error_code IS NULL OR NEW.error_code <> 'ASSET_IGNORED')
+  BEGIN
+    INSERT INTO media_job_status_counts(library_id, status, count)
+    VALUES (NEW.library_id, NEW.status, 1)
+    ON CONFLICT(library_id, status) DO UPDATE SET count = count + 1;
+  END;
+  CREATE TRIGGER IF NOT EXISTS media_job_status_counts_ad
+  AFTER DELETE ON jobs
+  WHEN OLD.kind IN (${MEDIA_JOB_STATUS_COUNT_KINDS_SQL})
+   AND OLD.status IN (${MEDIA_JOB_STATUS_COUNT_STATUSES_SQL})
+   AND (OLD.error_code IS NULL OR OLD.error_code <> 'ASSET_IGNORED')
+  BEGIN
+    UPDATE media_job_status_counts
+       SET count = MAX(0, count - 1)
+     WHERE library_id = OLD.library_id AND status = OLD.status;
+  END;
+  CREATE TRIGGER IF NOT EXISTS media_job_status_counts_au
+  AFTER UPDATE OF status, kind, error_code, library_id ON jobs
+  BEGIN
+    UPDATE media_job_status_counts
+       SET count = MAX(0, count - 1)
+     WHERE OLD.kind IN (${MEDIA_JOB_STATUS_COUNT_KINDS_SQL})
+       AND OLD.status IN (${MEDIA_JOB_STATUS_COUNT_STATUSES_SQL})
+       AND (OLD.error_code IS NULL OR OLD.error_code <> 'ASSET_IGNORED')
+       AND library_id = OLD.library_id
+       AND status = OLD.status
+       AND (
+         NEW.kind NOT IN (${MEDIA_JOB_STATUS_COUNT_KINDS_SQL})
+         OR NEW.status NOT IN (${MEDIA_JOB_STATUS_COUNT_STATUSES_SQL})
+         OR (NEW.error_code IS NOT NULL AND NEW.error_code = 'ASSET_IGNORED')
+         OR NEW.library_id <> OLD.library_id
+         OR NEW.status <> OLD.status
+         OR NEW.kind <> OLD.kind
+       );
+    INSERT INTO media_job_status_counts(library_id, status, count)
+    SELECT NEW.library_id, NEW.status, 1
+     WHERE NEW.kind IN (${MEDIA_JOB_STATUS_COUNT_KINDS_SQL})
+       AND NEW.status IN (${MEDIA_JOB_STATUS_COUNT_STATUSES_SQL})
+       AND (NEW.error_code IS NULL OR NEW.error_code <> 'ASSET_IGNORED')
+       AND (
+         OLD.kind NOT IN (${MEDIA_JOB_STATUS_COUNT_KINDS_SQL})
+         OR OLD.status NOT IN (${MEDIA_JOB_STATUS_COUNT_STATUSES_SQL})
+         OR (OLD.error_code IS NOT NULL AND OLD.error_code = 'ASSET_IGNORED')
+         OR NEW.library_id <> OLD.library_id
+         OR NEW.status <> OLD.status
+         OR NEW.kind <> OLD.kind
+       )
+    ON CONFLICT(library_id, status) DO UPDATE SET count = count + 1;
+  END;
+`;
+const MEDIA_JOB_STATUS_COUNTS_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(MEDIA_JOB_STATUS_COUNTS_SCHEMA_SQL)
+  .digest('hex');
+
+// Migration v54 (Serpent-288cd9): persist a normalized filename extension so
+// RAW metadata admission can use an equality/IN predicate plus a covering
+// index instead of LOWER(relative_file_path) LIKE '%suffix' over the catalog.
+const ASSET_NORMALIZED_EXTENSION_EXPR = `CASE
+    WHEN instr(relative_file_path, '.') = 0 THEN NULL
+    ELSE lower('.' || replace(relative_file_path, rtrim(relative_file_path, replace(relative_file_path, '.', '')), ''))
+  END`;
+const ASSET_NORMALIZED_EXTENSION_NEW_EXPR = `CASE
+    WHEN instr(NEW.relative_file_path, '.') = 0 THEN NULL
+    ELSE lower('.' || replace(NEW.relative_file_path, rtrim(NEW.relative_file_path, replace(NEW.relative_file_path, '.', '')), ''))
+  END`;
+const ASSET_NORMALIZED_EXTENSION_SCHEMA_SQL = `
+  ALTER TABLE assets ADD COLUMN normalized_extension TEXT;
+  UPDATE assets SET normalized_extension = ${ASSET_NORMALIZED_EXTENSION_EXPR};
+  CREATE INDEX IF NOT EXISTS assets_normalized_extension_asset
+    ON assets(normalized_extension, asset_id)
+    WHERE availability = 'available' AND current_revision_id IS NOT NULL AND deleted_at IS NULL;
+  CREATE TRIGGER IF NOT EXISTS assets_normalized_extension_ai
+  AFTER INSERT ON assets
+  BEGIN
+    UPDATE assets
+       SET normalized_extension = ${ASSET_NORMALIZED_EXTENSION_NEW_EXPR}
+     WHERE asset_id = NEW.asset_id;
+  END;
+  CREATE TRIGGER IF NOT EXISTS assets_normalized_extension_au
+  AFTER UPDATE OF relative_file_path ON assets
+  BEGIN
+    UPDATE assets
+       SET normalized_extension = ${ASSET_NORMALIZED_EXTENSION_NEW_EXPR}
+     WHERE asset_id = NEW.asset_id;
+  END;
+`;
+const ASSET_NORMALIZED_EXTENSION_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(ASSET_NORMALIZED_EXTENSION_SCHEMA_SQL)
+  .digest('hex');
+
+function ensureAssetNormalizedExtensionSchema(connection: DatabaseConnection): void {
+  const columns = columnsFor(connection, 'assets');
+  if (!columns.has('normalized_extension')) {
+    connection.exec('ALTER TABLE assets ADD COLUMN normalized_extension TEXT');
+  }
+  connection.exec(`
+    UPDATE assets
+       SET normalized_extension = ${ASSET_NORMALIZED_EXTENSION_EXPR}
+     WHERE normalized_extension IS NULL AND instr(relative_file_path, '.') > 0;
+    CREATE INDEX IF NOT EXISTS assets_normalized_extension_asset
+      ON assets(normalized_extension, asset_id)
+      WHERE availability = 'available' AND current_revision_id IS NOT NULL AND deleted_at IS NULL;
+    CREATE TRIGGER IF NOT EXISTS assets_normalized_extension_ai
+    AFTER INSERT ON assets
+    BEGIN
+      UPDATE assets
+         SET normalized_extension = ${ASSET_NORMALIZED_EXTENSION_NEW_EXPR}
+       WHERE asset_id = NEW.asset_id;
+    END;
+    CREATE TRIGGER IF NOT EXISTS assets_normalized_extension_au
+    AFTER UPDATE OF relative_file_path ON assets
+    BEGIN
+      UPDATE assets
+         SET normalized_extension = ${ASSET_NORMALIZED_EXTENSION_NEW_EXPR}
+       WHERE asset_id = NEW.asset_id;
+    END;
+  `);
+}
+
+function rawImageExtensionMatchSql(
+  connection: DatabaseConnection,
+  alias: string,
+): { sql: string; params: readonly string[] } {
+  if (columnsFor(connection, 'assets').has('normalized_extension')) {
+    return {
+      sql: `${alias}.normalized_extension IN (${RAW_IMAGE_EXTENSIONS.map(() => '?').join(',')})`,
+      params: RAW_IMAGE_EXTENSIONS,
+    };
+  }
+  return {
+    sql: `(${RAW_IMAGE_EXTENSIONS.map(() => `LOWER(${alias}.relative_file_path) LIKE ?`).join(' OR ')})`,
+    params: RAW_IMAGE_EXTENSIONS.map((extension) => `%${extension}`),
+  };
+}
+
 function ensureLinkedFolderParentSchema(connection: DatabaseConnection): void {
   const columns = columnsFor(connection, 'linked_folders');
   if (!columns.has('parent_folder_id')) {
@@ -3319,6 +3535,26 @@ export const MIGRATIONS = [
     version: 50,
     sql: JOB_RECENT_LIST_INDEX_SCHEMA_SQL,
     checksum: JOB_RECENT_LIST_INDEX_SCHEMA_CHECKSUM,
+  },
+  {
+    version: 51,
+    sql: RAW_METADATA_BACKFILL_STATE_SCHEMA_SQL,
+    checksum: RAW_METADATA_BACKFILL_STATE_SCHEMA_CHECKSUM,
+  },
+  {
+    version: 52,
+    sql: RAW_METADATA_RETRY_INDEX_SCHEMA_SQL,
+    checksum: RAW_METADATA_RETRY_INDEX_SCHEMA_CHECKSUM,
+  },
+  {
+    version: 53,
+    sql: MEDIA_JOB_STATUS_COUNTS_SCHEMA_SQL,
+    checksum: MEDIA_JOB_STATUS_COUNTS_SCHEMA_CHECKSUM,
+  },
+  {
+    version: 54,
+    sql: ASSET_NORMALIZED_EXTENSION_SCHEMA_SQL,
+    checksum: ASSET_NORMALIZED_EXTENSION_SCHEMA_CHECKSUM,
   },
 ] as const;
 export const SUPPORTED_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
@@ -6046,6 +6282,8 @@ function migrateDatabaseUnserialized(connection: DatabaseConnection, allowFresh:
           ensureLinkedSourceIdentitySchema(connection);
         } else if (migration.version === 49) {
           ensureLinkedFolderParentSchema(connection);
+        } else if (migration.version === 54) {
+          ensureAssetNormalizedExtensionSchema(connection);
         } else {
           connection.exec(migration.sql);
         }
@@ -9322,6 +9560,90 @@ export class LibraryService {
     } catch (error) {
       throw serviceError(error, 'LIBRARY_CORRUPT');
     }
+  }
+
+  /**
+   * Return the durable RAW metadata admission cursor for Worker restart
+   * recovery.  Older/leniently opened libraries simply have no state row and
+   * fall back to the bounded probe path.
+   */
+  getRawMetadataBackfillAdmissionState(
+    libraryId: string,
+  ): RawMetadataBackfillAdmissionState | null {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    if (!hasRawMetadataBackfillStateSchema(openLibrary.connection)) {
+      return null;
+    }
+    const row = openLibrary.connection
+      .prepare(
+        `SELECT token, cursor_asset_id, exhausted, updated_at
+           FROM raw_metadata_backfill_state
+          WHERE library_id = ?`,
+      )
+      .get(libraryId) as {
+        token: string;
+        cursor_asset_id: string | null;
+        exhausted: number;
+        updated_at: string;
+      } | undefined;
+    if (!row || row.token.length === 0) return null;
+    return {
+      token: row.token,
+      cursorAssetId: row.cursor_asset_id,
+      exhausted: row.exhausted === 1,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  private rawMetadataBackfillToken(openLibrary: OpenLibrary): string | null {
+    try {
+      const browse = openLibrary.connection
+        .prepare('SELECT sequence FROM browse_change_sequence WHERE library_id = ?')
+        .get(openLibrary.summary.libraryId) as { sequence: number } | undefined;
+      if (
+        !browse
+        || !Number.isSafeInteger(browse.sequence)
+        || browse.sequence < 0
+      ) return null;
+      return String(browse.sequence);
+    } catch {
+      return null;
+    }
+  }
+
+  private rawMetadataBackfillPostTokenMatchesOwnWrites(
+    beforeToken: string | null,
+    afterToken: string,
+  ): boolean {
+    // Job status/insert writes do not advance browse_change_sequence. An exact
+    // equality check therefore accepts our own queue writes while rejecting a
+    // concurrent catalog or ignore-rule mutation.
+    return beforeToken !== null && beforeToken === afterToken;
+  }
+
+  private persistRawMetadataBackfillAdmissionState(
+    openLibrary: OpenLibrary,
+    state: RawMetadataBackfillAdmissionState,
+  ): void {
+    if (!hasRawMetadataBackfillStateSchema(openLibrary.connection)) return;
+    openLibrary.connection
+      .prepare(
+        `INSERT INTO raw_metadata_backfill_state
+           (library_id, token, cursor_asset_id, exhausted, updated_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(library_id) DO UPDATE SET
+           token = excluded.token,
+           cursor_asset_id = excluded.cursor_asset_id,
+           exhausted = excluded.exhausted,
+           updated_at = excluded.updated_at`,
+      )
+      .run(
+        openLibrary.summary.libraryId,
+        state.token,
+        state.cursorAssetId,
+        state.exhausted ? 1 : 0,
+        new Date().toISOString(),
+      );
   }
 
   private operationHistoryEntries(openLibrary: OpenLibrary): HistoryStackEntry[] {
@@ -20858,10 +21180,9 @@ export class LibraryService {
   }
 
   /**
-   * Serpent-e97c00：任务摘要缓存的有效性 token = 库变更序号 + 忽略规则序号（计数带
-   * 可见性过滤，忽略规则变化必须让它失效）。两者都由既有触发器维护，各读一行；这里
-   * 从读连接直读且**不抛错**——`listMediaJobs` 是读路径，不能因为序号表缺失或异常把
-   * 面板读取变成 LIBRARY_CORRUPT；返回 null 时本次完全不进缓存，退化成原行为。
+   * 摘要内存缓存的有效性 token = 库变更序号 + 忽略规则序号。计数表路径不再做
+   * 忽略路径 JOIN，token 仍保留给 GROUP BY 回退路径：忽略规则变化时不得继续
+   * 使用带可见性过滤的陈旧 GROUP BY 结果。读路径不抛错。
    */
   private mediaJobSummaryToken(openLibrary: OpenLibrary): string | null {
     try {
@@ -20883,13 +21204,30 @@ export class LibraryService {
     }
   }
 
-  listMediaJobs(libraryId: string, options: { summaryOnly?: boolean } = {}): {
+  private hasMediaJobStatusCountsTable(openLibrary: OpenLibrary): boolean {
+    return columnsFor(openLibrary.connection, 'media_job_status_counts').has('count');
+  }
+
+  private readMediaJobStatusCountsTable(openLibrary: OpenLibrary): ReturnType<typeof mediaJobCountsFromRows> {
+    const rows = openLibrary.connection.prepare(
+      'SELECT status, count FROM media_job_status_counts WHERE library_id = ?',
+    ).all(openLibrary.summary.libraryId) as Array<{ status: string; count: number }>;
+    return mediaJobCountsFromRows(rows);
+  }
+
+  listMediaJobs(libraryId: string, options: {
+    summaryOnly?: boolean;
+    cursor?: MediaJobListCursor;
+    limit?: number;
+  } = {}): {
     queued: number;
     running: number;
     succeeded: number;
     failed: number;
     paused: number;
     cancelled: number;
+    nextCursor: MediaJobListCursor | null;
+    hasMore: boolean;
     jobs: Array<{
       jobId: string;
       assetId: string;
@@ -20914,49 +21252,60 @@ export class LibraryService {
     const visibleJobFilter = `
           AND (j.error_code IS NULL OR j.error_code <> 'ASSET_IGNORED')
           AND (j.asset_id IS NULL OR ${this.explicitIgnoreSql(openLibrary.connection, 'a')})`;
-    // Serpent-e97c00：这条 GROUP BY 要遍历整个媒体任务历史（真实库中位约 110 ms），
-    // 而任务面板与状态栏会反复读它。任何 jobs 写入都会 bump 变更序号，因此按序号校验
-    // 即可安全复用；序号变化但在陈旧窗口内仍复用，避免繁忙队列让每次读取都退回全扫。
     const summaryToken = this.mediaJobSummaryToken(openLibrary);
-    const summaryRead = JOB_SUMMARY_CACHE_ENABLED && summaryToken !== null
-      ? this.mediaJobSummaryCache.read(openLibrary.summary.libraryId, summaryToken)
-      : { counts: null, source: 'miss' as const, ageMs: 0, totalJobs: 0 };
-    let counts: Array<{ status: string; count: number }>;
-    if (summaryRead.counts === null) {
-      counts = openLibrary.connection.prepare(
-        `SELECT status, COUNT(*) AS count FROM jobs
-          LEFT JOIN assets a ON a.asset_id = jobs.asset_id
-          WHERE jobs.library_id = ? AND jobs.kind IN (${kindPlaceholders})
-            AND (jobs.error_code IS NULL OR jobs.error_code <> 'ASSET_IGNORED')
-            AND (jobs.asset_id IS NULL OR ${this.explicitIgnoreSql(openLibrary.connection, 'a')})
-          GROUP BY status`,
-      ).all(openLibrary.summary.libraryId, ...MEDIA_JOB_KINDS) as Array<{
-        status: string;
-        count: number;
-      }>;
-      const rebuilt = mediaJobCountsFromRows(counts);
-      if (summaryToken !== null) {
-        this.mediaJobSummaryCache.store(
-          openLibrary.summary.libraryId,
-          summaryToken,
-          rebuilt,
-          mediaJobCountTotal(rebuilt),
-        );
-      }
+    const tableCounts = JOB_SUMMARY_CACHE_ENABLED && this.hasMediaJobStatusCountsTable(openLibrary)
+      ? this.readMediaJobStatusCountsTable(openLibrary)
+      : null;
+    let folded = tableCounts;
+    if (folded !== null) {
       logMediaJobSummaryEvent({
-        source: summaryToken === null ? 'rebuild-uncached' : 'rebuild',
-        totalJobs: mediaJobCountTotal(rebuilt),
+        source: 'table',
+        totalJobs: mediaJobCountTotal(folded),
         epoch: summaryToken ?? 'unavailable',
       });
     } else {
-      counts = Object.entries(summaryRead.counts).map(([status, count]) => ({ status, count }));
-      logMediaJobSummaryEvent({
-        source: summaryRead.source,
-        ageMs: Math.round(summaryRead.ageMs),
-        totalJobs: summaryRead.totalJobs,
-      });
+      const summaryRead = JOB_SUMMARY_CACHE_ENABLED && summaryToken !== null
+        ? this.mediaJobSummaryCache.read(openLibrary.summary.libraryId, summaryToken)
+        : { counts: null, source: 'miss' as const, ageMs: 0, totalJobs: 0 };
+      if (summaryRead.counts === null) {
+        const countRows = openLibrary.connection.prepare(
+          `SELECT status, COUNT(*) AS count FROM jobs
+            LEFT JOIN assets a ON a.asset_id = jobs.asset_id
+            WHERE jobs.library_id = ? AND jobs.kind IN (${kindPlaceholders})
+              AND (jobs.error_code IS NULL OR jobs.error_code <> 'ASSET_IGNORED')
+              AND (jobs.asset_id IS NULL OR ${this.explicitIgnoreSql(openLibrary.connection, 'a')})
+            GROUP BY status`,
+        ).all(openLibrary.summary.libraryId, ...MEDIA_JOB_KINDS) as Array<{
+          status: string;
+          count: number;
+        }>;
+        folded = mediaJobCountsFromRows(countRows);
+        if (summaryToken !== null) {
+          this.mediaJobSummaryCache.store(
+            openLibrary.summary.libraryId,
+            summaryToken,
+            folded,
+            mediaJobCountTotal(folded),
+          );
+        }
+        logMediaJobSummaryEvent({
+          source: summaryToken === null ? 'rebuild-uncached' : 'rebuild',
+          totalJobs: mediaJobCountTotal(folded),
+          epoch: summaryToken ?? 'unavailable',
+        });
+      } else {
+        folded = summaryRead.counts;
+        logMediaJobSummaryEvent({
+          source: summaryRead.source,
+          ageMs: Math.round(summaryRead.ageMs),
+          totalJobs: summaryRead.totalJobs,
+        });
+      }
     }
-    const rows = options.summaryOnly
+    const pageLimit = clampMediaJobListLimit(options.limit);
+    const cursorCreatedAt = options.cursor?.createdAt ?? null;
+    const cursorJobId = options.cursor?.jobId ?? null;
+    const rawRows = options.summaryOnly
       ? []
       : openLibrary.connection.prepare(
         `SELECT j.job_id, j.asset_id, a.relative_file_path AS asset_name, j.revision_id, j.kind, j.status, j.progress,
@@ -20965,9 +21314,18 @@ export class LibraryService {
             LEFT JOIN assets a ON a.asset_id = j.asset_id
            WHERE j.library_id = ? AND j.kind IN (${kindPlaceholders})
              ${visibleJobFilter}
+             AND (? IS NULL OR j.created_at < ? OR (j.created_at = ? AND j.job_id < ?))
            ORDER BY j.created_at DESC, j.job_id DESC
-           LIMIT 500`,
-      ).all(openLibrary.summary.libraryId, ...MEDIA_JOB_KINDS) as Array<{
+           LIMIT ?`,
+      ).all(
+        openLibrary.summary.libraryId,
+        ...MEDIA_JOB_KINDS,
+        cursorCreatedAt,
+        cursorCreatedAt,
+        cursorCreatedAt,
+        cursorJobId,
+        pageLimit + 1,
+      ) as Array<{
         job_id: string;
         asset_id: string;
         asset_name: string | null;
@@ -20981,41 +21339,42 @@ export class LibraryService {
         created_at: string;
         updated_at: string;
       }>;
-    const statusCounts = new Map(counts.map((row) => [row.status, row.count]));
+    const mapped = rawRows.map((row) => ({
+      jobId: row.job_id,
+      assetId: row.asset_id,
+      assetName: row.asset_name ? buildFileName(row.asset_name) : null,
+      revisionId: row.revision_id,
+      kind: row.kind,
+      status: row.status,
+      progress: row.progress,
+      attemptCount: row.attempt_count,
+      errorCode: row.error_code,
+      errorDetail: row.error_detail,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
+    const paged = options.summaryOnly
+      ? { page: mapped, nextCursor: null, hasMore: false }
+      : sliceMediaJobListPage(mapped, pageLimit);
     return {
-      queued: statusCounts.get('queued') ?? 0,
-      running: statusCounts.get('running') ?? 0,
-      succeeded: statusCounts.get('succeeded') ?? 0,
-      failed: statusCounts.get('failed') ?? 0,
-      paused: statusCounts.get('paused') ?? 0,
-      cancelled: statusCounts.get('cancelled') ?? 0,
-      jobs: rows.map((row) => ({
-        jobId: row.job_id,
-        assetId: row.asset_id,
-        assetName: row.asset_name ? buildFileName(row.asset_name) : null,
-        revisionId: row.revision_id,
-        kind: row.kind,
-        status: row.status,
-        progress: row.progress,
-        attemptCount: row.attempt_count,
-        errorCode: row.error_code,
-        errorDetail: row.error_detail,
-        createdAt: row.created_at,
-        updatedAt: row.updated_at,
-      })),
+      ...folded,
+      nextCursor: paged.nextCursor,
+      hasMore: paged.hasMore,
+      jobs: paged.page,
     };
   }
 
   pauseMediaJobs(libraryId: string, jobIds?: string[]): { pausedCount: number } {
     const count = this.updateMediaJobStatus(libraryId, ['queued', 'running'], 'paused', jobIds);
+    if (count > 0) this.mediaJobSummaryCache.invalidate(libraryId);
     this.abortActiveMediaJobs(libraryId, jobIds);
     return { pausedCount: count };
   }
 
   resumeMediaJobs(libraryId: string, jobIds?: string[]): { resumedCount: number } {
-    return {
-      resumedCount: this.updateMediaJobStatus(libraryId, ['paused'], 'queued', jobIds),
-    };
+    const count = this.updateMediaJobStatus(libraryId, ['paused'], 'queued', jobIds);
+    if (count > 0) this.mediaJobSummaryCache.invalidate(libraryId);
+    return { resumedCount: count };
   }
 
   cancelMediaJobs(libraryId: string, jobIds?: string[]): { cancelledCount: number } {
@@ -21025,6 +21384,7 @@ export class LibraryService {
       'cancelled',
       jobIds,
     );
+    if (count > 0) this.mediaJobSummaryCache.invalidate(libraryId);
     this.abortActiveMediaJobs(libraryId, jobIds);
     return { cancelledCount: count };
   }
@@ -21054,6 +21414,7 @@ export class LibraryService {
         ...chunk,
       ],
     });
+    if (retriedCount > 0) this.mediaJobSummaryCache.invalidate(libraryId);
     return { retriedCount };
   }
 
@@ -24492,11 +24853,104 @@ export class LibraryService {
    * every browse refresh. The queue also persists a normalized, empty
    * metadata artifact so the terminal state is visible to readers.
    */
+  private requeueRawImageMetadataJobs(
+    openLibrary: OpenLibrary,
+    options: { assetIds?: readonly string[]; limit: number },
+  ): { admitted: number; probed: number } {
+    const selectedIds = [...new Set(options.assetIds ?? [])].slice(0, 500);
+    const selectedSql = selectedIds.length > 0
+      ? `AND a.asset_id IN (${selectedIds.map(() => '?').join(',')})`
+      : '';
+    const extensionMatch = rawImageExtensionMatchSql(openLibrary.connection, 'a');
+    const limit = Math.max(1, Math.min(500, Math.trunc(options.limit)));
+    const retryCutoff = new Date(Date.now() - RAW_IMAGE_METADATA_RETRY_DELAY_MS).toISOString();
+    const retryRows = openLibrary.connection
+      .prepare(
+        `SELECT j.job_id
+           FROM jobs j
+           JOIN assets a ON a.asset_id = j.asset_id
+          WHERE j.library_id = ?
+            AND j.kind = 'extract_metadata'
+            AND j.status = 'failed'
+            AND j.error_code = 'RAW_METADATA_EXTRACTION_FAILED'
+            AND j.attempt_count < ?
+            AND j.updated_at <= ?
+            AND a.deleted_at IS NULL
+            AND a.current_revision_id = j.revision_id
+            AND a.availability = 'available'
+            ${selectedSql}
+            AND NOT EXISTS (
+              SELECT 1 FROM linked_folders loff
+               WHERE loff.folder_id = a.linked_folder_id
+                 AND loff.status = 'offline'
+            )
+            AND ${extensionMatch.sql}
+            AND ${this.explicitIgnoreSql(openLibrary.connection, 'a')}
+            AND NOT EXISTS (
+              SELECT 1 FROM revision_artifacts complete_metadata
+               WHERE complete_metadata.revision_id = a.current_revision_id
+                 AND complete_metadata.kind = 'extracted_metadata'
+                 AND complete_metadata.status = 'ready'
+                 AND complete_metadata.invalidated_at IS NULL
+                 AND complete_metadata.generator_version NOT LIKE 'image-header@%'
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM revision_artifacts failed_metadata
+               WHERE failed_metadata.revision_id = a.current_revision_id
+                 AND failed_metadata.kind = 'extracted_metadata'
+                 AND failed_metadata.status = 'failed'
+                 AND failed_metadata.invalidated_at IS NULL
+            )
+          ORDER BY j.updated_at, j.job_id
+          LIMIT ?`,
+      )
+      .all(
+        openLibrary.summary.libraryId,
+        RAW_IMAGE_METADATA_MAX_ATTEMPTS,
+        retryCutoff,
+        ...selectedIds,
+        ...extensionMatch.params,
+        limit,
+      ) as Array<{ job_id: string }>;
+    if (retryRows.length === 0) return { admitted: 0, probed: 0 };
+    const now = new Date().toISOString();
+    const requeue = openLibrary.connection.prepare(
+      `UPDATE jobs
+          SET status = 'queued', progress = 0.0,
+              error_code = NULL, error_detail = NULL, updated_at = ?
+        WHERE job_id = ? AND status = 'failed'`,
+    );
+    let admitted = 0;
+    openLibrary.connection.transaction(() => {
+      for (const row of retryRows) admitted += requeue.run(now, row.job_id).changes;
+    })();
+    return { admitted, probed: retryRows.length };
+  }
+
+  /** Requeue only due RAW failures; this path never probes the catalog cursor. */
+  requeueRawImageMetadataBackfillRetries(libraryId: string, limit = 256): number {
+    const openLibrary = this.requireOpenLibrary(libraryId);
+    if (!columnsFor(openLibrary.connection, 'revision_artifacts').has('status')) return 0;
+    const pending = Number((openLibrary.connection
+      .prepare(
+        `SELECT COUNT(*) AS count
+           FROM jobs
+          WHERE library_id = ?
+            AND kind = 'extract_metadata'
+            AND status IN ('queued', 'running', 'paused')`,
+      )
+      .get(libraryId) as { count: number } | undefined)?.count ?? 0);
+    const available = Math.max(0, Math.min(500, Math.trunc(limit)) - pending);
+    if (available === 0) return 0;
+    return this.requeueRawImageMetadataJobs(openLibrary, { limit: available }).admitted;
+  }
+
   private enqueueRawImageMetadataJobs(
     openLibrary: OpenLibrary,
     options: { assetIds?: readonly string[]; limit?: number } = {},
   ): RawMetadataBackfillProbeOutcome {
     const targeted = options.assetIds !== undefined;
+    const isBackfill = !targeted;
     const selectedIds = [...new Set(options.assetIds ?? [])].slice(0, 500);
     if (targeted && selectedIds.length === 0) {
       return { admitted: 0, probed: 0, budgetCapped: true };
@@ -24504,9 +24958,7 @@ export class LibraryService {
     const selectedSql = selectedIds.length > 0
       ? `AND a.asset_id IN (${selectedIds.map(() => '?').join(',')})`
       : '';
-    const rawExtensionSql = RAW_IMAGE_EXTENSIONS
-      .map(() => 'LOWER(a.relative_file_path) LIKE ?')
-      .join(' OR ');
+    const extensionMatch = rawImageExtensionMatchSql(openLibrary.connection, 'a');
     // Metadata is a secondary Inspector aid. Keep each enqueue call bounded;
     // the regular background scheduler will admit the next batch after the
     // primary thumbnail wave yields.
@@ -24535,72 +24987,30 @@ export class LibraryService {
     if (availableAdmissionLimit === 0) {
       return { admitted: 0, probed: 0, budgetCapped: true };
     }
-    const retryCutoff = new Date(Date.now() - RAW_IMAGE_METADATA_RETRY_DELAY_MS).toISOString();
-    const retryRows = openLibrary.connection
-      .prepare(
-        `SELECT j.job_id
-           FROM jobs j
-           JOIN assets a ON a.asset_id = j.asset_id
-          WHERE j.library_id = ?
-            AND j.kind = 'extract_metadata'
-            AND j.status = 'failed'
-            AND j.error_code = 'RAW_METADATA_EXTRACTION_FAILED'
-            AND j.attempt_count < ?
-            AND j.updated_at <= ?
-            AND a.deleted_at IS NULL
-            AND a.current_revision_id = j.revision_id
-            AND a.availability = 'available'
-            ${selectedSql}
-            AND NOT EXISTS (
-              SELECT 1 FROM linked_folders loff
-               WHERE loff.folder_id = a.linked_folder_id
-                 AND loff.status = 'offline'
-            )
-            AND (${rawExtensionSql})
-            AND ${this.explicitIgnoreSql(openLibrary.connection, 'a')}
-            AND NOT EXISTS (
-              SELECT 1 FROM revision_artifacts complete_metadata
-               WHERE complete_metadata.revision_id = a.current_revision_id
-                 AND complete_metadata.kind = 'extracted_metadata'
-                 AND complete_metadata.status = 'ready'
-                 AND complete_metadata.invalidated_at IS NULL
-                 AND complete_metadata.generator_version NOT LIKE 'image-header@%'
-            )
-            AND NOT EXISTS (
-              SELECT 1 FROM revision_artifacts failed_metadata
-               WHERE failed_metadata.revision_id = a.current_revision_id
-                 AND failed_metadata.kind = 'extracted_metadata'
-                 AND failed_metadata.status = 'failed'
-                 AND failed_metadata.invalidated_at IS NULL
-            )
-          ORDER BY j.updated_at, j.job_id
-          LIMIT ?`,
-      )
-      .all(
-        openLibrary.summary.libraryId,
-        RAW_IMAGE_METADATA_MAX_ATTEMPTS,
-        retryCutoff,
-        ...selectedIds,
-        ...RAW_IMAGE_EXTENSIONS.map((extension) => `%${extension}`),
-        availableAdmissionLimit,
-      ) as Array<{ job_id: string }>;
+    const admissionToken = isBackfill ? this.rawMetadataBackfillToken(openLibrary) : null;
+    const persistedAdmission = isBackfill
+      ? this.getRawMetadataBackfillAdmissionState(openLibrary.summary.libraryId)
+      : null;
+    const admissionStateMatches = admissionToken !== null
+      && persistedAdmission?.token === admissionToken;
+    if (admissionStateMatches && persistedAdmission?.exhausted) {
+      return { admitted: 0, probed: 0, budgetCapped: false };
+    }
+    const cursorAssetId = admissionStateMatches ? persistedAdmission?.cursorAssetId ?? null : null;
+    const cursorSql = isBackfill && cursorAssetId !== null
+      ? 'AND a.asset_id > ?'
+      : '';
+    const cursorParams = cursorSql === '' ? [] : [cursorAssetId];
+    const retryAdmission = this.requeueRawImageMetadataJobs(openLibrary, {
+      ...(targeted ? { assetIds: selectedIds } : {}),
+      limit: availableAdmissionLimit,
+    });
+    const retryRows = retryAdmission.probed;
+    let enqueued = retryAdmission.admitted;
     const now = new Date().toISOString();
-    let enqueued = 0;
-    const requeue = openLibrary.connection.prepare(
-      `UPDATE jobs
-          SET status = 'queued', progress = 0.0,
-              error_code = NULL, error_detail = NULL, updated_at = ?
-        WHERE job_id = ? AND status = 'failed'`,
-    );
-    openLibrary.connection.transaction(() => {
-      for (const row of retryRows) {
-        enqueued += requeue.run(now, row.job_id).changes;
-      }
-    })();
-
     const remainingLimit = Math.max(0, availableAdmissionLimit - enqueued);
     if (remainingLimit === 0) {
-      return { admitted: enqueued, probed: retryRows.length, budgetCapped: true };
+      return { admitted: enqueued, probed: retryRows, budgetCapped: true };
     }
     const rows = openLibrary.connection
       .prepare(
@@ -24610,12 +25020,13 @@ export class LibraryService {
             AND a.current_revision_id IS NOT NULL
             AND a.availability = 'available'
             ${selectedSql}
+            ${cursorSql}
             AND NOT EXISTS (
               SELECT 1 FROM linked_folders loff
                WHERE loff.folder_id = a.linked_folder_id
                  AND loff.status = 'offline'
             )
-            AND (${rawExtensionSql})
+            AND ${extensionMatch.sql}
             AND ${this.explicitIgnoreSql(openLibrary.connection, 'a')}
             AND NOT EXISTS (
               SELECT 1 FROM jobs active
@@ -24657,23 +25068,48 @@ export class LibraryService {
                  AND failed_metadata.status = 'failed'
                  AND failed_metadata.invalidated_at IS NULL
             )
-          ORDER BY a.created_at DESC, a.relative_file_path
+          ${isBackfill ? 'ORDER BY a.asset_id' : 'ORDER BY a.created_at DESC, a.relative_file_path'}
           LIMIT ?`,
       )
       .all(
         ...selectedIds,
-          ...RAW_IMAGE_EXTENSIONS.map((extension) => `%${extension}`),
+        ...cursorParams,
+        ...extensionMatch.params,
         openLibrary.summary.libraryId,
         openLibrary.summary.libraryId,
         openLibrary.summary.libraryId,
         remainingLimit,
       ) as Array<{ asset_id: string; current_revision_id: string }>;
+    // A change observed between the token sampled at admission and the end
+    // of the candidate read invalidates this page. Do not mark that newer
+    // token exhausted or carry a cursor across the concurrent mutation.
+    const tokenAfterProbe = isBackfill ? this.rawMetadataBackfillToken(openLibrary) : null;
     if (rows.length === 0) {
-      // 候选查询没有用满剩余预算 → 当前没有待处理的 RAW 资产。
-      // 定向（显式 assetIds）探测永不参与「扫完」判定。
+      if (isBackfill && admissionToken !== null) {
+        // Preserve a cursor only when the token stayed stable during the
+        // probe. A concurrent catalog mutation must restart from the keyset
+        // boundary on the next token.
+        const postToken = this.rawMetadataBackfillToken(openLibrary);
+        if (postToken !== null) {
+          const probeWasStable = tokenAfterProbe !== null
+            && this.rawMetadataBackfillPostTokenMatchesOwnWrites(
+              admissionToken,
+              tokenAfterProbe,
+            )
+            && this.rawMetadataBackfillPostTokenMatchesOwnWrites(
+              tokenAfterProbe,
+              postToken,
+            );
+          this.persistRawMetadataBackfillAdmissionState(openLibrary, {
+            token: postToken,
+            cursorAssetId: probeWasStable ? cursorAssetId : null,
+            exhausted: probeWasStable,
+          });
+        }
+      }
       return {
         admitted: enqueued,
-        probed: retryRows.length,
+        probed: retryRows,
         budgetCapped: targeted,
       };
     }
@@ -24709,11 +25145,33 @@ export class LibraryService {
         ).changes;
       }
     })();
+    const budgetCapped = targeted || rows.length >= remainingLimit;
+    if (isBackfill && admissionToken !== null) {
+      const postToken = this.rawMetadataBackfillToken(openLibrary);
+      if (postToken !== null) {
+        const probeWasStable = tokenAfterProbe !== null
+          && this.rawMetadataBackfillPostTokenMatchesOwnWrites(
+            admissionToken,
+            tokenAfterProbe,
+          )
+          && this.rawMetadataBackfillPostTokenMatchesOwnWrites(
+            tokenAfterProbe,
+            postToken,
+          );
+        this.persistRawMetadataBackfillAdmissionState(openLibrary, {
+          token: postToken,
+          cursorAssetId: probeWasStable
+            ? rows.at(-1)?.asset_id ?? cursorAssetId
+            : null,
+          exhausted: probeWasStable && !budgetCapped,
+        });
+      }
+    }
     return {
       admitted: enqueued,
-      probed: retryRows.length + rows.length,
+      probed: retryRows + rows.length,
       // 候选填满预算说明可能还有下一批；定向探测与全局上限一律不参与判定。
-      budgetCapped: targeted || rows.length >= remainingLimit,
+      budgetCapped,
     };
   }
 
@@ -24741,6 +25199,7 @@ export class LibraryService {
     // state. The secondary scheduler must treat them as having no retryable
     // RAW work instead of issuing a schema-incompatible query on every pump.
     if (!columnsFor(openLibrary.connection, 'revision_artifacts').has('status')) return null;
+    const extensionMatch = rawImageExtensionMatchSql(openLibrary.connection, 'a');
     const row = openLibrary.connection
       .prepare(
         `SELECT MIN(j.updated_at) AS updated_at
@@ -24759,7 +25218,7 @@ export class LibraryService {
                WHERE loff.folder_id = a.linked_folder_id
                  AND loff.status = 'offline'
             )
-            AND (${RAW_IMAGE_EXTENSIONS.map(() => 'LOWER(a.relative_file_path) LIKE ?').join(' OR ')})
+            AND ${extensionMatch.sql}
             AND ${this.explicitIgnoreSql(openLibrary.connection, 'a')}
             AND NOT EXISTS (
               SELECT 1 FROM revision_artifacts complete_metadata
@@ -24780,7 +25239,7 @@ export class LibraryService {
       .get(
         openLibrary.summary.libraryId,
         RAW_IMAGE_METADATA_MAX_ATTEMPTS,
-        ...RAW_IMAGE_EXTENSIONS.map((extension) => `%${extension}`),
+        ...extensionMatch.params,
       ) as { updated_at: string | null } | undefined;
     if (!row?.updated_at) return null;
     const updatedAt = Date.parse(row.updated_at);
@@ -28090,6 +28549,7 @@ export class LibraryService {
   private async reconcileMissingArtifactFiles(
     openLibrary: OpenLibrary,
     yieldTurn?: () => Promise<void>,
+    onMissingPrimaryArtifacts?: (assetIds: string[]) => void,
   ): Promise<number> {
     // Serpent-verg.2 — lenient open (0031 §1): libraries predating
     // revision_artifacts.status skip this recovery step instead of failing
@@ -28109,7 +28569,7 @@ export class LibraryService {
 
     const rows = openLibrary.connection
       .prepare(
-        `SELECT ra.artifact_id, ra.file_path
+        `SELECT ra.artifact_id, ra.file_path, ra.kind, a.asset_id
            FROM revision_artifacts ra
            JOIN assets a ON a.current_revision_id = ra.revision_id
           WHERE ra.status = 'ready'
@@ -28117,7 +28577,12 @@ export class LibraryService {
             AND a.deleted_at IS NULL
             AND ${this.explicitIgnoreSql(openLibrary.connection, 'a')}`,
       )
-      .all() as Array<{ artifact_id: string; file_path: string }>;
+      .all() as Array<{
+        artifact_id: string;
+        file_path: string;
+        kind: string;
+        asset_id: string;
+      }>;
     if (rows.length === 0) return 0;
 
     const now = new Date().toISOString();
@@ -28186,18 +28651,33 @@ export class LibraryService {
     const batchSize = 400;
     let invalidated = 0;
     for (let offset = 0; offset < rows.length; offset += batchSize) {
-      const missingIds = rows
+      const missingRows = rows
         .slice(offset, offset + batchSize)
-        .filter((row) => !artifactFilePresent(row.file_path))
-        .map((row) => row.artifact_id);
+        .filter((row) => !artifactFilePresent(row.file_path));
+      const missingIds = missingRows.map((row) => row.artifact_id);
       if (missingIds.length > 0) {
-        openLibrary.connection.prepare(
+        const changed = openLibrary.connection.prepare(
           `UPDATE revision_artifacts
               SET invalidated_at = ?
             WHERE artifact_id IN (${sqliteInPlaceholders(missingIds)})
               AND invalidated_at IS NULL`,
-        ).run(now, ...missingIds);
-        invalidated += missingIds.length;
+        ).run(now, ...missingIds).changes;
+        invalidated += changed;
+        const missingPrimaryAssetIds = [...new Set(
+          missingRows
+            .filter((row) => row.kind === 'thumbnail' || row.kind === 'video_poster')
+            .map((row) => row.asset_id),
+        )];
+        if (changed > 0 && missingPrimaryAssetIds.length > 0) {
+          try {
+            onMissingPrimaryArtifacts?.(missingPrimaryAssetIds);
+          } catch (error) {
+            this.diagnose('artifact.missing-primary-queue-notify', error, {
+              libraryId: openLibrary.summary.libraryId,
+              affectedAssetCount: missingPrimaryAssetIds.length,
+            });
+          }
+        }
       }
       if (yieldTurn && offset + batchSize < rows.length) {
         await yieldTurn();
@@ -28824,7 +29304,11 @@ export class LibraryService {
    */
   async runOpenBackgroundReconciliation(
     libraryId: string,
-    options?: { admissionYield?: () => Promise<void> },
+    options?: {
+      admissionYield?: () => Promise<void>;
+      /** Queue only primary previews invalidated by the bounded artifact scan. */
+      onMissingPrimaryArtifacts?: (assetIds: string[]) => void;
+    },
   ): Promise<void> {
     const openLibrary = this.openById.get(libraryId);
     if (!openLibrary || openLibrary.readOnly) return;
@@ -28921,7 +29405,11 @@ export class LibraryService {
         // with the first browse/viewer requests.
         await this.yieldReconciliation(task);
         this.assertReconciliationActive(task);
-        await this.reconcileMissingArtifactFiles(openLibrary, () => this.yieldReconciliation(task));
+        await this.reconcileMissingArtifactFiles(
+          openLibrary,
+          () => this.yieldReconciliation(task),
+          options?.onMissingPrimaryArtifacts,
+        );
         markStage('artifact-reconciliation');
         this.assertReconciliationActive(task);
         await this.reconcileOrphanArtifactFiles(openLibrary, () => this.yieldReconciliation(task));
@@ -29990,9 +30478,7 @@ export class LibraryService {
     const selectedSql = selectedIds.length > 0
       ? `AND a.asset_id IN (${selectedIds.map(() => '?').join(',')})`
       : '';
-    const rawExtensionSql = RAW_IMAGE_EXTENSIONS
-      .map(() => 'LOWER(a.relative_file_path) LIKE ?')
-      .join(' OR ');
+    const extensionMatch = rawImageExtensionMatchSql(openLibrary.connection, 'a');
     const limitSql = options.limit === undefined ? '' : 'LIMIT ?';
     const rows = openLibrary.connection
       .prepare(
@@ -30012,7 +30498,7 @@ export class LibraryService {
               OR ra.error_code = 'OIIO_GENERATION_FAILED'
             )
             ${selectedSql}
-            AND (${rawExtensionSql})
+            AND ${extensionMatch.sql}
             AND NOT EXISTS (
               SELECT 1
                 FROM jobs active
@@ -30026,7 +30512,7 @@ export class LibraryService {
       )
       .all(
         ...selectedIds,
-        ...RAW_IMAGE_EXTENSIONS.map((extension) => `%${extension}`),
+        ...extensionMatch.params,
         ...(options.limit === undefined ? [] : [options.limit]),
       ) as Array<{ artifact_id: string; relative_file_path: string }>;
     const rawRows = rows.filter((row) => isRawImageExtension(row.relative_file_path));
@@ -30216,16 +30702,20 @@ export class LibraryService {
 
     // Existing libraries can contain durable thumbnail rows created before
     // the source-direct admission policy was introduced. Claim-time guards
-    // keep those rows safe, but consuming them one by one still turns a cold
-    // open into thousands of pointless SQLite turns. Prune the queued rows in
-    // bounded-pump SQL before native work starts; this is idempotent and does
-    // not touch ready artifacts or source files.
+    // keep those rows safe. An explicit visible/reconciliation asset scope
+    // can additionally prune its queued rows before native work starts; a
+    // queue-wide pre-scan is deliberately avoided because LIMIT would not
+    // bound the JOIN work over a large history.
     if (jobKinds.some((kind) => primaryPreviewKinds.has(kind))) {
       const now = new Date().toISOString();
       const sourceDirectExtensionSql = ['jpg', 'jpeg', 'jfif', 'png', 'webp', 'gif']
         .map((extension) => `LOWER(source_asset.relative_file_path) LIKE '%.${extension}'`)
         .join(' OR ');
-      if (processArtifactColumns.has('width') && processArtifactColumns.has('height')) {
+      if (
+        pumpAssetIds !== undefined
+        && processArtifactColumns.has('width')
+        && processArtifactColumns.has('height')
+      ) {
         openLibrary.connection
           .prepare(
             `UPDATE jobs
@@ -30264,40 +30754,102 @@ export class LibraryService {
           )
           .run(now, libraryId, ...(pumpAssetIds ?? []));
       }
-      const readyJobKinds = [
-        ...(jobKinds.includes('generate_thumbnail') ? ['generate_thumbnail'] : []),
-        ...(jobKinds.includes('generate_video_poster') ? ['generate_video_poster'] : []),
+      // Use the same media-aware policy as claim-time admission for both
+      // thumbnail and video-poster jobs. `generate_thumbnail` produces
+      // `video_poster` for videos; ready rows also need the current revision,
+      // a live artifact row, and a generator family that is still current.
+      // Imported normalization jobs, failed rows, and running jobs are left
+      // to their existing paths.
+      const readyArtifactJobKinds: ArtifactJobKind[] = [
+        ...(jobKinds.includes('generate_thumbnail') ? ['generate_thumbnail' as const] : []),
+        ...(jobKinds.includes('generate_video_poster') ? ['generate_video_poster' as const] : []),
       ];
-      const readyArtifactKinds = [
-        ...(jobKinds.includes('generate_thumbnail') ? ['thumbnail'] : []),
-        ...(jobKinds.includes('generate_video_poster') ? ['video_poster'] : []),
-      ];
-      if (readyJobKinds.length > 0) {
-        openLibrary.connection
+      if (readyArtifactJobKinds.length > 0 && pumpAssetIds !== undefined) {
+        // Claim pruning is intentionally limited to an explicit asset scope.
+        // A queue-wide JOIN over a large history would still scan/sort that
+        // history before LIMIT can help. The normal unscoped claim below is
+        // already bounded by maxJobs and re-checks the same artifact policy
+        // before decoder admission, so it converges ready rows one at a time
+        // without a repeated queue-wide prune scan.
+        const readyArtifactCandidateLimit = Math.max(
+          1,
+          Math.min(100, Math.trunc(options.maxJobs ?? workerMediaDecodeWaveSize())),
+        );
+        const readyArtifactJobs = openLibrary.connection
           .prepare(
-            `UPDATE jobs
-                SET status = 'cancelled', error_code = 'ARTIFACT_READY', updated_at = ?
-              WHERE library_id = ?
-                AND status = 'queued'
-                AND kind IN (${readyJobKinds.map(() => '?').join(',')})
-                AND COALESCE(error_code, '') <> '${IMPORTED_THUMBNAIL_NORMALIZATION_JOB}'
-                ${assetClause}
-                AND EXISTS (
-                  SELECT 1
-                    FROM revision_artifacts ready_artifact
-                   WHERE ready_artifact.revision_id = jobs.revision_id
-                     AND ready_artifact.kind IN (${readyArtifactKinds.map(() => '?').join(',')})
-                     AND ready_artifact.status = 'ready'
-                     AND ready_artifact.invalidated_at IS NULL
-                )`,
+            `SELECT jobs.job_id, jobs.kind AS job_kind,
+                    ready_asset.relative_file_path, ready_artifact.kind AS artifact_kind,
+                    ready_artifact.generator_version,
+                    jobs.priority, jobs.created_at
+               FROM jobs INDEXED BY jobs_asset_kind_status
+               JOIN assets ready_asset
+                 ON ready_asset.asset_id = jobs.asset_id
+                AND ready_asset.current_revision_id = jobs.revision_id
+               JOIN revision_artifacts ready_artifact
+                 ON ready_artifact.revision_id = jobs.revision_id
+                AND ready_artifact.kind IN ('thumbnail', 'video_poster')
+                AND ready_artifact.status = 'ready'
+                AND ready_artifact.invalidated_at IS NULL
+              WHERE jobs.library_id = ?
+                AND jobs.status = 'queued'
+                AND jobs.kind IN (${readyArtifactJobKinds.map(() => '?').join(',')})
+                AND COALESCE(jobs.error_code, '') <> '${IMPORTED_THUMBNAIL_NORMALIZATION_JOB}'
+                ${pumpAssetIds === undefined
+                  ? ''
+                  : pumpAssetIds.length === 0
+                    ? 'AND 1 = 0'
+                    : `AND jobs.asset_id IN (${pumpAssetIds.map(() => '?').join(',')})`}
+              ORDER BY jobs.priority DESC, jobs.created_at, jobs.job_id
+              LIMIT ?`,
           )
-          .run(
-            now,
+          .all(
             libraryId,
-            ...readyJobKinds,
+            ...readyArtifactJobKinds,
             ...(pumpAssetIds ?? []),
-            ...readyArtifactKinds,
-          );
+            readyArtifactCandidateLimit,
+          ) as Array<{
+            job_id: string;
+            job_kind: string;
+            relative_file_path: string;
+            artifact_kind: string;
+            generator_version: string;
+            priority: number;
+            created_at: string;
+          }>;
+        const readyCurrentJobIds = [...new Set(
+          readyArtifactJobs
+            .filter((row) => {
+              const mediaType = LibraryService.detectMediaType(row.relative_file_path);
+              const artifactKind = artifactKindForJob(
+                row.job_kind as ArtifactJobKind,
+                mediaType,
+              );
+              return artifactKind === row.artifact_kind
+                && (row.artifact_kind === 'thumbnail' || row.artifact_kind === 'video_poster')
+                && this.primaryArtifactGeneratorIsCurrent(
+                  row.relative_file_path,
+                  row.artifact_kind,
+                  row.generator_version,
+                );
+            })
+            .map((row) => row.job_id),
+        )];
+        if (readyCurrentJobIds.length > 0) {
+          openLibrary.connection.transaction(() => {
+            for (let offset = 0; offset < readyCurrentJobIds.length; offset += 500) {
+              const batch = readyCurrentJobIds.slice(offset, offset + 500);
+              openLibrary.connection
+                .prepare(
+                  `UPDATE jobs
+                      SET status = 'cancelled', error_code = 'ARTIFACT_READY', updated_at = ?
+                    WHERE library_id = ?
+                      AND status = 'queued'
+                      AND job_id IN (${batch.map(() => '?').join(',')})`,
+                )
+                .run(now, libraryId, ...batch);
+            }
+          })();
+        }
       }
     }
     // The visible wave is a latency budget, not a general FIFO pump. Video
@@ -30541,6 +31093,15 @@ export class LibraryService {
               generator_version: string;
             } | undefined
         : undefined;
+      const currentPrimaryArtifactIsCurrent = currentArtifact
+        && currentArtifact.status === 'ready'
+        && (claimArtifactKind === 'thumbnail' || claimArtifactKind === 'video_poster')
+        ? this.primaryArtifactGeneratorIsCurrent(
+          claimAsset?.relative_file_path ?? '',
+          claimArtifactKind,
+          currentArtifact.generator_version,
+        )
+        : true;
       const headerOnlyImageMetadata = job.kind === 'extract_metadata'
         && claimMediaType === 'image'
         && currentArtifact?.status === 'ready'
@@ -30572,7 +31133,9 @@ export class LibraryService {
         explicitRequest: job.error_code === EXPLICIT_PROXY_FALLBACK_MARKER,
         readyArtifact: isImportedThumbnailNormalization
           ? false
-          : currentArtifact?.status === 'ready' && !headerOnlyImageMetadata,
+          : currentArtifact?.status === 'ready'
+            && !headerOnlyImageMetadata
+            && currentPrimaryArtifactIsCurrent,
         failedArtifact: currentArtifact?.status === 'failed',
         retryFailed: true,
         activeJob: siblingJob !== undefined,
@@ -45167,6 +45730,7 @@ export class LibraryService {
       importId,
       phase,
       cancelable: false,
+      copiesFiles: false,
       filesProcessed,
       totalFiles,
       bytesProcessed,

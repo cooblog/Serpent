@@ -171,6 +171,8 @@ export interface MediaJobStatus {
   paused: number;
   cancelled: number;
   jobs: MediaJob[];
+  nextCursor?: { createdAt: string; jobId: string } | null;
+  hasMore?: boolean;
 }
 
 export interface AiJobStatus {
@@ -726,7 +728,20 @@ export interface SerpentLibraryApi {
   openFolderWith(input: { libraryId: string; folderId: string }): Promise<LibraryApiResult<void>>;
   copyFolderPath(input: { libraryId: string; folderId: string }): Promise<LibraryApiResult<void>>;
   retryArtifact(input: { libraryId: string; assetId: string; kind: 'thumbnail' | 'webm_proxy' | 'audio_proxy' }): Promise<LibraryApiResult<{ assetId: string; kind: string }>>;
-  listMediaJobs(input: { libraryId: string; summaryOnly?: boolean }): Promise<LibraryApiResult<MediaJobStatus>>;
+  listMediaJobs(input: {
+    libraryId: string;
+    summaryOnly?: boolean;
+    cursor?: { createdAt: string; jobId: string };
+    limit?: number;
+  }): Promise<LibraryApiResult<MediaJobStatus>>;
+  getMediaJobSummary(input: { libraryId: string }): Promise<LibraryApiResult<{
+    queued: number;
+    running: number;
+    succeeded: number;
+    failed: number;
+    paused: number;
+    cancelled: number;
+  }>>;
   pauseMediaJobs(input: { libraryId: string; jobIds?: string[] }): Promise<LibraryApiResult<{ pausedCount: number }>>;
   resumeMediaJobs(input: { libraryId: string; jobIds?: string[] }): Promise<LibraryApiResult<{ resumedCount: number }>>;
   cancelMediaJobs(input: { libraryId: string; jobIds?: string[] }): Promise<LibraryApiResult<{ cancelledCount: number }>>;

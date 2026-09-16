@@ -2254,7 +2254,11 @@ describe('EXR/TGA (oiiotool)', () => {
     )).toHaveLength(50);
     // The background backfill must not scan/admit another batch while its
     // bounded metadata lane is already full.
-    expect(service.enqueueRawImageMetadataBackfill(created.libraryId, 50)).toBe(0);
+    expect(service.enqueueRawImageMetadataBackfill(created.libraryId, 50)).toEqual({
+      admitted: 0,
+      probed: 0,
+      budgetCapped: true,
+    });
     expect(service.listMediaJobs(created.libraryId).jobs.filter(
       (job) => job.kind === 'extract_metadata',
     )).toHaveLength(50);
@@ -2263,7 +2267,11 @@ describe('EXR/TGA (oiiotool)', () => {
       jobKinds: ['extract_metadata'],
     });
 
-    expect(service.enqueueRawImageMetadataBackfill(created.libraryId, 50)).toBe(10);
+    expect(service.enqueueRawImageMetadataBackfill(created.libraryId, 50)).toEqual({
+      admitted: 10,
+      probed: 10,
+      budgetCapped: false,
+    });
     await service.processThumbnailQueue(created.libraryId, {
       maxJobs: 100,
       jobKinds: ['extract_metadata'],
@@ -2272,7 +2280,11 @@ describe('EXR/TGA (oiiotool)', () => {
       libraryId: created.libraryId,
       assetId: asset.assetId,
     }).metadataCompleteness === 'complete')).toBe(true);
-    expect(service.enqueueRawImageMetadataBackfill(created.libraryId, 50)).toBe(0);
+    expect(service.enqueueRawImageMetadataBackfill(created.libraryId, 50)).toEqual({
+      admitted: 0,
+      probed: 0,
+      budgetCapped: false,
+    });
     service.closeAll();
   });
 
@@ -2307,13 +2319,19 @@ describe('EXR/TGA (oiiotool)', () => {
       errorCode: 'RAW_METADATA_EXTRACTION_FAILED',
       attemptCount: 1,
     });
-    expect(service.enqueueRawImageMetadataBackfill(created.libraryId)).toBe(0);
+    expect(service.enqueueRawImageMetadataBackfill(created.libraryId)).toEqual({
+      admitted: 0,
+      probed: 0,
+      budgetCapped: false,
+    });
 
     const db = assertDb(created.libraryPath);
     db.prepare('UPDATE jobs SET updated_at = ? WHERE job_id = ?')
       .run(new Date(Date.now() - 31_000).toISOString(), failedJob.jobId);
     db.close();
-    expect(service.enqueueRawImageMetadataBackfill(created.libraryId)).toBe(1);
+    // Serpent-288cd9: due RAW retries are admitted by the idle-only requeue
+    // path, not by the exhausted catalog cursor.
+    expect(service.requeueRawImageMetadataBackfillRetries(created.libraryId)).toBe(1);
     await service.processThumbnailQueue(created.libraryId, {
       maxJobs: 1,
       jobKinds: ['extract_metadata'],

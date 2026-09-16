@@ -1143,6 +1143,11 @@ const mediaJobsWorkerResultSchema = z.strictObject({
   failed: z.number().int().nonnegative(),
   paused: z.number().int().nonnegative(),
   cancelled: z.number().int().nonnegative(),
+  nextCursor: z.strictObject({
+    createdAt: nonBlankString,
+    jobId: nonBlankString,
+  }).nullable().optional(),
+  hasMore: z.boolean().optional(),
   jobs: z.array(mediaJobSchema),
 });
 

@@ -1333,6 +1333,20 @@ describe('renderer request protocol', () => {
       summaryOnly: true,
     })).toMatchObject({ type: 'media.list-jobs.request', summaryOnly: true });
     expect(parseRendererRequest({
+      type: 'media.job-summary.request',
+      libraryId: 'library-01',
+    })).toMatchObject({ type: 'media.job-summary.request' });
+    expect(parseRendererRequest({
+      type: 'media.list-jobs.request',
+      libraryId: 'library-01',
+      cursor: { createdAt: '2026-09-16T12:00:00.000Z', jobId: 'job-01' },
+      limit: 100,
+    })).toMatchObject({
+      type: 'media.list-jobs.request',
+      cursor: { createdAt: '2026-09-16T12:00:00.000Z', jobId: 'job-01' },
+      limit: 100,
+    });
+    expect(parseRendererRequest({
       type: 'plugin.list-jobs.request',
       libraryId: 'library-01',
     })).toMatchObject({ type: 'plugin.list-jobs.request' });
@@ -1488,6 +1502,8 @@ describe('preview response protocol', () => {
       failed: 0,
       paused: 0,
       cancelled: 0,
+      nextCursor: null,
+      hasMore: false,
       jobs: [{
         jobId: 'job-01',
         assetId: 'asset-01',

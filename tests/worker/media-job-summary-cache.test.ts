@@ -111,4 +111,86 @@ describe('media job status summary cache (Serpent-e97c00)', () => {
     // And the cached value must still match what SQL reports.
     expect(counts(service, created.libraryId, true)).toEqual(counts(service, created.libraryId, false));
   }, 20_000);
+
+  it('reads status counts from the maintained table instead of grouping job history', () => {
+    const root = temporaryRoot();
+    const service = newService();
+    const created = service.createLibrary({
+      displayName: 'Media summary table lookup',
+      selectedParentPath: root,
+    });
+    const database = new Database(path.join(created.libraryPath, '.serpent', 'library.db'));
+    try {
+      const now = new Date().toISOString();
+      database.prepare(
+        `INSERT INTO jobs (job_id, library_id, asset_id, revision_id, kind, status, priority,
+                           progress, attempt_count, created_at, updated_at)
+         VALUES (?, ?, NULL, NULL, 'generate_thumbnail', 'queued', 0, 0.0, 0, ?, ?)`,
+      ).run('job-table-1', created.libraryId, now, now);
+      const plan = database.prepare(
+        `EXPLAIN QUERY PLAN
+         SELECT status, count FROM media_job_status_counts WHERE library_id = ?`,
+      ).all(created.libraryId) as Array<{ detail: string }>;
+      const details = plan.map((step) => step.detail).join('\n');
+      expect(details.toLowerCase()).toContain('media_job_status_counts');
+      expect(details).not.toContain('SCAN jobs');
+    } finally {
+      database.close();
+    }
+
+    expect(counts(service, created.libraryId, true).queued).toBe(1);
+  });
+
+  it('pages the recent media job list with a created_at/job_id cursor', () => {
+    const root = temporaryRoot();
+    const service = newService();
+    const created = service.createLibrary({
+      displayName: 'Media job cursor pages',
+      selectedParentPath: root,
+    });
+    const database = new Database(path.join(created.libraryPath, '.serpent', 'library.db'));
+    try {
+      for (const [index, stamp] of [
+        ['job-c', '2026-09-16T12:00:03.000Z'],
+        ['job-b', '2026-09-16T12:00:02.000Z'],
+        ['job-a', '2026-09-16T12:00:01.000Z'],
+      ] as const) {
+        database.prepare(
+          `INSERT INTO jobs (job_id, library_id, asset_id, revision_id, kind, status, priority,
+                             progress, attempt_count, created_at, updated_at)
+           VALUES (?, ?, NULL, NULL, 'generate_thumbnail', 'queued', 0, 0.0, 0, ?, ?)`,
+        ).run(index, created.libraryId, stamp, stamp);
+      }
+      const plan = database.prepare(
+        `EXPLAIN QUERY PLAN
+         SELECT j.job_id
+           FROM jobs j
+          WHERE j.library_id = ?
+          ORDER BY j.created_at DESC, j.job_id DESC
+          LIMIT 3`,
+      ).all(created.libraryId) as Array<{ detail: string }>;
+      const details = plan.map((step) => step.detail).join('\n');
+      expect(details.toLowerCase()).toContain('jobs_library_created_desc');
+    } finally {
+      database.close();
+    }
+
+    const first = service.listMediaJobs(created.libraryId, { limit: 2 });
+    expect(first.jobs.map((job) => job.jobId)).toEqual(['job-c', 'job-b']);
+    expect(first.hasMore).toBe(true);
+    expect(first.nextCursor).toEqual({
+      createdAt: '2026-09-16T12:00:02.000Z',
+      jobId: 'job-b',
+    });
+
+    const second = service.listMediaJobs(created.libraryId, {
+      limit: 2,
+      cursor: first.nextCursor ?? undefined,
+    });
+    expect(second.jobs.map((job) => job.jobId)).toEqual(['job-a']);
+    expect(second.hasMore).toBe(false);
+    expect(second.nextCursor).toBeNull();
+    expect(first.queued).toBe(3);
+    expect(second.queued).toBe(3);
+  });
 });

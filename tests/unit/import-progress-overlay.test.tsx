@@ -71,4 +71,32 @@ describe("ImportProgressOverlay", () => {
     expect(html).toContain("取消导入");
     expect(html.match(/disabled/g)?.length).toBeGreaterThanOrEqual(2);
   });
+
+  it("labels linked-folder indexing as processing, not copying", () => {
+    const html = renderToStaticMarkup(
+      createElement(LocaleProvider, {
+        initialPreference: "zh-CN",
+        children: createElement(ImportProgressOverlay, {
+          transferKind: "import",
+          transferName: "",
+          onCancel: vi.fn(),
+          progress: {
+            type: "import.progress",
+            importId: "linked-1",
+            phase: "copy",
+            cancelable: false,
+            copiesFiles: false,
+            filesProcessed: 2,
+            totalFiles: 8,
+            bytesProcessed: 1024,
+            totalBytes: 8192,
+          },
+        }),
+      }),
+    );
+    expect(html).toContain("处理中");
+    expect(html).not.toContain("复制中");
+    expect(html).not.toContain("取消导入");
+    expect(html).not.toContain("停止导入");
+  });
 });

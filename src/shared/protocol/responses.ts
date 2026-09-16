@@ -312,6 +312,12 @@ export const importProgressEventSchema = z.strictObject({
   phase: z.enum(['validate', 'copy', 'extract', 'verify', 'open', 'complete', 'failed', 'cancelled']),
   /** True when the import can be cancelled between batches. */
   cancelable: z.boolean().optional(),
+  /**
+   * False when files stay in place (linked-folder index). Omitted or true means
+   * bytes are actually being copied. The shared `copy` phase is reused for
+   * counted progress either way.
+   */
+  copiesFiles: z.boolean().optional(),
   filesProcessed: z.number().int().nonnegative(),
   totalFiles: z.number().int().nonnegative(),
   bytesProcessed: z.number().int().nonnegative(),
@@ -600,9 +606,20 @@ export type TagOperationSkip = z.infer<typeof tagOperationSkipSchema>;
 const assetOperationSuccessSchemas = [
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('media.job-summary.read'),
+    libraryId: nonBlankString,
+    ...mediaJobCountsShape,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('media.jobs.listed'),
     libraryId: nonBlankString,
     ...mediaJobCountsShape,
+    nextCursor: z.strictObject({
+      createdAt: nonBlankString,
+      jobId: nonBlankString,
+    }).nullable(),
+    hasMore: z.boolean(),
     jobs: z.array(mediaJobSchema),
   }),
   z.strictObject({

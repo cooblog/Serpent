@@ -10,10 +10,10 @@ const RAW_METADATA_BACKFILL_MIN_INTERVAL_MS = 2_000;
  * - **节流**：两次探测之间至少间隔 MIN_INTERVAL，避免密集重扫；
  * - **扫完（exhausted）**：探测没有用满预算，说明当前没有待处理的 RAW 资产。
  *
- * 扫完之后不再靠定时器重扫，而是等一个**有效性 token 变化**再重扫。token 由库变更序号
- * 与忽略规则序号组成：新增资产、revision 变化、任务 retry（都 bump
- * `library_change_sequence`）与忽略规则变化（bump `browse_change_sequence`）都会让它变化，
- * 因此四类失效都能精确触发，不需要额外的写路径回调。
+ * 扫完之后不再靠定时器重扫，而是等一个**有效性 token 变化**再重扫。当前 token
+ * 使用不包含 jobs/artifacts 后台写入的 `browse_change_sequence`：新增资产、revision
+ * 变化和忽略规则变化会令它变化；到期的 RAW failed retry 走独立的 retry-only 有界
+ * requeue 路径，不会把 catalog cursor 重新置空。
  *
  * 全局准入上限（已有 queued/running/paused 任务占满预算）导致的 0 结果**不算扫完**：
  * 此时 `budgetCapped` 为真，门控继续按节流重试。
@@ -30,6 +30,10 @@ export type RawMetadataBackfillProbeOutcome = {
 type LibraryAdmissionState = {
   nextAttemptAtMs: number;
   /** 上一次判定「已扫完」时的有效性 token；token 不变就不再重扫。 */
+  exhaustedToken: string | null;
+};
+
+export type RawMetadataBackfillPersistedGateState = {
   exhaustedToken: string | null;
 };
 
@@ -63,6 +67,22 @@ export class RawMetadataBackfillAdmissionGate {
       return false;
     }
     return true;
+  }
+
+  hasState(libraryId: string): boolean {
+    return this.stateByLibrary.has(libraryId);
+  }
+
+  /** Rehydrate only the durable exhaustion decision after Worker restart. */
+  restore(
+    libraryId: string,
+    persisted: RawMetadataBackfillPersistedGateState,
+    now = Date.now(),
+  ): void {
+    this.stateByLibrary.set(libraryId, {
+      nextAttemptAtMs: now,
+      exhaustedToken: persisted.exhaustedToken,
+    });
   }
 
   /** 记录一次探测：总是重新武装节流，并在适用时标记「已扫完」。 */

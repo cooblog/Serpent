@@ -75,4 +75,26 @@ describe("import overlay copy", () => {
       key: "progress.importingStarted",
     });
   });
+
+  it("shows counted processing progress for linked-folder indexing", () => {
+    expect(
+      importOverlayDetail(
+        progress({ copiesFiles: false }),
+        (bytes) => `${bytes}B`,
+      ),
+    ).toEqual({
+      key: "progress.processingFiles",
+      params: {
+        processed: 3,
+        total: 10,
+        bytesProcessed: "1024B",
+        bytesTotal: "4096B",
+      },
+    });
+    expect(
+      importOverlayDetail(progress({ copiesFiles: false, totalFiles: 0 }), () => ""),
+    ).toEqual({
+      key: "progress.processing",
+    });
+  });
 });

@@ -31,16 +31,18 @@
 
 | 工单 | 交付边界 | 关系 / 状态 |
 | --- | --- | --- |
-| `Serpent-26f22b` | 打开对账消除逐文件探针放大并补齐阶段指标 | 部分实现；开库仍约 8 秒全量枚举 |
-| `Serpent-e97c00` | 任务状态事件化与有界 single-flight 轮询 | 部分实现：`JobStatusCoordinator` 已 single-flight/降频；维护期状态查询已获有界准入；Worker 事件作为唯一新鲜度来源及任务面板验收仍未完成 |
-| `Serpent-1de919` | ready artifact 与冗余派生任务队列收敛 | PERF2-09 前置；未开始 |
+| `Serpent-26f22b` | 打开对账消除逐文件探针放大并补齐阶段指标 | 部分实现：复用 discovery snapshot、排除仍被引用的 artifact 路径、已知文件 change 事件定向 stat；完整开库仍约 8 秒全量 discovery，大目录/变更类型覆盖未收口 |
+| `Serpent-e97c00` | 任务状态事件化与有界 single-flight 轮询 | 部分实现：协调器 single-flight/降频、维护期只读状态有界准入；2026-09-16 增加 v53 计数表、独立 `media.job-summary` 与 list-jobs 游标分页，列表 EXPLAIN 命中 `jobs_library_created_desc`；availability 9 files / 222 passed / 1 skipped。忽略规则批量修正、面板 E2E 和 2000 事件现场回放仍未完成；详见[分页记录](2026-09-16-media-job-summary-pagination-development-log.md) |
+| `Serpent-1de919` | ready artifact 与冗余派生任务队列收敛 | 部分实现（2026-09-16）：claim-prune 按当前 revision、artifact 用途和 generator family 收敛 queued job；覆盖过期生成器重做、视频 poster 对齐，以及启动时缺失主预览在对账后重新入队。缺失预览 exact IDs 以每批最多 100 个处理；普通长队列在每个 bounded wave 边界让出 ownership，优先 drain exact scope 后恢复原队列；可见波次抢占时未完成批次回放。真实 Worker 调度回归 1 passed，`thumbnails.test.ts` 77/77，library-availability 9 files / 216 passed / 1 skipped。完整重启、队列重复入队及 20k 吞吐测量未完成；详见[开发记录](2026-09-16-ready-artifact-queue-prune-development-log.md)与[缺失预览记录](2026-09-16-missing-artifact-requeue-development-log.md) |
 | `Serpent-be29a9` | 对账时间片归还后台许可，消除预览路径优先级反转 | 部分实现：维护批次安全点 yield、维护时可见前台准入及最多 3 个只读状态快照并行；可恢复 continuation 与大量目录扫描 profile 未完成 |
-| `Serpent-8ee170` | thumbnail 完成后的 drag-cache 预热有界合并 | 独立小边界；未开始 |
-| `Serpent-217028` | 2,000 后台任务下 navigation span 与对照回放 | 已实测最多约 4,050 队列忙碌导航及当前 50 queued 导航；当前环境队列远低于目标，运行/暂停同 scope A/B、navigationId 与主进程后处理 span 尚缺 |
-| `Serpent-288cd9` | RAW metadata 空结果扫描游标化 | 已加有界准入/限频；exhausted cursor 与失效边界尚未实现 |
-| `Serpent-7ac453` | foreground epoch 与后台媒体自适应降载 | 依赖 `Serpent-217028`；未开始 |
+| `Serpent-8ee170` | 从浏览关键路径移除 drag prime 并取消全结果预热 | 已关闭：browse 不再 await drag-prime、删除全结果后台预热及完成事件重解析；用户复现路径文件夹总耗时 39,791 ms → 6,336–6,456 ms，可见缩略图 34,589 ms → 933–970 ms，用户确认有明显改善。详见工单交付评论 |
+| `Serpent-217028` | 2,000 后台任务下 navigation span 与对照回放 | 导航判据、navigationId 串接及 Main 后处理 span 已实现；隔离 20k mixed fixture 上约 2.3k queued/1 running 与 2.5k paused/0 running 同 scope A/B 未复现分钟级差异（导航内容 p95 332/242 ms，可见图全解码 p95 1,969/1,883 ms）。真实 9k 混合队列吞吐、实际运行/暂停差异、NAS 冷缓存与 Main/native 媒体进程 profile 仍缺 |
+| `Serpent-288cd9` | RAW metadata 空结果扫描游标化 | 部分实现（2026-09-16）：v51 持久化 token、`asset_id` keyset cursor 与 exhausted；v54 `normalized_extension` 部分索引，候选改为 IN；raw admission 5 passed、availability 9 files / 224 passed / 1 skipped。dual time budget、真实 20k A/B 与完整重启旅程仍未完成；详见[开发记录](2026-09-16-raw-metadata-cursor-development-log.md) |
+| `Serpent-7ac453` | foreground epoch 与后台媒体自适应降载 | 等待 `Serpent-217028` 真实混合任务与运行/暂停证据；尚未开始，当前合成缩略图队列 A/B 不支持直接调整生产并发 |
 
 这些工单只细化已实测的瓶颈，不取代 PERF2-02/03/04/08 的读隔离、首屏和媒体缓存直达范围。此前约 4,000 个 queued task 的 profile 中，文件夹目标内容 p95 约 304 ms、可见图片全解码 p95 约 2.09 秒；本轮真实库队列只有 0–50 queued，四次切换内容 p95 301 ms、可见图全解码 p95 138 ms，不是 2,000 项验收。维护期只读 status snapshot 的 scheduler wait p95 已从约 12.4–12.6 秒降到 0.13–0.24 ms，navigation summary wait 从 12.39 秒降到 44 ms；两组队列状态和扫描阶段不同，不得用于推导后台吞吐变化。既有 2,000–2,600 项/分钟观测不是严格 A/B；用户报告的约 9,000 项吞吐及运行/暂停同 scope 对照仍由 `Serpent-217028` 补齐。
+
+2026-09-16 另完成任务摘要 O(1) 计数表、独立 `media.job-summary` 与 list-jobs 游标分页；忽略规则批量修正、面板 E2E、2000 事件现场回放和真实 9k 混合队列仍未完成。
 
 ## 模型、所有权与串行规则
 

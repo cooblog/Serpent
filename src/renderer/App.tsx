@@ -290,6 +290,13 @@ import {
   selectPluginJobActivity,
 } from "./plugin-job-activity";
 import { JobStatusCoordinator } from "./job-status-coordinator";
+import {
+  appendMediaJobListPage,
+  applyMediaJobSummary,
+  replaceMediaJobListPage,
+  type MediaJobSummaryCounts,
+} from "./media-job-status-state";
+import { MEDIA_JOB_LIST_PAGE_SIZE } from "../shared/media-jobs";
 import { useScrollbarActivity } from "./use-scrollbar-activity";
 import { splitFilenameForDisplay } from "./filename-display";
 
@@ -2312,6 +2319,7 @@ function AppInner() {
   >(new Map());
   const [mediaJobsOpen, setMediaJobsOpen] = useState(false);
   const mediaJobsOpenRef = useRef(false);
+  const loadMediaJobsRef = useRef<(quiet?: boolean) => Promise<void>>(async () => undefined);
   const [mediaJobs, setMediaJobs] = useState<MediaJobStatus | null>(null);
   const [aiJobs, setAiJobs] = useState<AiJobStatus | null>(null);
   const [pluginJobs, setPluginJobs] = useState<PluginJobStatus | null>(null);
@@ -2335,10 +2343,9 @@ function AppInner() {
     return mediaActive || aiActive || pluginJobsActive;
   }, [aiAnalyzing, aiJobs, mediaJobs, pluginJobsActive]);
   const openMediaJobs = useCallback(() => {
-    // Matches the previous behaviour: opening the panel shows its loading state
-    // until the coordinator's immediate refresh settles.
     setMediaJobsLoading(true);
     setMediaJobsOpen(true);
+    void loadMediaJobsRef.current(true);
   }, []);
   const hidePluginJobActivity = useCallback((jobId: string) => {
     setHiddenPluginJobActivityId(jobId);
@@ -11227,16 +11234,38 @@ function AppInner() {
     if (!api || !library) return;
     if (!quiet) setMediaJobsLoading(true);
     try {
-      const result = await api.listMediaJobs({ libraryId: library.libraryId });
+      const result = await api.listMediaJobs({
+        libraryId: library.libraryId,
+        limit: MEDIA_JOB_LIST_PAGE_SIZE,
+      });
       if (!result.ok) {
         if (!quiet) setError(toMessage(result.error, t("toast.mediaJobsLoadFailed"), locale));
         return;
       }
-      setMediaJobs(result.value);
+      setMediaJobs(replaceMediaJobListPage(result.value));
     } catch {
       if (!quiet) setError(t("toast.mediaJobsLoadNoResponse"));
     } finally {
       if (!quiet) setMediaJobsLoading(false);
+    }
+  }
+  loadMediaJobsRef.current = loadMediaJobs;
+
+  async function loadMoreMediaJobs() {
+    if (!api || !library || !mediaJobs?.nextCursor || mediaJobs.hasMore !== true) return;
+    try {
+      const result = await api.listMediaJobs({
+        libraryId: library.libraryId,
+        cursor: mediaJobs.nextCursor,
+        limit: MEDIA_JOB_LIST_PAGE_SIZE,
+      });
+      if (!result.ok) {
+        setError(toMessage(result.error, t("toast.mediaJobsLoadFailed"), locale));
+        return;
+      }
+      setMediaJobs((current) => appendMediaJobListPage(current, result.value));
+    } catch {
+      setError(t("toast.mediaJobsLoadNoResponse"));
     }
   }
 
@@ -11361,17 +11390,14 @@ function AppInner() {
     // a Worker blocked for 30 seconds can therefore not accumulate 30 requests.
     if (!api || !library) return;
     const libraryId = library.libraryId;
-    const mediaActive = (value: MediaJobStatus | null) =>
+    const mediaActive = (value: { queued?: number; running?: number } | null) =>
       (value?.queued ?? 0) + (value?.running ?? 0) > 0;
     const aiActive = (value: AiJobStatus | null) =>
       (value?.queued ?? 0) + (value?.running ?? 0) > 0;
     const coordinator = new JobStatusCoordinator({
       probes: {
         media: async () => {
-          const result = await api.listMediaJobs({
-            libraryId,
-            summaryOnly: !mediaJobsOpenRef.current,
-          });
+          const result = await api.getMediaJobSummary({ libraryId });
           return result.ok ? { value: result.value, active: mediaActive(result.value) } : null;
         },
         ai: async () => {
@@ -11386,7 +11412,9 @@ function AppInner() {
         },
       },
       onResult: (kind, value) => {
-        if (kind === "media") setMediaJobs(value as MediaJobStatus);
+        if (kind === "media") {
+          setMediaJobs((current) => applyMediaJobSummary(current, value as MediaJobSummaryCounts));
+        }
         else if (kind === "ai") setAiJobs(value as AiJobStatus);
         else setPluginJobs(value as PluginJobStatus);
         // Diagnostics for the performance benchmark; counts only, no identifiers.
@@ -11416,7 +11444,8 @@ function AppInner() {
   useEffect(() => {
     // Opening the panel tightens the cadence and re-enables event-driven
     // refreshes; closing it drops browsing back to the slow fallback so the
-    // canvas does not pay for status queries it never displays.
+    // canvas does not pay for status queries it never displays. The first list
+    // page is loaded from the open handler, not from this effect.
     mediaJobsOpenRef.current = mediaJobsOpen;
     jobStatusCoordinatorRef.current?.setPanelOpen(mediaJobsOpen);
     jobStatusCoordinatorRef.current?.setEventDrivenQueries(mediaJobsOpen);
@@ -11588,7 +11617,7 @@ function AppInner() {
         setAppSettingsCategory("general");
         setAppSettingsOpen(true);
       },
-      openBackgroundJobs: () => setMediaJobsOpen(true),
+      openBackgroundJobs: () => openMediaJobs(),
       openAppLog,
       openAbout,
       openGitHub: () => {
@@ -14338,6 +14367,7 @@ function AppInner() {
         pluginJobs={pluginJobs}
         onClose={() => setMediaJobsOpen(false)}
         onControlMediaJobs={(action, jobIds) => void controlMediaJobs(action, jobIds)}
+        onLoadMoreMediaJobs={() => void loadMoreMediaJobs()}
         onControlAiJobs={(action, jobIds) => void controlAiJobs(action, jobIds)}
         onRevealAppLog={revealAppLog}
         onViewAppLog={openAppLog}

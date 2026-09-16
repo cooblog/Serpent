@@ -60,6 +60,15 @@ describe('RawMetadataBackfillAdmissionGate', () => {
     expect(gate.shouldAttempt('alpha', null, 62_000)).toBe(true);
   });
 
+  it('rehydrates a durable exhausted token after Worker restart', () => {
+    const gate = new RawMetadataBackfillAdmissionGate();
+    gate.restore('alpha', { exhaustedToken: '7:9' }, 1_000);
+
+    expect(gate.hasState('alpha')).toBe(true);
+    expect(gate.shouldAttempt('alpha', '7:9', 1_001)).toBe(false);
+    expect(gate.shouldAttempt('alpha', '8:9', 1_001)).toBe(true);
+  });
+
   it('never treats a cap-limited probe as drained', () => {
     const gate = new RawMetadataBackfillAdmissionGate();
     gate.noteResult('alpha', '7:9', CAPPED, 0);
