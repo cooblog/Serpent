@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { SerpentLibraryApi } from "../shared/library-api";
 import type {
+  SmartCollectionSummary,
   TagSummary,
   CollectionSummary,
   LinkedFolderSummary,
@@ -14,6 +15,8 @@ type RendererWindow = Window & {
     plugins?: SerpentPluginManagerApi;
   };
 };
+import type { EntityAppearance, EntityAppearanceTarget } from "../shared/entity-appearance";
+import { EntityAppearancePicker } from "./EntityAppearancePicker";
 import {
   ContextMenu,
   ContextMenuBackdrop,
@@ -288,6 +291,7 @@ interface AssetContextMenuProps {
   collections: CollectionSummary[];
   linkedFolders: LinkedFolderSummary[];
   managedFolders: ManagedFolderSummary[];
+  smartCollections: SmartCollectionSummary[];
   activeCollectionId: string | null;
   assets: AssetSummary[];
   onRenameSmartCollection: (id: string, name: string) => void;
@@ -324,6 +328,10 @@ interface AssetContextMenuProps {
     linkedRelativePath?: string;
   }) => void;
   onRemoveLinkedFolder: (folderId: string, name: string) => void;
+  onSetEntityAppearance: (
+    target: EntityAppearanceTarget,
+    appearance: EntityAppearance | null,
+  ) => void;
   onBatchAssignTag: (tagId: string, assetIds: string[]) => void;
   onBatchRemoveTag: (tagId: string, assetIds: string[]) => void;
   onBatchAddToCollection: (collectionId: string, assetIds: string[]) => void;
@@ -390,6 +398,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
     collections,
     linkedFolders,
     managedFolders,
+    smartCollections,
     activeCollectionId,
     assets,
     onRenameSmartCollection,
@@ -413,6 +422,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
     onTrashManagedFolder,
     onDeleteFolderFromDisk,
     onRemoveLinkedFolder,
+    onSetEntityAppearance,
     onBatchAssignTag,
     onBatchRemoveTag,
     onBatchAddToCollection,
@@ -868,6 +878,23 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   onAction={() => runSidebarCommand("smart-collection.rename")}
                 />
               )}
+              <ContextMenuSubmenu
+                icon={<Icon name="palette" size={14} />}
+                label={t("command.smartCollection.appearance")}
+              >
+                <EntityAppearancePicker
+                  value={
+                    smartCollections.find((collection) => collection.collectionId === desc.id)
+                      ?.appearance ?? null
+                  }
+                  onChange={(appearance) =>
+                    onSetEntityAppearance(
+                      { kind: "smart-collection", id: desc.id },
+                      appearance,
+                    )
+                  }
+                />
+              </ContextMenuSubmenu>
               {updateQueryItem && (
                 <ContextMenuItem
                   icon={<Icon name="refresh" size={14} />}
@@ -970,6 +997,23 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   onAction={() => runSidebarCommand("collection.rename")}
                 />
               )}
+              <ContextMenuSubmenu
+                icon={<Icon name="palette" size={14} />}
+                label={t("command.collection.appearance")}
+              >
+                <EntityAppearancePicker
+                  value={
+                    collections.find((collection) => collection.collectionId === desc.id)
+                      ?.appearance ?? null
+                  }
+                  onChange={(appearance) =>
+                    onSetEntityAppearance(
+                      { kind: "collection", id: desc.id },
+                      appearance,
+                    )
+                  }
+                />
+              </ContextMenuSubmenu>
               {editDetailsItem && (
                 <ContextMenuItem
                   icon={<Icon name="info" size={14} />}
@@ -1172,6 +1216,36 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                       shortcut={renameItem.shortcutLabel ?? undefined}
                       onAction={() => runSidebarCommand("folder.rename")}
                     />
+                    {(!desc.isLibraryRoot &&
+                      (desc.locationKind === "managed" ||
+                        (desc.locationKind === "linked" && !desc.linkedRelativePath))) && (
+                      <ContextMenuSubmenu
+                        icon={<Icon name="palette" size={14} />}
+                        label={t("command.folder.appearance")}
+                      >
+                        <EntityAppearancePicker
+                          value={
+                            desc.locationKind === "linked"
+                              ? linkedFolders.find((folder) => folder.folderId === desc.folderId)
+                                  ?.appearance ?? null
+                              : managedFolders.find((folder) => folder.folderId === desc.folderId)
+                                  ?.appearance ?? null
+                          }
+                          onChange={(appearance) =>
+                            onSetEntityAppearance(
+                              {
+                                kind:
+                                  desc.locationKind === "linked"
+                                    ? "linked-folder"
+                                    : "managed-folder",
+                                id: desc.folderId,
+                              },
+                              appearance,
+                            )
+                          }
+                        />
+                      </ContextMenuSubmenu>
+                    )}
                     <PluginMenuItems
                       items={pluginItemsAtHostAnchor(pluginFolderMenuPlacement, "folder.rename", "after")}
                       onRun={(item) => runPluginCommand(item, { folderIds: [desc.folderId] })}

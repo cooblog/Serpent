@@ -419,6 +419,7 @@ import {
   libraryOpenBlockingTitleKey,
 } from "./error-utils";
 
+import type { EntityAppearance, EntityAppearanceTarget } from "../shared/entity-appearance";
 import type {
   AiSearchPlan,
   AssetSummary,
@@ -7788,6 +7789,59 @@ function AppInner() {
     requestTrashManagedFolder(folderId, name);
   }
 
+  function setEntityAppearance(
+    target: EntityAppearanceTarget,
+    appearance: EntityAppearance | null,
+  ) {
+    if (!api || !library) return;
+    void (async () => {
+      try {
+        const result = await api.setEntityAppearance({
+          libraryId: library.libraryId,
+          target,
+          appearance,
+        });
+        if (!result.ok) throw new LibraryOperationError(result.error);
+        const next = result.value.appearance;
+        switch (target.kind) {
+          case "managed-folder":
+            setFolders((current) =>
+              current.map((folder) =>
+                folder.folderId === target.id ? { ...folder, appearance: next } : folder,
+              ),
+            );
+            return;
+          case "linked-folder":
+            setLinkedFolders((current) =>
+              current.map((folder) =>
+                folder.folderId === target.id ? { ...folder, appearance: next } : folder,
+              ),
+            );
+            return;
+          case "collection":
+            setCollections((current) =>
+              current.map((collection) =>
+                collection.collectionId === target.id
+                  ? { ...collection, appearance: next }
+                  : collection,
+              ),
+            );
+            return;
+          case "smart-collection":
+            setSmartCollections((current) =>
+              current.map((collection) =>
+                collection.collectionId === target.id
+                  ? { ...collection, appearance: next }
+                  : collection,
+              ),
+            );
+        }
+      } catch (caught) {
+        setError(toMessage(caught, t("toast.appearanceFailed"), locale));
+      }
+    })();
+  }
+
   // Serpent-vf8x: folder create/rename/trash chords (mac ⌘ / Windows Ctrl).
   useFolderCommandShortcuts({
     enabled: Boolean(library) && !showTrash,
@@ -14509,6 +14563,7 @@ function AppInner() {
         collections={collections}
         linkedFolders={linkedFolders}
         managedFolders={folders}
+        smartCollections={smartCollections}
         activeCollectionId={activeCollectionId}
         assets={visibleAssets}
         onCloseWorkspaceTab={(tabId) => void closeWorkspaceTab(tabId)}
@@ -14626,6 +14681,7 @@ function AppInner() {
         onRemoveLinkedFolder={(folderId, name) => {
           void removeLinkedFolder(folderId, name);
         }}
+        onSetEntityAppearance={setEntityAppearance}
         onBatchAssignTag={(tagId, assetIds) => {
           void batchAssignTagToSelection(tagId, assetIds);
         }}

@@ -181,6 +181,7 @@ const MUTATION_COMMANDS = new Set([
   'extension.save-from-file',
   'folder.create',
   'folder.rename',
+  'appearance.set',
   'folder.move',
   'folder.trash',
   'folder.delete-empty',

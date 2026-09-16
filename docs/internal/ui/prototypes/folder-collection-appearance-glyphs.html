@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>文件夹 / 合集外观候选</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font: 14px/1.4 system-ui, sans-serif;
+    color: #1f1f1f;
+    background: #f4f4f2;
+  }
+  header {
+    padding: 20px 24px 8px;
+  }
+  h1 { font-size: 18px; font-weight: 650; margin: 0 0 6px; }
+  p { margin: 0; color: #666; }
+  section { padding: 12px 24px 28px; }
+  h2 { font-size: 13px; font-weight: 650; margin: 0 0 10px; color: #444; }
+  h3 {
+    font-size: 12px;
+    font-weight: 600;
+    margin: 18px 0 8px;
+    color: #777;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+    gap: 8px;
+  }
+  .cell {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 4px 8px;
+    background: #fff;
+    border: 1px solid #e4e4e1;
+    border-radius: 8px;
+  }
+  .emoji { font-size: 28px; line-height: 1; }
+  .icon { width: 28px; height: 28px; color: #222; }
+  .id {
+    font-size: 10px;
+    color: #888;
+    text-align: center;
+    word-break: break-all;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>文件夹 / 合集外观候选</h1>
+  <p>Emoji 200（系统字形，不占安装包）· Lucide 装饰图标 124。给产品筛选用，不是最终界面。</p>
+</header>
+
+<section>
+  <h2>Emoji</h2>
+  <h3>表情</h3>
+  <div class="grid" data-emoji="😀 😃 😄 😁 😆 😅 😂 🤣 😊 😇 🙂 😉 😍 🥰 😘 😋 😜 🤓 😎 🥳 🤔 😐 🙄 😏 😴 😪 🥺 😢 😭 😤 😡 🤬 🤯 😈 💀 💩 🤡 👻 👽 😺"></div>
+  <h3>手势</h3>
+  <div class="grid" data-emoji="👋 🤚 ✋ 👌 ✌️ 🤞 🤟 🤘 🤙 👍 👎 ✊ 👊 👏 🙌 🤝 🙏 💪 🫶 👀"></div>
+  <h3>心情</h3>
+  <div class="grid" data-emoji="❤️ 🧡 💛 💚 💙 💜 🖤 🤍 🤎 💔 💕 💖 💗 💘 💝 ❣️ 💞 💓 ✨ 🌟 💫 💯 💢 💤"></div>
+  <h3>符号</h3>
+  <div class="grid" data-emoji="✅ ❌ ❓ ❗ ⭕ 🚫 ⚠️ 💬 🔴 🟠 🟡 🟢 🔵 🟣 ⚫ ⚪"></div>
+  <h3>媒介与创作</h3>
+  <div class="grid" data-emoji="🎨 🖼️ 🎬 🎥 📷 📹 🎞️ 📺 🎵 🎶 🎧 🎤 🎹 🎸 🥁 📻 📡 🔦 💡 🕯️"></div>
+  <h3>设计工具</h3>
+  <div class="grid" data-emoji="✏️ 🖊️ 🖌️ 📐 📏 ✂️ 📎 📌 📍 🔑 🔒 💎"></div>
+  <h3>技术与游戏</h3>
+  <div class="grid" data-emoji="💻 🖥️ 📱 ⌨️ 🎮 🕹️ 🎲 🧩 🎯 🏆 ⚔️ 🛡️ 🚀 🤖 👾 💾"></div>
+  <h3>自然</h3>
+  <div class="grid" data-emoji="🌲 🌸 🌻 🍀 🍁 🌙 ☀️ ⭐ 🌈 🔥 💧 ❄️ 🌊 ⛰️ 🏝️ 🌍"></div>
+  <h3>动物</h3>
+  <div class="grid" data-emoji="🐶 🐱 🦊 🐻 🐼 🐯 🦁 🐸 🐧 🦋 🐝 🐙"></div>
+  <h3>场所与物件</h3>
+  <div class="grid" data-emoji="🏠 🏢 🏭 🏰 🚗 ✈️ 🚢 🚂 ⛺ 🎒 💼 🎁 👑 📦 🛒 🏷️"></div>
+  <h3>角色</h3>
+  <div class="grid" data-emoji="👤 👥 🧙 🧚 🦸 🥷 👷 👶"></div>
+</section>
+
+<section>
+  <h2>装饰图标（Lucide）</h2>
+  <h3>抽象</h3>
+  <div class="grid" data-icons="heart star sparkle smile frown meh thumbs-up thumbs-down circle square triangle hexagon diamond infinity asterisk hash award medal flag bell orbit atom clover rainbow"></div>
+  <h3>媒介</h3>
+  <div class="grid" data-icons="image images camera video film clapperboard aperture music headphones mic radio speaker book-open newspaper file-image file-video"></div>
+  <h3>设计</h3>
+  <div class="grid" data-icons="palette brush pen-tool pencil type pipette blend layers component layout-grid crop frame swatch-book"></div>
+  <h3>游戏与 3D</h3>
+  <div class="grid" data-icons="gamepad-2 dice-5 puzzle target trophy sword shield rocket bot ghost skull wand-2"></div>
+  <h3>自然</h3>
+  <div class="grid" data-icons="mountain trees tree-pine flower-2 sun moon cloud snowflake flame droplet waves wind leaf sparkles"></div>
+  <h3>动物</h3>
+  <div class="grid" data-icons="paw-print cat dog bird fish bug rabbit"></div>
+  <h3>场所</h3>
+  <div class="grid" data-icons="home building-2 landmark factory tent map map-pin compass globe"></div>
+  <h3>交通</h3>
+  <div class="grid" data-icons="car plane ship train-front bike"></div>
+  <h3>设备</h3>
+  <div class="grid" data-icons="laptop monitor smartphone cpu hard-drive database"></div>
+  <h3>物件</h3>
+  <div class="grid" data-icons="lightbulb zap wrench hammer scissors ruler gem crown key lock"></div>
+  <h3>人物与收纳</h3>
+  <div class="grid" data-icons="users user shopping-bag briefcase backpack gift calendar bookmark"></div>
+</section>
+
+<script src="https://unpkg.com/lucide@0.544.0"></script>
+<script>
+  document.querySelectorAll("[data-emoji]").forEach((grid) => {
+    for (const emoji of grid.getAttribute("data-emoji").split(/\s+/).filter(Boolean)) {
+      const cell = document.createElement("div");
+      cell.className = "cell";
+      cell.innerHTML = `<span class="emoji">${emoji}</span>`;
+      grid.appendChild(cell);
+    }
+  });
+  document.querySelectorAll("[data-icons]").forEach((grid) => {
+    for (const id of grid.getAttribute("data-icons").split(/\s+/).filter(Boolean)) {
+      const cell = document.createElement("div");
+      cell.className = "cell";
+      cell.innerHTML = `<i class="icon" data-lucide="${id}"></i><span class="id">${id}</span>`;
+      grid.appendChild(cell);
+    }
+  });
+  lucide.createIcons({ attrs: { class: "icon", stroke: "currentColor", width: 28, height: 28 } });
+</script>
+</body>
+</html>

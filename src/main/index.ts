@@ -2553,6 +2553,13 @@ async function commandFor(
         folderId: request.folderId,
         newName: request.newName,
       };
+    case "appearance.set.request":
+      return {
+        type: "appearance.set",
+        libraryId: request.libraryId,
+        target: request.target,
+        appearance: request.appearance,
+      };
     case "folder.list.request":
       return { type: "folder.list", libraryId: request.libraryId, showIgnored: request.showIgnored };
     case "folder.browse-entries.request":

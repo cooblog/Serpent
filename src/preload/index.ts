@@ -27,6 +27,7 @@ import {
   type SerpentMcpSettingsApi,
 } from '../shared/mcp';
 import { searchQuerySchema } from '../shared/asset-types';
+import type { EntityAppearance, EntityAppearanceTarget } from '../shared/entity-appearance';
 import type { FbxConversionResult, FbxConversionStats } from '../shared/fbx-conversion';
 import type { ModelCompanionAsset } from '../shared/model-companions';
 import type { AiSearchPlan, AssetSummary, AssetMetadataResult, ExtractedMetadataResult, CollectionSummary, FilterClause, FolderBrowseEntry, LinkedFolderDirectoryMutation, LinkedFolderRule, LinkedFolderSummary, ManagedFolderSummary, SearchQuery, SearchScope, SmartCollectionSummary, TagCooccurrenceGraph, TagSummary, TrashedFolderSummary } from '../shared/asset-types';
@@ -538,6 +539,17 @@ const library: SerpentLibraryApi = Object.freeze({
         ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}),
       },
     };
+  },
+
+  async setEntityAppearance(input: {
+    libraryId: string;
+    target: EntityAppearanceTarget;
+    appearance: EntityAppearance | null;
+  }) {
+    const result = await request({ type: 'appearance.set.request', ...input });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'appearance.updated') throw new Error('Unexpected set-appearance response.');
+    return { ok: true as const, value: { target: result.target, appearance: result.appearance } };
   },
 
   async createLinkedFolderDirectory(input: {

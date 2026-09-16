@@ -164,13 +164,15 @@
   font-weight: 560;
 }
 
-.workspace-tab-select > .icon {
+.workspace-tab-select > .icon,
+.workspace-tab-select > .nav-entity-glyph {
   flex-shrink: 0;
   /* Folder/file strokes sit low in the 24 viewBox; HarmonyOS CJK sits high.
      The close glyph is already on the title midline — lift the tab icon to it. */
   translate: 0 -2px;
 }
-.workspace-tab.is-active .workspace-tab-select > .icon { color: var(--accent-soft-fg); }
+.workspace-tab.is-active .workspace-tab-select > .icon,
+.workspace-tab.is-active .workspace-tab-select > .nav-entity-glyph { color: var(--accent-soft-fg); }
 
 .workspace-tab-title {
   overflow: hidden;

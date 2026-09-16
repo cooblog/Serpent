@@ -2799,6 +2799,8 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
     case 'folder.create':
       // Routed through runBoundedWrite / executeBoundedWriteWorkerCommand.
       throw new Error('Bounded folder.create write was not dispatched through its transaction fence.');
+    case 'appearance.set':
+      throw new Error('Bounded appearance.set write was not dispatched through its transaction fence.');
     case 'folder.rename': {
       const command = request.command;
       const before = libraryService.getManagedFolderHistorySnapshot({

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { aiSearchPlanSchema, assetMetadataResultSchema, extractedMetadataResultSchema, assetSummarySchema, browseLayoutEntrySchema, collectionSummarySchema, folderBrowseEntrySchema, ignoredPathSchema, linkedFolderDirectoryMutationSchema, linkedFolderRuleSchema, linkedFolderSummarySchema, managedFolderSummarySchema, portableRelativePathSchema, smartCollectionSummarySchema, tagCooccurrenceGraphSchema, tagSummarySchema, trashedFolderSummarySchema } from '../asset-types';
+import { entityAppearanceSchema, entityAppearanceTargetSchema } from '../entity-appearance';
 import { libraryNavigationSummarySchema } from '../library-navigation';
 import { pluginJobRecordSchema } from '../../plugins/plugin-jobs';
 import { recentLibraryListSchema } from '../recent-libraries';
@@ -727,6 +728,12 @@ const assetOperationSuccessSchemas = [
     type: z.literal('folder.renamed'),
     folder: managedFolderSummarySchema,
     historyEntryId: nonBlankString.optional(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('appearance.updated'),
+    target: entityAppearanceTargetSchema,
+    appearance: entityAppearanceSchema,
   }),
   z.strictObject({
     ok: z.literal(true),

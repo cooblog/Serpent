@@ -48,6 +48,7 @@ import type {
   TrashedFolderSummary,
   SearchQuery,
 } from './asset-types';
+import type { EntityAppearance, EntityAppearanceTarget } from './entity-appearance';
 import type {
   ImportCompletion,
   ImportConflictPlan,
@@ -255,6 +256,11 @@ export interface SerpentLibraryApi {
     folderId: string;
     newName: string;
   }): Promise<LibraryApiResult<ManagedFolderSummary & { historyEntryId?: string }>>;
+  setEntityAppearance(input: {
+    libraryId: string;
+    target: EntityAppearanceTarget;
+    appearance: EntityAppearance | null;
+  }): Promise<LibraryApiResult<{ target: EntityAppearanceTarget; appearance: EntityAppearance | null }>>;
   /** Create a physical directory inside a linked-folder root or virtual child. */
   createLinkedFolderDirectory(input: {
     libraryId: string;

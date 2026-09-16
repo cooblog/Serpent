@@ -8,6 +8,7 @@ export const PUBLIC_ERROR_MESSAGES = {
   INVALID_LIBRARY_PATH:
     'The selected location is not a usable folder for a library. Choose an existing writable folder — not a file, and not a disconnected drive.',
   INVALID_FOLDER_NAME: 'Choose a folder name that is safe on macOS and Windows.',
+  INVALID_APPEARANCE: 'Choose an icon or color from the available options.',
   FOLDER_ALREADY_EXISTS: 'A folder with this name already exists in the selected location.',
   FOLDER_NAME_CONFLICT: 'A folder or file with this name already exists in the selected location.',
   FOLDER_NOT_EMPTY: 'Only folders with no assets, child folders, or unmanaged files can be deleted by this operation.',

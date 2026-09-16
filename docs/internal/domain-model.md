@@ -183,6 +183,7 @@ Asset
 - 连续编号图片的每一帧仍是独立 Asset；`AssetSequence` 关系指定主帧、有序成员与 FPS，普通浏览只显示主帧。关系失效或解散后，剩余帧必须恢复为普通可见资产。
 - 用户在 Serpent 内移动托管资产时 `asset_id`、资产级元信息和组织关系保持不变，只更新真实路径。
 - 外部软件移动或重命名托管文件后不自动猜测新位置；资产进入 `missing` 状态，等待单项或批量重新关联。
+- 已参与 WebDAV 同步的托管资产：磁盘文件缺失且 **未进回收站** 时，同步从远端拉回，**不**视为用户删除。只有 Serpent 内放进回收站或永久删除才会传播到云端和其他设备。未同步、或远端也没有副本的，仍保持 `missing`。
 
 ### Revision 与内容位置
 
@@ -367,6 +368,7 @@ ImportFolderAsManaged
 ImportFolderAsLinked
 CreateManagedFolder
 RenameManagedFolder
+SetEntityAppearance
 CopyManagedFolder
 CloneManagedFolder
 MoveManagedFolder

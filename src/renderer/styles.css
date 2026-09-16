@@ -45,6 +45,14 @@
   --accent-soft-fg: var(--ui-content-accent, color-mix(in srgb, var(--accent) 55%, white));
   --accent-ring: color-mix(in srgb, var(--ui-action-accent, var(--accent)) 42%, transparent);
   --rating-star: #d9b54b;
+  --appearance-color-blue: #6ea8dc;
+  --appearance-color-indigo: #8b9be8;
+  --appearance-color-purple: #b794e8;
+  --appearance-color-pink: #e89bb8;
+  --appearance-color-orange: #e8a06a;
+  --appearance-color-green: #7dbe7a;
+  --appearance-color-teal: #5cb8b0;
+  --appearance-color-red: #e07a7a;
   /* Semantic status / ink tokens for themeable surfaces (REQ-THEME-002). */
   --success: var(--ui-status-success, #6db85d);
   --danger: var(--ui-status-danger, #e76b7a);
@@ -167,6 +175,14 @@
   --accent-soft-fg: var(--ui-content-accent, color-mix(in srgb, var(--accent) 68%, black));
   --accent-ring: color-mix(in srgb, var(--ui-action-accent, var(--accent)) 38%, transparent);
   --rating-star: #ecc83a;
+  --appearance-color-blue: #2f6fad;
+  --appearance-color-indigo: #4c5fd0;
+  --appearance-color-purple: #7c4db8;
+  --appearance-color-pink: #c45d86;
+  --appearance-color-orange: #c46a2a;
+  --appearance-color-green: #3d8f45;
+  --appearance-color-teal: #2a8a82;
+  --appearance-color-red: #c44545;
   --success: var(--ui-status-success, #16a34a);
   --danger: var(--ui-status-danger, #dc2626);
   --danger-muted: var(--ui-status-danger-surface, #fde8e8);
@@ -1934,6 +1950,39 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.nav-entity-glyph {
+  position: relative;
+  display: inline-grid;
+  width: 17px;
+  height: 15px;
+  flex: 0 0 auto;
+  place-items: center;
+  color: inherit;
+}
+
+.nav-entity-glyph-emoji {
+  line-height: 1;
+  font-size: 13px;
+}
+
+.nav-entity-glyph-badge {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  display: grid;
+  width: 8px;
+  height: 8px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--pane);
+  color: var(--secondary);
+}
+
+.nav-entity-glyph-badge .icon {
+  width: 8px;
+  height: 8px;
 }
 
 .nav-tree-row {
@@ -4224,6 +4273,127 @@ body.serpent-modal-open .app-shell {
   color: var(--tertiary, var(--tertiary));
   font-size: calc(12px * var(--ui-font-scale));
   text-align: center;
+}
+
+.appearance-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 268px;
+  max-width: 300px;
+  padding: 6px 8px 8px;
+}
+
+.appearance-picker-colors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 2px 2px 4px;
+}
+
+.appearance-picker-swatch {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 1px solid var(--divider);
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+}
+
+.appearance-picker-swatch.is-none {
+  background:
+    linear-gradient(
+      135deg,
+      transparent 46%,
+      var(--secondary) 46%,
+      var(--secondary) 54%,
+      transparent 54%
+    );
+}
+
+.appearance-picker-swatch.is-selected,
+.appearance-picker-cell.is-selected {
+  box-shadow: 0 0 0 2px var(--accent-ring);
+}
+
+.appearance-picker-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: min(360px, calc(100vh - 180px));
+  overflow: auto;
+}
+
+.appearance-picker-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.appearance-picker-heading {
+  margin: 0;
+  color: var(--tertiary);
+  font-size: calc(11px * var(--ui-font-scale));
+  font-weight: 650;
+}
+
+.appearance-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(8, 28px);
+  gap: 2px;
+}
+
+.appearance-picker-cell {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.appearance-picker-cell:hover,
+.appearance-picker-swatch:hover {
+  background: var(--hover);
+}
+
+.appearance-picker-cell .nav-entity-glyph-emoji {
+  font-size: 15px;
+}
+
+.appearance-picker-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 4px;
+  border-top: 1px solid var(--divider-soft);
+}
+
+.appearance-picker-clear {
+  padding: 4px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--secondary);
+  font-family: inherit;
+  font-size: calc(12px * var(--ui-font-scale));
+  cursor: pointer;
+}
+
+.appearance-picker-clear:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.appearance-picker-clear:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 /* Color-space picker (Serpent-aoj0) — secondary view for viewer/context menu. */

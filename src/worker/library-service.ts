@@ -178,6 +178,12 @@ import {
   CONTENT_REPLACE_STAGE_CHUNK_MAX_BYTES,
 } from '../shared/content-replace';
 import { smartCollectionQueryDefinitionSchema, extractedVideoMetadataSchema, type AssetMetadataResult, type ExtractedMetadataResult, type ExtractedVideoMetadata, type AssetSummary, type BrowseLayoutEntry, type CollectionSummary, type FilterClause, type FolderBrowseEntry, type IgnoredPath, type LinkedFolderDirectoryMutation, type LinkedFolderRule, type LinkedFolderSummary, type ManagedFolderSummary, type SearchQuery, type SearchScope, type SortDefinition, type SmartCollectionQueryDefinition, type SmartCollectionSummary, type TagCooccurrenceGraph, type TagSummary, type TrashedFolderSummary } from '../shared/asset-types';
+import {
+  parseWritableAppearance,
+  sanitizeEntityAppearance,
+  type EntityAppearance,
+  type EntityAppearanceTarget,
+} from '../shared/entity-appearance';
 import type { LibraryNavigationSummary } from '../shared/library-navigation';
 import { isLibraryRootFolderId } from '../shared/library-root-folder';
 import { BROWSE_SCOPE_MAX_ASSETS } from '../shared/browse-scope';
@@ -2858,6 +2864,47 @@ const ASSET_NORMALIZED_EXTENSION_SCHEMA_CHECKSUM = createHash('sha256')
   .update(ASSET_NORMALIZED_EXTENSION_SCHEMA_SQL)
   .digest('hex');
 
+const ENTITY_APPEARANCE_SCHEMA_SQL = `
+  ALTER TABLE managed_folders ADD COLUMN appearance_glyph_kind TEXT;
+  ALTER TABLE managed_folders ADD COLUMN appearance_glyph_value TEXT;
+  ALTER TABLE managed_folders ADD COLUMN appearance_color_id TEXT;
+  ALTER TABLE linked_folders ADD COLUMN appearance_glyph_kind TEXT;
+  ALTER TABLE linked_folders ADD COLUMN appearance_glyph_value TEXT;
+  ALTER TABLE linked_folders ADD COLUMN appearance_color_id TEXT;
+  ALTER TABLE collections ADD COLUMN appearance_glyph_kind TEXT;
+  ALTER TABLE collections ADD COLUMN appearance_glyph_value TEXT;
+  ALTER TABLE collections ADD COLUMN appearance_color_id TEXT;
+  ALTER TABLE smart_collections ADD COLUMN appearance_glyph_kind TEXT;
+  ALTER TABLE smart_collections ADD COLUMN appearance_glyph_value TEXT;
+  ALTER TABLE smart_collections ADD COLUMN appearance_color_id TEXT;
+`;
+const ENTITY_APPEARANCE_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(ENTITY_APPEARANCE_SCHEMA_SQL)
+  .digest('hex');
+
+const ENTITY_APPEARANCE_TABLES = [
+  'managed_folders',
+  'linked_folders',
+  'collections',
+  'smart_collections',
+] as const;
+const ENTITY_APPEARANCE_COLUMNS = [
+  'appearance_glyph_kind',
+  'appearance_glyph_value',
+  'appearance_color_id',
+] as const;
+
+function ensureEntityAppearanceSchema(connection: DatabaseConnection): void {
+  for (const table of ENTITY_APPEARANCE_TABLES) {
+    if (!hasTable(connection, table)) continue;
+    const columns = new Set(columnsFor(connection, table));
+    for (const column of ENTITY_APPEARANCE_COLUMNS) {
+      if (columns.has(column)) continue;
+      connection.exec(`ALTER TABLE ${table} ADD COLUMN ${column} TEXT`);
+    }
+  }
+}
+
 function ensureAssetNormalizedExtensionSchema(connection: DatabaseConnection): void {
   const columns = columnsFor(connection, 'assets');
   if (!columns.has('normalized_extension')) {
@@ -3556,6 +3603,11 @@ export const MIGRATIONS = [
     sql: ASSET_NORMALIZED_EXTENSION_SCHEMA_SQL,
     checksum: ASSET_NORMALIZED_EXTENSION_SCHEMA_CHECKSUM,
   },
+  {
+    version: 55,
+    sql: ENTITY_APPEARANCE_SCHEMA_SQL,
+    checksum: ENTITY_APPEARANCE_SCHEMA_CHECKSUM,
+  },
 ] as const;
 export const SUPPORTED_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
 
@@ -3750,6 +3802,9 @@ interface ManagedFolderRow {
   path_identity: string;
   /** Serpent-db1835: sidebar folder sort by creation time. */
   created_at?: string;
+  appearance_glyph_kind?: string | null;
+  appearance_glyph_value?: string | null;
+  appearance_color_id?: string | null;
 }
 
 interface AssetSummaryRow {
@@ -6284,6 +6339,8 @@ function migrateDatabaseUnserialized(connection: DatabaseConnection, allowFresh:
           ensureLinkedFolderParentSchema(connection);
         } else if (migration.version === 54) {
           ensureAssetNormalizedExtensionSchema(connection);
+        } else if (migration.version === 55) {
+          ensureEntityAppearanceSchema(connection);
         } else {
           connection.exec(migration.sql);
         }
@@ -13038,7 +13095,7 @@ export class LibraryService {
 
     const row = openLibrary.connection
       .prepare(
-        'SELECT folder_id, parent_folder_id, name, relative_path, path_identity, created_at FROM managed_folders WHERE folder_id = ?',
+        'SELECT folder_id, parent_folder_id, name, relative_path, path_identity, created_at, appearance_glyph_kind, appearance_glyph_value, appearance_color_id FROM managed_folders WHERE folder_id = ?',
       )
       .get(input.folderId) as ManagedFolderRow | undefined;
     if (!row) throw new LibraryServiceError('FOLDER_NOT_FOUND');
@@ -15112,7 +15169,7 @@ export class LibraryService {
     const openLibrary = this.requireOpenLibrary(libraryId);
     const rows = (openLibrary.connection
       .prepare(
-        'SELECT folder_id, parent_folder_id, name, relative_path, path_identity, created_at FROM managed_folders ORDER BY relative_path',
+        'SELECT folder_id, parent_folder_id, name, relative_path, path_identity, created_at, appearance_glyph_kind, appearance_glyph_value, appearance_color_id FROM managed_folders ORDER BY relative_path',
       )
       .all() as ManagedFolderRow[]).filter((row) =>
       showIgnored || !this.explicitFolderIgnored(openLibrary, 'managed', null, row.relative_path),
@@ -15128,6 +15185,97 @@ export class LibraryService {
         directAssetCount: recursive.get(row.folder_id) ?? summary.directAssetCount,
       };
     });
+  }
+
+  /**
+   * Store a catalog appearance on a folder/collection row. This is library
+   * metadata only — it must not rename or move anything on disk.
+   */
+  setEntityAppearance(input: {
+    libraryId: string;
+    target: EntityAppearanceTarget;
+    appearance: {
+      glyphKind: 'emoji' | 'icon' | null;
+      glyphValue: string | null;
+      colorId: string | null;
+    } | null;
+  }): { target: EntityAppearanceTarget; appearance: EntityAppearance | null } {
+    const openLibrary = this.requireOpenLibrary(input.libraryId);
+    this.assertLibraryWritable(openLibrary);
+    const parsed = parseWritableAppearance(input.appearance);
+    if (!parsed.ok) throw new LibraryServiceError('INVALID_APPEARANCE');
+    const appearance = parsed.appearance;
+    const glyphKind = appearance?.glyphKind ?? null;
+    const glyphValue = appearance?.glyphValue ?? null;
+    const colorId = appearance?.colorId ?? null;
+    const now = new Date().toISOString();
+
+    let changed = 0;
+    switch (input.target.kind) {
+      case 'managed-folder':
+        changed = openLibrary.connection
+          .prepare(
+            `UPDATE managed_folders
+                SET appearance_glyph_kind = ?, appearance_glyph_value = ?, appearance_color_id = ?
+              WHERE folder_id = ?`,
+          )
+          .run(glyphKind, glyphValue, colorId, input.target.id).changes;
+        break;
+      case 'linked-folder':
+        if (parseLinkedVirtualFolderId(input.target.id)) {
+          throw new LibraryServiceError('FOLDER_NOT_FOUND');
+        }
+        changed = openLibrary.connection
+          .prepare(
+            `UPDATE linked_folders
+                SET appearance_glyph_kind = ?, appearance_glyph_value = ?, appearance_color_id = ?, updated_at = ?
+              WHERE folder_id = ? AND library_id = ?`,
+          )
+          .run(
+            glyphKind,
+            glyphValue,
+            colorId,
+            now,
+            input.target.id,
+            openLibrary.summary.libraryId,
+          ).changes;
+        break;
+      case 'collection':
+        changed = openLibrary.connection
+          .prepare(
+            `UPDATE collections
+                SET appearance_glyph_kind = ?, appearance_glyph_value = ?, appearance_color_id = ?, updated_at = ?
+              WHERE collection_id = ? AND library_id = ?`,
+          )
+          .run(
+            glyphKind,
+            glyphValue,
+            colorId,
+            now,
+            input.target.id,
+            openLibrary.summary.libraryId,
+          ).changes;
+        break;
+      case 'smart-collection':
+        changed = openLibrary.connection
+          .prepare(
+            `UPDATE smart_collections
+                SET appearance_glyph_kind = ?, appearance_glyph_value = ?, appearance_color_id = ?, updated_at = ?
+              WHERE collection_id = ? AND library_id = ?`,
+          )
+          .run(
+            glyphKind,
+            glyphValue,
+            colorId,
+            now,
+            input.target.id,
+            openLibrary.summary.libraryId,
+          ).changes;
+        break;
+    }
+
+    if (changed === 0) throw new LibraryServiceError('FOLDER_NOT_FOUND');
+    return { target: input.target, appearance };
   }
 
   /**
@@ -16441,6 +16589,11 @@ export class LibraryService {
       directAssetCount: resolved.directAssetCounts.get(row.folder_id) ?? 0,
       childFolderCount: resolved.childFolderCounts.get(row.folder_id) ?? 0,
       createdAt: row.created_at,
+      appearance: sanitizeEntityAppearance({
+        glyphKind: row.appearance_glyph_kind,
+        glyphValue: row.appearance_glyph_value,
+        colorId: row.appearance_color_id,
+      }),
     };
   }
 
@@ -16511,7 +16664,8 @@ export class LibraryService {
     const openLibrary = this.requireOpenLibrary(libraryId);
     const rows = openLibrary.connection
       .prepare(
-        `SELECT folder_id, display_name, status, absolute_root_path, parent_folder_id
+        `SELECT folder_id, display_name, status, absolute_root_path, parent_folder_id,
+                created_at, appearance_glyph_kind, appearance_glyph_value, appearance_color_id
            FROM linked_folders WHERE library_id = ? ORDER BY display_name`,
       )
       .all(libraryId) as Array<{
@@ -16520,6 +16674,9 @@ export class LibraryService {
         status: 'available' | 'offline';
         absolute_root_path: string;
         parent_folder_id: string | null;
+        appearance_glyph_kind?: string | null;
+        appearance_glyph_value?: string | null;
+        appearance_color_id?: string | null;
       }>;
     return rows
       .filter((row) => !this.explicitFolderIgnored(openLibrary, 'linked', row.folder_id, ''))
@@ -16546,6 +16703,11 @@ export class LibraryService {
           relativePath: '',
           // Serpent-316493: a linked root may hang under a managed folder.
           parentFolderId: row.parent_folder_id ?? null,
+          appearance: sanitizeEntityAppearance({
+            glyphKind: row.appearance_glyph_kind,
+            glyphValue: row.appearance_glyph_value,
+            colorId: row.appearance_color_id,
+          }),
         };
         const children = prefixes
           .filter((prefix) => !this.explicitFolderIgnored(openLibrary, 'linked', row.folder_id, prefix))
@@ -18545,7 +18707,7 @@ export class LibraryService {
       'c.parent_id',
       'c.name',
       'c.position',
-      ...qualify('c', collectionColumns, ['description', 'cover_asset_id']),
+      ...qualify('c', collectionColumns, ['description', 'cover_asset_id', 'appearance_glyph_kind', 'appearance_glyph_value', 'appearance_color_id']),
       `(SELECT COUNT(*) FROM collections ch WHERE ch.parent_id = c.collection_id) AS child_count`,
     ].join(',\n');
     const recursiveAssetCounts = this.collectionRecursiveAssetCounts(openLibrary);
@@ -18564,6 +18726,9 @@ export class LibraryService {
         cover_asset_id: string | null;
         position: number;
         child_count: number;
+        appearance_glyph_kind?: string | null;
+        appearance_glyph_value?: string | null;
+        appearance_color_id?: string | null;
       }>;
     return rows.map((row) => ({
       collectionId: row.collection_id,
@@ -18576,6 +18741,11 @@ export class LibraryService {
       // be directly assigned to both a parent and one of its descendants.
       assetCount: recursiveAssetCounts.get(row.collection_id) ?? 0,
       childCollectionCount: row.child_count,
+      appearance: sanitizeEntityAppearance({
+        glyphKind: row.appearance_glyph_kind,
+        glyphValue: row.appearance_glyph_value,
+        colorId: row.appearance_color_id,
+      }),
     }));
   }
 
@@ -18644,7 +18814,8 @@ export class LibraryService {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     const existing = openLibrary.connection
       .prepare(
-        `SELECT collection_id, parent_id, name, description, cover_asset_id, position
+        `SELECT collection_id, parent_id, name, description, cover_asset_id, position,
+                appearance_glyph_kind, appearance_glyph_value, appearance_color_id
            FROM collections
           WHERE collection_id = ? AND library_id = ?`,
       )
@@ -18655,6 +18826,9 @@ export class LibraryService {
         description: string | null;
         cover_asset_id: string | null;
         position: number;
+        appearance_glyph_kind?: string | null;
+        appearance_glyph_value?: string | null;
+        appearance_color_id?: string | null;
       } | undefined;
     if (!existing) throw new LibraryServiceError('FOLDER_NOT_FOUND');
 
@@ -18720,6 +18894,11 @@ export class LibraryService {
       position: newPosition,
       assetCount: recursiveAssetCounts.get(input.collectionId) ?? 0,
       childCollectionCount: countRows.child_count,
+      appearance: sanitizeEntityAppearance({
+        glyphKind: existing.appearance_glyph_kind,
+        glyphValue: existing.appearance_glyph_value,
+        colorId: existing.appearance_color_id,
+      }),
     };
   }
 
@@ -32642,6 +32821,9 @@ export class LibraryService {
       'name',
       'query_definition_json',
       'position',
+      'appearance_glyph_kind',
+      'appearance_glyph_value',
+      'appearance_color_id',
     ]);
     if (present.length === 0) return [];
     const orderBy = present.includes('position') && present.includes('name')
@@ -32661,6 +32843,9 @@ export class LibraryService {
         name?: string;
         query_definition_json?: string;
         position?: number;
+        appearance_glyph_kind?: string | null;
+        appearance_glyph_value?: string | null;
+        appearance_color_id?: string | null;
       }>;
     // Batch counts inside one list call so the renderer avoids N+1 execute RPCs (CU-M6).
     return rows.map((row) => {
@@ -32680,6 +32865,11 @@ export class LibraryService {
         queryDefinition: row.query_definition_json ?? '',
         position: row.position ?? 0,
         assetCount,
+        appearance: sanitizeEntityAppearance({
+          glyphKind: row.appearance_glyph_kind,
+          glyphValue: row.appearance_glyph_value,
+          colorId: row.appearance_color_id,
+        }),
       };
     });
   }
@@ -32694,13 +32884,16 @@ export class LibraryService {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     const existing = openLibrary.connection
       .prepare(
-        'SELECT collection_id, name, query_definition_json, position FROM smart_collections WHERE collection_id = ? AND library_id = ?',
+        'SELECT collection_id, name, query_definition_json, position, appearance_glyph_kind, appearance_glyph_value, appearance_color_id FROM smart_collections WHERE collection_id = ? AND library_id = ?',
       )
       .get(input.collectionId, openLibrary.summary.libraryId) as {
         collection_id: string;
         name: string;
         query_definition_json: string;
         position: number;
+        appearance_glyph_kind?: string | null;
+        appearance_glyph_value?: string | null;
+        appearance_color_id?: string | null;
       } | undefined;
     if (!existing) throw new LibraryServiceError('FOLDER_NOT_FOUND');
 
@@ -32760,6 +32953,11 @@ export class LibraryService {
       queryDefinition: newQueryDefinitionJson,
       position: newPosition,
       assetCount,
+      appearance: sanitizeEntityAppearance({
+        glyphKind: existing.appearance_glyph_kind,
+        glyphValue: existing.appearance_glyph_value,
+        colorId: existing.appearance_color_id,
+      }),
     };
   }
 
@@ -42311,7 +42509,7 @@ export class LibraryService {
       const now = new Date().toISOString();
       const folderRows = openLibrary.connection
         .prepare(
-          'SELECT folder_id, parent_folder_id, name, relative_path, path_identity, created_at FROM managed_folders ORDER BY relative_path',
+          'SELECT folder_id, parent_folder_id, name, relative_path, path_identity, created_at, appearance_glyph_kind, appearance_glyph_value, appearance_color_id FROM managed_folders ORDER BY relative_path',
         )
         .all() as ManagedFolderRow[];
       const foldersByPath = new Map(folderRows.map((folder) => [folder.path_identity, folder]));
@@ -43771,7 +43969,7 @@ export class LibraryService {
 
       const folderRows = openLibrary.connection
         .prepare(
-          'SELECT folder_id, parent_folder_id, name, relative_path, path_identity, created_at FROM managed_folders ORDER BY relative_path',
+          'SELECT folder_id, parent_folder_id, name, relative_path, path_identity, created_at, appearance_glyph_kind, appearance_glyph_value, appearance_color_id FROM managed_folders ORDER BY relative_path',
         )
         .all() as ManagedFolderRow[];
       const foldersByPath = new Map(folderRows.map((folder) => [folder.path_identity, folder]));

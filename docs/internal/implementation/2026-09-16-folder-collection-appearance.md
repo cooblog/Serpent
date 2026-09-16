@@ -1,7 +1,7 @@
 # 文件夹与合集外观（图标 / emoji / 色板）
 
 日期：2026-09-16  
-状态：产品已拍板，未实施  
+状态：第一批已落地；APPEAR-001 / APPEAR-002 / APPEAR-003 人类验收通过。同步见 `Serpent-d94310`。  
 工单：见文末
 
 ## 1. 产品决定
@@ -46,7 +46,7 @@
 
 未知或非法值按默认外观显示，不得让资源库打不开。
 
-本轮**不**把此外观写入 WebDAV sidecar。合集成员工同步本来就未覆盖；外观同步另开需求。
+本轮**不**把此外观写入 WebDAV sidecar。合集成员工同步本来就未覆盖；外观同步见 P0 `Serpent-d94310`。
 
 ## 4. 交互
 
@@ -69,4 +69,119 @@
 - `Serpent-df3049`：总单
 - `Serpent-9d24c0`：外观存储与协议（可立即开始）
 - `Serpent-d130b5`：选取器与导航呈现（含标签页、链接徽章、智能合集）；被 `Serpent-9d24c0` 阻塞
+- `Serpent-d94310`：P0 同步外观（sidecar 目前只有资产级元数据）
+
+## 7. 预选图形清单（产品固化）
+
+选取器只展示下列两份清单。实现时落成共享目录（emoji 字面量 + 装饰图标 id），未知值按默认外观。清单变更视为产品改动。
+
+挑选口径：面向游戏美术 / 影视后期 / 平面 UI / 品牌设计的**资产分类**；小尺寸侧栏可读；跨 Windows/macOS 常见字形；**不含**旗帜、肤色变体、以及 `trash` / `settings` / `close` / `search` / `plus` 等操作图标。
+
+Emoji 是系统字形、不进安装包，清单可以更宽，约 200 个常用项（含表情）。装饰图标每条都是描边 path，仍保持精选；另含一组抽象符号（心、星、几何形等）。
+
+### 7.1 Emoji（200）
+
+按分类排列，选取器可按此分组，不必再排序。
+
+**表情**
+😀 😃 😄 😁 😆 😅 😂 🤣 😊 😇 🙂 😉 😍 🥰 😘 😋 😜 🤓 😎 🥳 🤔 😐 🙄 😏 😴 😪 🥺 😢 😭 😤 😡 🤬 🤯 😈 💀 💩 🤡 👻 👽 😺
+
+**手势**
+👋 🤚 ✋ 👌 ✌️ 🤞 🤟 🤘 🤙 👍 👎 ✊ 👊 👏 🙌 🤝 🙏 💪 🫶 👀
+
+**心情**
+❤️ 🧡 💛 💚 💙 💜 🖤 🤍 🤎 💔 💕 💖 💗 💘 💝 ❣️ 💞 💓 ✨ 🌟 💫 💯 💢 💤
+
+**符号**
+✅ ❌ ❓ ❗ ⭕ 🚫 ⚠️ 💬 🔴 🟠 🟡 🟢 🔵 🟣 ⚫ ⚪
+
+**媒介与创作**
+🎨 🖼️ 🎬 🎥 📷 📹 🎞️ 📺 🎵 🎶 🎧 🎤 🎹 🎸 🥁 📻 📡 🔦 💡 🕯️
+
+**设计工具**
+✏️ 🖊️ 🖌️ 📐 📏 ✂️ 📎 📌 📍 🔑 🔒 💎
+
+**技术与游戏**
+💻 🖥️ 📱 ⌨️ 🎮 🕹️ 🎲 🧩 🎯 🏆 ⚔️ 🛡️ 🚀 🤖 👾 💾
+
+**自然**
+🌲 🌸 🌻 🍀 🍁 🌙 ☀️ ⭐ 🌈 🔥 💧 ❄️ 🌊 ⛰️ 🏝️ 🌍
+
+**动物**
+🐶 🐱 🦊 🐻 🐼 🐯 🦁 🐸 🐧 🦋 🐝 🐙
+
+**场所与物件**
+🏠 🏢 🏭 🏰 🚗 ✈️ 🚢 🚂 ⛺ 🎒 💼 🎁 👑 📦 🛒 🏷️
+
+**角色**
+👤 👥 🧙 🧚 🦸 🥷 👷 👶
+
+字面量数组（实现用，顺序与上表一致）：
+
+```
+😀 😃 😄 😁 😆 😅 😂 🤣 😊 😇 🙂 😉 😍 🥰 😘 😋 😜 🤓 😎 🥳 🤔 😐 🙄 😏 😴 😪 🥺 😢 😭 😤 😡 🤬 🤯 😈 💀 💩 🤡 👻 👽 😺
+👋 🤚 ✋ 👌 ✌️ 🤞 🤟 🤘 🤙 👍 👎 ✊ 👊 👏 🙌 🤝 🙏 💪 🫶 👀
+❤️ 🧡 💛 💚 💙 💜 🖤 🤍 🤎 💔 💕 💖 💗 💘 💝 ❣️ 💞 💓 ✨ 🌟 💫 💯 💢 💤
+✅ ❌ ❓ ❗ ⭕ 🚫 ⚠️ 💬 🔴 🟠 🟡 🟢 🔵 🟣 ⚫ ⚪
+🎨 🖼️ 🎬 🎥 📷 📹 🎞️ 📺 🎵 🎶 🎧 🎤 🎹 🎸 🥁 📻 📡 🔦 💡 🕯️
+✏️ 🖊️ 🖌️ 📐 📏 ✂️ 📎 📌 📍 🔑 🔒 💎
+💻 🖥️ 📱 ⌨️ 🎮 🕹️ 🎲 🧩 🎯 🏆 ⚔️ 🛡️ 🚀 🤖 👾 💾
+🌲 🌸 🌻 🍀 🍁 🌙 ☀️ ⭐ 🌈 🔥 💧 ❄️ 🌊 ⛰️ 🏝️ 🌍
+🐶 🐱 🦊 🐻 🐼 🐯 🦁 🐸 🐧 🦋 🐝 🐙
+🏠 🏢 🏭 🏰 🚗 ✈️ 🚢 🚂 ⛺ 🎒 💼 🎁 👑 📦 🛒 🏷️
+👤 👥 🧙 🧚 🦸 🥷 👷 👶
+```
+
+### 7.2 装饰图标（124）
+
+id 对齐 Lucide 命名，描边几何与现有 `Icons.tsx` 一致；**单独成装饰目录**，不把功能图标全集开放给选取器。下列名称若已在 `Icons.tsx`（如 `palette` / `star` / `globe` / `heart`），实现时复用同一 path，不要另画一份。
+
+**抽象**
+`heart` `star` `sparkle` `smile` `frown` `meh` `thumbs-up` `thumbs-down` `circle` `square` `triangle` `hexagon` `diamond` `infinity` `asterisk` `hash` `award` `medal` `flag` `bell` `orbit` `atom` `clover` `rainbow`
+
+**媒介**
+`image` `images` `camera` `video` `film` `clapperboard` `aperture` `music` `headphones` `mic` `radio` `speaker` `book-open` `newspaper` `file-image` `file-video`
+
+**设计**
+`palette` `brush` `pen-tool` `pencil` `type` `pipette` `blend` `layers` `component` `layout-grid` `crop` `frame` `swatch-book`
+
+**游戏与 3D**
+`gamepad-2` `dice-5` `puzzle` `target` `trophy` `sword` `shield` `rocket` `bot` `ghost` `skull` `wand-2`
+
+**自然**
+`mountain` `trees` `tree-pine` `flower-2` `sun` `moon` `cloud` `snowflake` `flame` `droplet` `waves` `wind` `leaf` `sparkles`
+
+**动物**
+`paw-print` `cat` `dog` `bird` `fish` `bug` `rabbit`
+
+**场所**
+`home` `building-2` `landmark` `factory` `tent` `map` `map-pin` `compass` `globe`
+
+**交通**
+`car` `plane` `ship` `train-front` `bike`
+
+**设备**
+`laptop` `monitor` `smartphone` `cpu` `hard-drive` `database`
+
+**物件**
+`lightbulb` `zap` `wrench` `hammer` `scissors` `ruler` `gem` `crown` `key` `lock`
+
+**人物与收纳**
+`users` `user` `shopping-bag` `briefcase` `backpack` `gift` `calendar` `bookmark`
+
+实现用 id 数组（顺序与上表一致）：
+
+```
+heart, star, sparkle, smile, frown, meh, thumbs-up, thumbs-down, circle, square, triangle, hexagon, diamond, infinity, asterisk, hash, award, medal, flag, bell, orbit, atom, clover, rainbow,
+image, images, camera, video, film, clapperboard, aperture, music, headphones, mic, radio, speaker, book-open, newspaper, file-image, file-video,
+palette, brush, pen-tool, pencil, type, pipette, blend, layers, component, layout-grid, crop, frame, swatch-book,
+gamepad-2, dice-5, puzzle, target, trophy, sword, shield, rocket, bot, ghost, skull, wand-2,
+mountain, trees, tree-pine, flower-2, sun, moon, cloud, snowflake, flame, droplet, waves, wind, leaf, sparkles,
+paw-print, cat, dog, bird, fish, bug, rabbit,
+home, building-2, landmark, factory, tent, map, map-pin, compass, globe,
+car, plane, ship, train-front, bike,
+laptop, monitor, smartphone, cpu, hard-drive, database,
+lightbulb, zap, wrench, hammer, scissors, ruler, gem, crown, key, lock,
+users, user, shopping-bag, briefcase, backpack, gift, calendar, bookmark
+```
 

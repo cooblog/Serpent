@@ -11,6 +11,7 @@ const LIBRARY_WRITE_METHODS: ReadonlySet<keyof SerpentLibraryApi> = new Set([
   "redoOperationHistory",
   "createFolder",
   "renameFolder",
+  "setEntityAppearance",
   "createLinkedFolderDirectory",
   "renameLinkedFolderDirectory",
   "pasteIntoFolder",

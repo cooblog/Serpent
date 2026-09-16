@@ -10,6 +10,8 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { Icon, type IconName } from "./Icons";
+import { AppearanceGlyph } from "./AppearanceGlyph";
+import type { EntityAppearance } from "../shared/entity-appearance";
 import { IconActionButton } from "./icon-action-button";
 import {
   linkedFolderHoverDetail,
@@ -98,6 +100,8 @@ import { PaneSurface } from "./ui/surfaces";
 
 function NavRow({
   icon,
+  appearance,
+  linkedBadge,
   label,
   count,
   active,
@@ -120,6 +124,8 @@ function NavRow({
   navCollectionId,
 }: {
   icon: IconName;
+  appearance?: EntityAppearance | null;
+  linkedBadge?: "link" | "link-off" | null;
   label: string;
   count?: number;
   active?: boolean;
@@ -171,7 +177,13 @@ function NavRow({
         title={hoverTitle}
         type="button"
       >
-        <Icon name={icon} size={15} color={iconColor} />
+        <AppearanceGlyph
+          appearance={appearance}
+          color={iconColor}
+          fallback={icon}
+          linkedBadge={linkedBadge}
+          size={15}
+        />
         <span className="nav-row-label">{label}</span>
         {count !== undefined && (
           <span aria-hidden="true" className="nav-count">
@@ -1625,6 +1637,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
               ) : undefined
             }
             icon="folder"
+            appearance={entry.appearance}
             key={entry.folderId}
             label={entry.name}
             navFolderId={entry.folderId}
@@ -1689,6 +1702,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
       const hasChildren = foldersWithChildren.has(entry.folderId);
       const expanded = !collapsedFolderIds.has(entry.folderId);
       const linkedRootId = entry.linkedFolderId;
+      const hasCustomLinkedGlyph = Boolean(entry.appearance?.glyphKind);
       return (
         <NavRow
           active={isManagedFolderNavActive(browseNavFlags, entry.folderId)}
@@ -1713,8 +1727,10 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
               </button>
             ) : undefined
           }
-          icon={linkedAffordance.icon}
-          iconColor={linkedAffordance.iconColor}
+          icon={hasCustomLinkedGlyph ? "folder" : linkedAffordance.icon}
+          appearance={entry.appearance}
+          linkedBadge={hasCustomLinkedGlyph ? (offline ? "link-off" : "link") : undefined}
+          iconColor={hasCustomLinkedGlyph ? undefined : linkedAffordance.iconColor}
           key={entry.folderId}
           label={entry.name}
           navFolderId={entry.folderId}
@@ -2039,6 +2055,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
               ) : undefined
             }
             icon="collection"
+            appearance={c.appearance}
             label={c.name}
             count={c.assetCount}
             active={activeCollectionId === c.collectionId && !activeTagId}
@@ -2351,6 +2368,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
                     active={activeSmartCollectionId === sc.collectionId}
                     count={sc.assetCount}
                     icon="smart"
+                    appearance={sc.appearance}
                     key={sc.collectionId}
                     label={sc.name}
                     onClick={() => void onChooseSmartCollection(sc.collectionId)}

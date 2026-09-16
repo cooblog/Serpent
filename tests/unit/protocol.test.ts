@@ -1024,6 +1024,47 @@ describe('renderer request protocol', () => {
     });
   });
 
+  it('accepts appearance.set by entity id and catalog values only', () => {
+    const appearance = { glyphKind: 'emoji', glyphValue: '🎨', colorId: 'blue' };
+    const target = { kind: 'managed-folder', id: 'folder-01' };
+    expect(parseRendererRequest({
+      type: 'appearance.set.request',
+      libraryId: 'library-01',
+      target,
+      appearance,
+    })).toEqual({
+      type: 'appearance.set.request',
+      libraryId: 'library-01',
+      target,
+      appearance,
+    });
+    expect(parseWorkerRequest({
+      requestId: 'appearance-set-01',
+      command: {
+        type: 'appearance.set',
+        libraryId: 'library-01',
+        target,
+        appearance,
+      },
+    }).command).toEqual({
+      type: 'appearance.set',
+      libraryId: 'library-01',
+      target,
+      appearance,
+    });
+    expect(parseRendererResult({
+      ok: true,
+      type: 'appearance.updated',
+      target,
+      appearance,
+    })).toEqual({
+      ok: true,
+      type: 'appearance.updated',
+      target,
+      appearance,
+    });
+  });
+
   it('rejects injected and malformed folder rename requests at the schema layer', () => {
     // REQ-COMMAND-003: the renderer must never supply filesystem paths.
     expect(() => parseRendererRequest({

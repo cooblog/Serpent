@@ -14,6 +14,10 @@ import {
   CONTENT_REPLACE_STAGE_CHUNK_MAX_BASE64_LENGTH,
 } from '../content-replace';
 import { performanceRequestEnvelopeSchema } from '../performance-contract';
+import {
+  entityAppearanceSchema,
+  entityAppearanceTargetSchema,
+} from '../entity-appearance';
 
 const nonBlankString = z.string().min(1).refine((value) => value.trim().length > 0, {
   message: 'Value must not be blank.',
@@ -259,6 +263,12 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
     folderId: identifierSchema,
     newName: displayNameSchema,
+  }),
+  z.strictObject({
+    type: z.literal('appearance.set.request'),
+    libraryId: identifierSchema,
+    target: entityAppearanceTargetSchema,
+    appearance: entityAppearanceSchema,
   }),
   // Folder shell actions (REQ-MENU-006) are identified by folder id only; no
   // filesystem path may cross this boundary (REQ-COMMAND-003). The Worker
@@ -1463,6 +1473,12 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
     folderId: identifierSchema,
     newName: displayNameSchema,
+  }),
+  z.strictObject({
+    type: z.literal('appearance.set'),
+    libraryId: identifierSchema,
+    target: entityAppearanceTargetSchema,
+    appearance: entityAppearanceSchema,
   }),
   z.strictObject({
     type: z.literal('folder.clone'),
