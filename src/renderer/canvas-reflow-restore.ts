@@ -16,6 +16,7 @@ import {
   type CanvasAnchor,
   type RectLike,
 } from "./canvas-scroll-anchor";
+import { canvasHasPreviewScrollHold } from "./browse-scroll-debug";
 
 export type { AnchorCard, CanvasAnchor, RectLike };
 
@@ -114,6 +115,7 @@ export function scheduleAnchorRestore(
     frameRef.current = null;
   }
   if (!anchor) return;
+  if (canvasHasPreviewScrollHold(canvas)) return;
 
   const runAfterFrames = (remaining: number): void => {
     if (remaining <= 0) {

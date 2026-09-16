@@ -1,4 +1,5 @@
 import type { WorkspaceNavViewport } from "./workspace-nav-history";
+import { logBrowseScrollWrite } from "./browse-scroll-debug";
 
 export function captureWorkspaceNavViewport(
   element: Pick<HTMLElement, "scrollTop" | "scrollHeight" | "clientHeight"> | null,
@@ -25,6 +26,49 @@ export function resolveWorkspaceScrollTop(
     return Math.min(extent, viewport.scrollTop);
   }
   return Math.min(extent, Math.max(0, viewport.scrollProgress * extent));
+}
+
+/**
+ * Same-scope discovery debounce is not a folder switch. Re-running
+ * `finishWorkspaceNavigation` about a second after the viewer already
+ * restored would fight the user's next scroll.
+ */
+export function shouldRestoreViewportAfterBrowseReload(
+  kind: "silent" | "submit",
+): boolean {
+  return kind === "submit";
+}
+
+export type PendingWorkspaceViewportAction = "apply" | "clear";
+
+/**
+ * Same-commit folder/tab restore may arm `pendingViewportRestore` with
+ * `{ scrollTop: 0 }`. That leftover must not keep writing on later React
+ * renders — after the user has scrolled, or while the viewer owns the
+ * canvas, applying it yanks the browse view to the top.
+ */
+export function pendingWorkspaceViewportAction(input: {
+  previewActive: boolean;
+  navigationPending: boolean;
+  restoreLoopActive: boolean;
+  intendedTop: number;
+  targetTop: number;
+  currentTop: number;
+  extent: number;
+}): PendingWorkspaceViewportAction {
+  if (input.previewActive) return "clear";
+  if (input.extent <= 0) return "apply";
+  const restoreRunning = input.restoreLoopActive || input.navigationPending;
+  if (!restoreRunning && input.intendedTop <= 1 && input.currentTop > 1) {
+    return "clear";
+  }
+  if (
+    input.intendedTop <= input.extent + 1 &&
+    Math.abs(input.currentTop - input.targetTop) < 1
+  ) {
+    return "clear";
+  }
+  return "apply";
 }
 
 /**
@@ -66,6 +110,13 @@ export function restoreWorkspaceNavViewport(
     }
     const extent = Math.max(0, element.scrollHeight - element.clientHeight);
     const target = resolveWorkspaceScrollTop(viewport, extent);
+    if (Math.abs(element.scrollTop - target) >= 1) {
+      logBrowseScrollWrite("restoreWorkspaceNavViewport", element, {
+        target: Math.round(target),
+        viewportTop: viewport.scrollTop,
+        attempts,
+      });
+    }
     element.scrollTo({ top: target, left: 0 });
     attempts += 1;
     stableFrames = Math.abs(extent - previousExtent) <= 1 ? stableFrames + 1 : 0;

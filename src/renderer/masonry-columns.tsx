@@ -24,6 +24,7 @@ import {
   stackItemHeights,
 } from "./canvas-asset-layout";
 import { isCanvasReflowRestorationPending } from "./canvas-reflow-restore";
+import { canvasHasPreviewScrollHold } from "./browse-scroll-debug";
 import { scaleCaptionBandPx } from "./justified-caption-band";
 import { estimateMasonryPreviewHeightPx } from "./masonry-preview-frame";
 import { columnWindow, useCanvasLocalViewport } from "./viewport-window";
@@ -131,6 +132,12 @@ function RegularMasonryColumns({
         const root = canvas();
         const snapshot = scrollSnapshotRef.current;
         if (!root || snapshot === null) {
+          restoreFrameRef.current = null;
+          return;
+        }
+        if (canvasHasPreviewScrollHold(root)) {
+          scrollSnapshotRef.current = null;
+          rawRestoreTargetRef.current = null;
           restoreFrameRef.current = null;
           return;
         }

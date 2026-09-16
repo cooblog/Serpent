@@ -23,9 +23,11 @@ import {
   type CanvasAssetLayoutIndex,
 } from "../canvas-asset-layout";
 import {
+  canvasViewportIsMeasurable,
   itemIntersectsVisibleRange,
   useCanvasLocalViewport,
 } from "../viewport-window";
+import { canvasHasPreviewScrollHold, logBrowseScrollWrite } from "../browse-scroll-debug";
 import {
   type VirtualBrowseLayout,
   virtualLayoutEntryAt,
@@ -750,6 +752,9 @@ function useVirtualScrollAnchor(
       return first;
     };
     const capture = () => {
+      if (!canvasViewportIsMeasurable(canvas) || canvasHasPreviewScrollHold(canvas)) {
+        return;
+      }
       const canvasRect = canvas.getBoundingClientRect();
       const anchor = anchorRef.current;
       const currentSlot = anchor ? findSlot(anchor.index) : undefined;
@@ -786,6 +791,9 @@ function useVirtualScrollAnchor(
     const canvas = container?.closest<HTMLElement>(".workspace-canvas");
     const anchor = anchorRef.current;
     if (!container || !canvas || !anchor) return;
+    if (!canvasViewportIsMeasurable(canvas) || canvasHasPreviewScrollHold(canvas)) {
+      return;
+    }
     const slot = [...container.querySelectorAll<HTMLElement>("[data-layout-index]")]
       .find((candidate) => Number(candidate.dataset.layoutIndex) === anchor.index);
     if (!slot) {
@@ -796,6 +804,10 @@ function useVirtualScrollAnchor(
     const nextLocalTop = slot.getBoundingClientRect().top - canvasRect.top;
     const delta = nextLocalTop - anchor.localTop;
     if (Math.abs(delta) > 0.5) {
+      logBrowseScrollWrite("virtualScrollAnchor.delta", canvas, {
+        index: anchor.index,
+        delta: Math.round(delta),
+      });
       const maxScroll = Math.max(0, canvas.scrollHeight - canvas.clientHeight);
       canvas.scrollTop = Math.min(maxScroll, Math.max(0, canvas.scrollTop + delta));
     }

@@ -8982,7 +8982,9 @@ select.ai-config-input.ai-config-languages {
    live here and must stay visible while preview is open (SHELL-027). Keep the
    host as an absolute, full-size overlay instead of collapsing it to height 0:
    Chromium otherwise clamps the canvas scrollTop while the viewer is mounted,
-   which makes rapid open/close land at the top before the anchor restore runs. */
+   which makes rapid open/close land at the top before the anchor restore runs.
+   Keep `is-viewing` on the host during `previewRestoring` as well so the first
+   restore frames do not collapse the scroll extent. */
 .workspace-canvas-host.is-viewing {
   position: absolute;
   inset: 0;
