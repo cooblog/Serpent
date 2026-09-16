@@ -44,6 +44,33 @@
 
 > 2026-08-27 P0：从硬盘删除后再导入同一份 Serpent ZIP，导入库 ID 不变；删除时的 `serpent://` 读取拦住若泄漏，全部卡片会变成裂开图标。见 LIB-ZIP-001（已通过）。
 
+### 2026-09-17 换本地库路径后同步不得误删
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| SYNC-MISSING-001 / `Serpent-9e2a34` | 本地文件暂时不在时，同步从云端拉回，而不是批量进回收站 | 待人类验收 | ① **完全退出**后再打开含这次修复的构建。② 打开已绑定 WebDAV 的资源库。③ 若照片已在回收站：先恢复，再点立即同步。④ 若只是文件夹里缺失、回收站是空的：直接立即同步。⑤ 另用一张**确实要删**的已同步照片放进回收站再同步，确认对端仍会进回收站。不要把真实库路径写入反馈。 | 缺失的已同步照片从云端回到原来的文件夹，不进回收站；云端还在的文件可以下载。真正放进回收站的那张仍按删除同步。 | [开发日志](../development/2026-09-17-sync-missing-local-files-development-log.md) / `sync-plan.ts` / `tests/worker/sync-missing-local-files.test.ts` | 2026-09-17：隔离临时目录复现后已修。定向同步 64 passed，`test:library-availability` 9 files / 227 passed。真实 WebDAV 用户库、packaged、Windows、Computer Use 未执行。 |
+
+### 2026-09-17 卡片标题区按实际行数计高
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| CARD-META-001 / `Serpent-b1b0f2` | 缺分辨率等信息的资产不再多留一行空白、不再把卡片撑高；分辨率只属于图像 / 视频 / GIF | 人类验收通过 | ① **完全退出** Electron 后再 `npm start`。② 打开一个同时有**已解码出尺寸**和**没有尺寸**（例如未解码的 avif / raw）资产的文件夹。③ 确认设置里「文件名 / 大小 / 日期 / 分辨率」都打开。④ 看瀑布流视图里这些卡片。⑤ 切到平铺视图，看整行都是无尺寸资产的那一行。⑥ 选中一个 3D 模型，看卡片与 Inspector 顶部信息行。⑦ 用「分辨率」筛选（如 2K）看结果里是否混进模型。 | 没有分辨率的卡片明显比有分辨率的卡片矮（标题区少一行），不再在标题下方留一条空；平铺视图里同一行仍然等高，整行都没有分辨率时这一行整体变矮；有分辨率的卡片照常显示「宽 × 高」。3D 模型卡片与 Inspector 信息行都**不**出现「宽 × 高」，按分辨率筛选也不把模型算进任何档位。 | [开发日志](../development/2026-09-17-asset-card-caption-band-development-log.md) / `asset-caption-band.ts` / `canvas-preferences.ts` / `InspectorPanel.tsx` / `catalog-read.ts` / `tests/unit/asset-caption-band.test.ts` / `tests/unit/canvas-asset-layout.test.ts` / `tests/unit/virtual-browse-canvas.test.ts` / `tests/unit/media-formats.test.ts` / `tests/worker/catalog-read.test.ts` / `tests/worker/search.test.ts`（真实 SQLite 集成）/ `tests/e2e/browsing-preferences.test.ts`（4 passed） | 2026-09-17 实现：标题区改为逐资产行数（瀑布流逐卡、平铺逐行取最大）；分辨率口径统一为 `mediaTypeHasPixelResolution`（image / video / GIF），卡片、Inspector 信息行与分辨率筛选三处共用。typecheck + 改动文件 ESLint 通过；`test:unit` 478 文件通过 / 2 失败（既有 macOS 用例 + 并发偶发，均与本改动无关）；`test:worker` 中 catalog-read 9 passed、search 的 long_edge 真实 SQLite 用例 2 passed（全量 worker 另有 6 个与本改动无关的失败文件）；真实 Electron `browsing-preferences` 4 passed（33.9s）。**2026-09-17 用户本人验收通过**（用户原话「验收通过」；此前卡片高度复验亦反馈「感觉没问题」）。用户同时确认两点可保留：反向排除分辨率档位时模型仍出现，「按长边排序」不排除模型。packaged / Windows / Computer Use 视觉验收未执行。 |
+
+### 2026-09-16 文件夹与合集图标 / 颜色
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| APPEAR-001 / `Serpent-df3049` | 为资源库文件夹、合集、智能合集选择图标与颜色 | 人类验收通过 | ① **完全退出** Electron 后再 `npm start`。② 打开资源库。③ 右键一个普通文件夹 →「图标与颜色」，选一种颜色和一个 emoji 或装饰图标。④ 再对一个合集、一个智能合集各做一次。⑤ 看侧栏行和工作区标签页。⑥ 点「恢复默认」。 | 侧栏与标签页马上换成所选图形和颜色；恢复默认后回到原来的文件夹/合集/智能合集图标。画布上的文件夹卡片外观不要变。 | [规格](../implementation/2026-09-16-folder-collection-appearance.md) / [开发日志](../development/2026-09-16-folder-collection-appearance-development-log.md) / `EntityAppearancePicker.tsx` / `tests/worker/entity-appearance.test.ts` | 2026-09-16 用户确认 APPEAR-001、APPEAR-002、APPEAR-003 通过。 |
+| APPEAR-002 / `Serpent-df3049` | 链接文件夹自定义图标后仍能看出是链接 | 人类验收通过 | ① 右键一个**链接文件夹根**（不要点它下面的子目录）→「图标与颜色」，选一个图形。② 看侧栏和标签页。③ 若该链接离线，再看一次。 | 自定义图形出现后，角落仍有链接/离线小标记；不要只剩自定义图形、看不出这是链接。链接的子目录没有「图标与颜色」。 | 同上 / `NavigationSidebar.tsx` / `AppearanceGlyph.tsx` | 2026-09-16 用户确认通过。 |
+| APPEAR-003 / `Serpent-df3049` | 退出后再打开，图标与颜色仍在 | 人类验收通过 | ① 给文件夹和合集设好外观。② **完全退出** Electron 进程后再 `npm start`，打开同一资源库。 | 侧栏和标签页仍是上次选的图形和颜色，不是默认图标。 | 同上 / schema v55 / `appearance.set` | 2026-09-16 用户确认通过。 |
+
+### 2026-09-16 资源库根下的链接文件夹能展开子目录
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| LINKED-TREE-001 | 资源库里已有普通文件夹时，根下链接的多层目录仍能展开 | 人类验收通过 | ① **完全退出** Electron 后再 `npm start`。② 打开一个**已经有至少一个普通文件夹**的资源库。③ 在资源库根链接一个含多层子目录的外部文件夹（或打开已经链好的那个）。④ 在左侧「文件夹」列表点该链接行左边的展开箭头，再点下一层。 | 子目录出现在链接行下方，可以再展开更深层。不要只有箭头却点不开、也不要整棵子树消失。画布点进该链接后仍应看到子文件夹卡片。 | [开发日志](../development/2026-09-16-library-root-linked-tree-expand-development-log.md) / `sortManagedTreeEntries` / `tests/unit/unified-directory-nav.test.ts` | 2026-09-16：无法展开，已修。同日复验不通过：排序对链接文件夹不起作用。2026-09-17 用户确认展开与排序均通过。packaged / Windows / Computer Use 未执行。 |
+| LINKED-SORT-001 | 文件夹栏排序同时作用于普通文件夹和链接文件夹 | 人类验收通过 | ① **完全退出**后再 `npm start`。② 打开含普通文件夹和链接文件夹（链接下还有子目录）的资源库。③ 展开该链接。④ 点「文件夹」标题旁的排序，分别试名称降序、按数量、按时间。 | 链接根与普通文件夹在同一层按所选规则重排，不要永远钉在列表末尾。链接下面的子目录也按同一规则重排。展开箭头在重排后仍可用。没有创建时间的链接子目录在按时间排时出现在该层末尾。 | 同上 / `listLinkedFolders` `createdAt` | 2026-09-17 用户确认通过。 |
+
 ### 2026-09-16 后台任务摘要与分页
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
@@ -638,7 +665,7 @@
 | CANVAS-036 | 瀑布流显示并框选全部资产 | 人类验收通过 | 打开图像测试库（约 7180 项）；平铺确认数量正常后切到瀑布流；框选整张画布 | 瀑布流卡片数与「所有资产」计数一致，框选不是只有 50 张 | `Serpent-yti0` | 2026-08-14 用户确认通过（框选走全量布局几何）。 |
 | CANVAS-037 | 瀑布流第四档快速下滚不出现截断白区 | 人类验收通过 | 打开图像测试库或任意大库；切到瀑布流；把缩略图大小滑到**第四档**（约 4–5 列）；从顶部连续快速向下滑动数次，观察新露出来的区域 | 新进入视野的区域应立即出现卡片，不能出现拦腰/截断式整片纯白（不是单张卡片没刷出缩略图，而是下面一整块没画出卡片） | [viewport 单测](../../../tests/unit/viewport-window.test.ts) / [slot 单测](../../../tests/unit/masonry-slot-style.test.ts) / [滚动 E2E](../../../tests/e2e/thumbnail-scroll-regression.test.ts) / `Serpent-1s3d` | 2026-08-15：同步 scroll 窗口发布 + `max(视口×5, 卡片×12)`；E2E 2 passed、typecheck/lint 通过。macOS Computer Use 在隔离大库的 Value:3/2/1 各执行 10 次快速滚动，按 100ms 采集高频画面未见白区；2026-08-15 用户本人确认至少 10 次快速滑动未出现截断式问题。packaged/Windows 未执行。 |
 | CANVAS-038 | Windows 平铺模式卡片不上下抖动 | 人类验收通过 | **Windows** 切到平铺；浏览含多种图片的库，观察静止与轻微滚动时的卡片 | 不得出现周期性上下抖动。已知形态：整卡抖动；或仅缩略图/名称/大小/日期抖而分辨率不抖；或缩略图上方幅度大于下方。瀑布流对照应稳定 | `Serpent-oq86` / [justified 整数行宽](../../../src/renderer/asset-grid-layout.ts) / [视口取整](../../../src/renderer/viewport-window.ts) | 2026-08-14 用户确认通过。 |
-| CANVAS-039 / `Serpent-eb8dc2` | 视觉媒体卡片分辨率可开关 | 待人类验收 | 在 **设置 → 浏览** 或浏览工具栏切换「分辨率」；分别在平铺、瀑布流中观察图片、视频/3D 与 PDF/HTML | 开启时图片、视频和 3D 卡片显示「宽 × 高」；PDF、HTML、文本、音频等非视觉媒体不显示；关闭后所有卡片都不显示；切换立即生效 | [canvas-preferences](../../../src/renderer/canvas-preferences.ts) / [BrowseLayoutPreview](../../../src/renderer/BrowseLayoutPreview.tsx) / [browse-layout-preview 单测](../../../tests/unit/browse-layout-preview.test.ts) / [canvas-preferences 单测](../../../tests/unit/canvas-preferences.test.ts) | 2026-08-24 P0 修复：分辨率开关统一作用于两种布局，并按媒体类型过滤；待用户复验。 |
+| CANVAS-039 / `Serpent-eb8dc2` | 视觉媒体卡片分辨率可开关 | 人类验收通过 | 在 **设置 → 浏览** 或浏览工具栏切换「分辨率」；分别在平铺、瀑布流中观察图片、视频、3D 模型与 PDF/HTML | 开启时图片、视频（含 GIF）显示「宽 × 高」；3D 模型、PDF、HTML、文本、音频都不显示；关闭后所有卡片都不显示；切换立即生效 | [canvas-preferences](../../../src/renderer/canvas-preferences.ts) / [BrowseLayoutPreview](../../../src/renderer/BrowseLayoutPreview.tsx) / [browse-layout-preview 单测](../../../tests/unit/browse-layout-preview.test.ts) / [canvas-preferences 单测](../../../tests/unit/canvas-preferences.test.ts) | 2026-08-24 P0 修复：分辨率开关统一作用于两种布局，并按媒体类型过滤。2026-09-17 用户澄清：只有图像 / 视频 / GIF 这类像素媒体算分辨率，**3D 模型不要**，已按此收紧判定（见 CARD-META-001）；同日**用户本人验收通过**并同意关闭工单。packaged / Windows 未执行。 |
 | CANVAS-040 | 卡片文字左/中/右对齐 | 人类验收通过 | **设置 → 浏览** 切换「卡片文字对齐」为居中、右对齐；观察文件名与大小/日期行 | 文件名、元数据与分辨率行按所选对齐；中间省略文件名在居中/右对齐时仍可读；平铺与瀑布流均生效 | [styles.css](../../../src/renderer/styles.css) / [AppSettingsPages](../../../src/renderer/AppSettingsPages.tsx) | 2026-08-23 用户确认通过。 |
 | CANVAS-031 | 滚到底部不闪烁「继续加载资产」 | 人类验收通过 | **Windows** 打开含 >50 项资产的库（平铺与瀑布流各试）；滚到列表最底部并停留数秒；若仍有未加载页可再轻推滚轮 | 接近底部时至多短暂显示一次「继续加载资产…」并追加下一页；全部加载完后文案不再反复闪烁；不得出现疯狂开关的加载提示 | [load-more 单测](../../../tests/unit/asset-browse-load-more.test.ts) / `Serpent-r94b` / [开发日志](../development/2026-08-15-progressive-loading-pagination-development-log.md) | 2026-07-22 用户确认通过。2026-08-15 `Serpent-ws4k` 正式接线 sentinel（此前为死代码），行为口径不变，建议人工复验。 |
 | INSPECT-001 | Inspector 显示真实缩略图 | 待人类验收 | 依次选择支持预览的图片和视频 | Inspector 显示已成功解码的图片或视频封面，不是通用文件图标 | [0018–0019 QA](0018-0019-ui-correctness-qa-report.md) / [媒体 E2E](../../../tests/e2e/media-preview.test.ts) | — |

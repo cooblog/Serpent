@@ -1,6 +1,11 @@
 # Serpent 项目状态
 
-- **2026-09-16 文件夹/合集外观（未实施）**：资源库文件夹、链接文件夹根、合集、智能合集可从预选 emoji/装饰图标和命名色板选外观；标签页与侧栏同一份数据。画布文件夹卡片不改。规格见[外观](implementation/2026-09-16-folder-collection-appearance.md)。工单 `Serpent-df3049` / `Serpent-9d24c0` / `Serpent-d130b5`。本机只开单记录，实现在其他工作副本进行。
+- **2026-09-17 换本地库路径后同步误删（`Serpent-9e2a34`）**：用户反馈换了本地库路径后再同步，大量已同步照片进回收站，云端有文件也拉不下来。根因是快照跳过缺文件资产，规划器当成用户删除并写墓碑。已改为缺文件从云端拉回、禁止写墓碑；**只有 Serpent 内回收站/永久删除才传播删除**（产品确认，写入同步规格 §6.6）。清单 `SYNC-MISSING-001` 待人在真实 WebDAV 库点验。见[开发日志](development/2026-09-17-sync-missing-local-files-development-log.md)。
+
+- **2026-09-17 卡片标题区按实际行数计高**：用户报告开启字段显示后，本来就没有分辨率的资产仍多留一行空白、把卡片撑高。标题区改为逐资产计算行数：瀑布流每张卡按自己渲染的行数计高，平铺按**本行**所需最大高度统一，整行都没有分辨率时该行变矮；判定与卡片渲染复用同一条 `shouldShowGridDimensions`。同日用户澄清分辨率只属于图像 / 视频 / GIF 这类像素媒体，**3D 模型不再显示**「宽 × 高」：共享谓词 `mediaTypeHasPixelResolution` 同时作用于卡片（`shouldShowGridDimensions`）、Inspector 顶部信息行与「分辨率」筛选（`long_edge` 分支按扩展名门禁，正向不含模型、反向保留）。工单 `Serpent-b1b0f2`（2026-09-17 **用户验收通过**后关闭），清单 `CARD-META-001` 人类验收通过。分辨率开关本身 `Serpent-eb8dc2` 同日**用户验收通过**并关闭，清单 `CANVAS-039` 人类验收通过。用户同时确认两点保留：反向排除分辨率档位时模型仍出现；「按长边排序」不排除模型。typecheck 与改动文件 ESLint 通过、`test:unit` 478 文件通过 / 2 失败（既有 macOS 用例 + 并发偶发，与本改动无关）、`test:worker` 中 catalog-read 9 passed 且 search 的 long_edge 真实 SQLite 用例通过、真实 Electron `browsing-preferences` 4 passed；packaged / Windows / Computer Use 未执行。见[开发日志](development/2026-09-17-asset-card-caption-band-development-log.md)。
+
+- **2026-09-16 文件夹/合集外观**：第一批已落地。用户确认 APPEAR-001 / APPEAR-002 / APPEAR-003 通过。规格见[外观](implementation/2026-09-16-folder-collection-appearance.md)。工单 `Serpent-df3049`。同步外观另开 P0 `Serpent-d94310`。
+- **2026-09-17 链接文件夹展开与排序**：用户确认 `LINKED-TREE-001`、`LINKED-SORT-001` 通过。同层普通文件夹、链接根、虚拟子目录共用名称/数量/时间比较器。见[记录](development/2026-09-16-library-root-linked-tree-expand-development-log.md)。
 
 - **2026-09-16 链接导入「处理中」与浏览争用**：链接文件夹登记阶段不再显示「复制中」。导入命令是独占 mutation，约 8 万行在同一事务登记，期间浏览排队。导入结束后不再为 50 条缩略图场景列出整棵链接树，也不再无界入队整库缩略图任务。见[记录](development/2026-09-16-linked-import-browse-contention.md)。
 
