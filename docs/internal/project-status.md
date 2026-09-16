@@ -1,5 +1,7 @@
 # Serpent 项目状态
 
+- **2026-09-16 文件夹/合集外观（未实施）**：资源库文件夹、链接文件夹根、合集、智能合集可从预选 emoji/装饰图标和命名色板选外观；标签页与侧栏同一份数据。画布文件夹卡片不改。规格见[外观](implementation/2026-09-16-folder-collection-appearance.md)。工单 `Serpent-df3049` / `Serpent-9d24c0` / `Serpent-d130b5`。本机只开单记录，实现在其他工作副本进行。
+
 - **2026-09-16 链接导入「处理中」与浏览争用**：链接文件夹登记阶段不再显示「复制中」。导入命令是独占 mutation，约 8 万行在同一事务登记，期间浏览排队。导入结束后不再为 50 条缩略图场景列出整棵链接树，也不再无界入队整库缩略图任务。见[记录](development/2026-09-16-linked-import-browse-contention.md)。
 
 - **2026-09-16 PERF2 任务摘要 O(1) 与列表分页**：`Serpent-e97c00` 增加 schema v53 `media_job_status_counts`（jobs 触发器在同一事务维护六个状态计数），独立 `media.job-summary` 供面板关闭时的兜底轮询，`media.list-jobs` 改为 created_at/job_id 游标分页。任务面板「加载更多」不丢已加载行。定向单测 168 passed、Worker 摘要/checksum 5 passed、`npm run test:library-availability` 9 files / 222 passed / 1 skipped、typecheck 与定向 ESLint 通过。工单仍打开；忽略规则批量修正、面板 E2E、2000 事件现场回放与 9k 混合队列未完成。见[开发记录](development/2026-09-16-media-job-summary-pagination-development-log.md)。

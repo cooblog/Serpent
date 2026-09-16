@@ -117,8 +117,11 @@ ManagedFolder
   parent_id?
   name
   relative_path
+  appearance?
   created_at
 ```
+
+`appearance` 是库内用户元数据：从预选 emoji/装饰图标中选一个图形，再从命名色板中选一个颜色。改外观不改磁盘路径。导航树、工作区标签页和已用类型图标表示该文件夹的列表沿用同一份外观；画布文件夹卡片不使用此外观。见 [2026-09-16 外观规格](implementation/2026-09-16-folder-collection-appearance.md)。
 
 不变量：
 
@@ -143,11 +146,12 @@ LinkedFolder
   source_device_hint
   filter_rule_set_id
   status = available | offline | missing
+  appearance?
 ```
 
 链接过滤规则命中的路径不形成资产，不被显示或操作。根路径失效后，用户可以指定新根目录，并依据相对路径批量找回资产。
 
-LinkedFolder 与 ManagedFolder 在导航中共享“文件夹”呈现语义，但保留不同位置类型和写入规则。链接正常、离线或断链通过状态图标和说明表达，不靠独立导航分区表达。
+LinkedFolder 与 ManagedFolder 在导航中共享“文件夹”呈现语义，但保留不同位置类型和写入规则。链接正常、离线或断链通过状态图标和说明表达，不靠独立导航分区表达。链接根可以有与资源库文件夹相同的 `appearance`；自定义图形不得单独顶掉链接可识别性（在线用徽章或叠加，离线/断链仍用既有状态）。没有独立稳定 ID 的链接虚拟子目录不写外观。
 
 链接文件夹可以单向转换为资源库文件夹：先复制源内容，全部校验成功后再移除链接关系，源内容保留。
 
@@ -286,6 +290,7 @@ Collection
   name
   description?
   cover_asset_id?
+  appearance?
   position
 
 CollectionAsset
@@ -294,7 +299,7 @@ CollectionAsset
   position
 ```
 
-打开父合集时默认汇总自身及所有后代合集中的资产，并允许切换为“仅当前层”。合集内支持手动资产排序；删除合集只删除合集和成员关系，不删除资产。AI 不创建合集关系，也不建议或自动把资产加入合集。
+打开父合集时默认汇总自身及所有后代合集中的资产，并允许切换为“仅当前层”。合集内支持手动资产排序；删除合集只删除合集和成员关系，不删除资产。AI 不创建合集关系，也不建议或自动把资产加入合集。合集外观与文件夹外观同一套预选图形和色板，沿用到侧栏与标签页；本轮不随 WebDAV sidecar 同步。
 
 ### SmartCollection（智能合集）
 
@@ -307,7 +312,10 @@ SmartCollection
   name
   query_definition
   sort_definition
+  appearance?
 ```
+
+智能合集外观与合集相同，沿用到侧栏与标签页。
 
 查询规则：跨字段 AND、同字段多值 OR、单条件可排除；任意嵌套条件组不进 MVP。
 
