@@ -56,6 +56,10 @@ export function useCanvasLocalViewport(
     if (!canvas) return;
 
     const update = () => {
+      // A collapsed canvas (viewer overlay teardown) reports a top window.
+      // Keep the last measurable slice mounted so close-restore still has
+      // cards and minHeight instead of remounting the first row.
+      if (!canvasViewportIsMeasurable(canvas)) return;
       // Scroll events can arrive after the compositor has moved the canvas but
       // before the next paint. Deferring this read to requestAnimationFrame
       // leaves the previous slice mounted for one more frame; when the user
@@ -91,6 +95,13 @@ export function useCanvasLocalViewport(
 
   return viewport;
 }
+
+export function canvasViewportIsMeasurable(
+  canvas: Pick<HTMLElement, "clientHeight" | "clientWidth">,
+): boolean {
+  return canvas.clientHeight > 0 && canvas.clientWidth > 0;
+}
+
 /** Whole CSS pixels. Fractional getBoundingClientRect edges retrigger
  *  windowing every frame on Windows DPI (Serpent-oq86). */
 export function quantizeCanvasViewportOffsetPx(value: number): number {

@@ -187,8 +187,10 @@ import { useWorkspaceTabsController } from "./use-workspace-tabs";
 import { presentWorkspaceTab } from "./workspace-tab-presentation";
 import {
   captureWorkspaceNavViewport,
+  pendingWorkspaceViewportAction,
   resolveWorkspaceScrollTop,
   restoreWorkspaceNavViewport,
+  shouldRestoreViewportAfterBrowseReload,
 } from "./workspace-scroll-position";
 import { mergeAssetSummaries } from "./merge-asset-summaries";
 import {
@@ -533,9 +535,17 @@ import {
 } from "./canvas-reflow-restore";
 import {
   captureBrowseViewSnapshot,
-  resolveBrowseRestoreScroll,
   type BrowseViewSnapshot,
 } from "./view-restore";
+import { scheduleBrowseViewRestore } from "./browse-view-restore-scheduler";
+import {
+  canvasHasPreviewScrollHold,
+  installBrowseScrollWriteSpy,
+  logBrowseScrollWrite,
+  PREVIEW_SCROLL_HOLD_MS,
+  setCanvasPreviewScrollHold,
+  shouldApplyRestoredFocusScroll,
+} from "./browse-scroll-debug";
 import {
   isMacPlatform,
   type CommandPlatform,
@@ -2043,6 +2053,36 @@ function AppInner() {
     [assetCardSize, canvasWidthPx],
   );
   const workspaceCanvasRef = useRef<HTMLDivElement>(null);
+  const previewScrollHoldTimerRef = useRef<number | null>(null);
+  const lastPreviewRestoredTopRef = useRef(0);
+  const clearPreviewScrollHold = useCallback(() => {
+    if (previewScrollHoldTimerRef.current !== null) {
+      window.clearTimeout(previewScrollHoldTimerRef.current);
+      previewScrollHoldTimerRef.current = null;
+    }
+    setCanvasPreviewScrollHold(workspaceCanvasRef.current, false);
+  }, []);
+  const armPreviewScrollHold = useCallback((restoredTop: number) => {
+    lastPreviewRestoredTopRef.current = restoredTop;
+    setCanvasPreviewScrollHold(workspaceCanvasRef.current, true);
+    if (previewScrollHoldTimerRef.current !== null) {
+      window.clearTimeout(previewScrollHoldTimerRef.current);
+    }
+    previewScrollHoldTimerRef.current = window.setTimeout(() => {
+      previewScrollHoldTimerRef.current = null;
+      setCanvasPreviewScrollHold(workspaceCanvasRef.current, false);
+    }, PREVIEW_SCROLL_HOLD_MS);
+  }, []);
+  useEffect(() => () => {
+    if (previewScrollHoldTimerRef.current !== null) {
+      window.clearTimeout(previewScrollHoldTimerRef.current);
+    }
+  }, []);
+  useLayoutEffect(() => {
+    const canvas = workspaceCanvasRef.current;
+    if (!canvas) return undefined;
+    return installBrowseScrollWriteSpy(canvas);
+  }, [library]);
   // A viewport restore waiting to be applied in the same commit the new
   // content paints in. Set when a navigation targets a saved offset; the
   // layout effect below positions the canvas before the browser paints, which
@@ -2056,7 +2096,34 @@ function AppInner() {
     if (!canvas) return;
     const extent = Math.max(0, canvas.scrollHeight - canvas.clientHeight);
     if (extent <= 0) return;
-    canvas.scrollTop = resolveWorkspaceScrollTop(viewport, extent);
+    const targetTop = resolveWorkspaceScrollTop(viewport, extent);
+    const previewActive =
+      Boolean(previewAsset) ||
+      previewRestoring ||
+      Boolean(previewAssetRef.current) ||
+      previewRestoringRef.current ||
+      canvasHasPreviewScrollHold(canvas) ||
+      Boolean(canvas.parentElement?.classList.contains("is-viewing"));
+    const action = pendingWorkspaceViewportAction({
+      previewActive,
+      navigationPending: workspaceNavigationPending,
+      restoreLoopActive: Boolean(cancelWorkspaceViewportRestoreRef.current),
+      intendedTop: viewport.scrollTop,
+      targetTop,
+      currentTop: canvas.scrollTop,
+      extent,
+    });
+    if (action === "clear") {
+      pendingViewportRestoreRef.current = null;
+      return;
+    }
+    logBrowseScrollWrite("pendingViewportRestore", canvas, {
+      targetTop,
+      intendedTop: viewport.scrollTop,
+      currentTop: Math.round(canvas.scrollTop),
+      navigationPending: workspaceNavigationPending,
+    });
+    canvas.scrollTop = targetTop;
   });
   const reportedVisibleWindowKeyRef = useRef("");
   // Serpent-wgl2: the marquee box div is always mounted and moved directly
@@ -2237,8 +2304,11 @@ function AppInner() {
   // focusing the previous card after a rapid reopen of the same asset.
   const previewCloseGenerationRef = useRef(0);
   const previewRestoreFrameRef = useRef<number | null>(null);
+  const cancelPreviewViewRestoreRef = useRef<(() => void) | null>(null);
   useEffect(
     () => () => {
+      cancelPreviewViewRestoreRef.current?.();
+      cancelPreviewViewRestoreRef.current = null;
       if (previewRestoreFrameRef.current !== null) {
         window.cancelAnimationFrame(previewRestoreFrameRef.current);
       }
@@ -3323,7 +3393,8 @@ function AppInner() {
       if (
         width === lastWidth ||
         previewAssetRef.current ||
-        previewRestoringRef.current
+        previewRestoringRef.current ||
+        canvasHasPreviewScrollHold(canvas)
       ) {
         lastWidth = width;
         return;
@@ -3503,6 +3574,8 @@ function AppInner() {
     options?: { recordHistory?: boolean },
   ) => {
     if (asset.availability !== "available" || asset.deletedAt) return;
+    previewAssetRef.current = asset;
+    pendingViewportRestoreRef.current = null;
     if (
       options?.recordHistory !== false &&
       navHistoryRef.current.current.kind !== "preview"
@@ -3519,8 +3592,13 @@ function AppInner() {
     }
     previewCloseGenerationRef.current += 1;
     closingPreviewRef.current = null;
+    previewAssetRef.current = asset;
     previewRestoringRef.current = false;
+    pendingViewportRestoreRef.current = null;
     setPreviewRestoring(false);
+    cancelPreviewViewRestoreRef.current?.();
+    cancelPreviewViewRestoreRef.current = null;
+    clearPreviewScrollHold();
     // A card-size or panel reflow may still have an anchor-restoration frame
     // queued when the user opens the viewer immediately after resizing. That
     // stale callback must not overwrite the viewer-close snapshot later.
@@ -3548,6 +3626,10 @@ function AppInner() {
         canvas.scrollLeft,
         canvas.scrollTop,
       );
+      logBrowseScrollWrite("openAssetPreview.capture", canvas, {
+        snapshotTop: Math.round(canvas.scrollTop),
+        hasCard: Boolean(card),
+      });
     } else {
       previewScrollSnapshotRef.current = null;
     }
@@ -3574,7 +3656,7 @@ function AppInner() {
         canForward: navHistoryRef.current.canForward,
       });
     }
-  }, [navHistoryRef, saveCurrentWorkspaceHistoryViewport, selectionAnchorRef, setNavHistoryUi, syncActiveWorkspaceTabLocation, wakeViewerChrome]);
+  }, [navHistoryRef, saveCurrentWorkspaceHistoryViewport, selectionAnchorRef, setNavHistoryUi, syncActiveWorkspaceTabLocation, wakeViewerChrome, clearPreviewScrollHold]);
 
   const persistAssetColorSpace = useCallback(async (assetId: string, colorSpace: string | null) => {
     if (!api || !library) return;
@@ -3641,12 +3723,16 @@ function AppInner() {
     updateHistory = true,
   ) => {
     // A scope transition can arrive after React has already cleared
-    // `previewAsset` but before the two-frame browse restoration runs. Cancel
-    // that stale restoration even when there is no longer an asset to close,
+    // `previewAsset` but before browse restoration finishes. Cancel that
+    // stale restoration even when there is no longer an asset to close,
     // otherwise the previous scope can scroll/focus the newly selected scope.
-    if (!restoreBrowsePosition && previewRestoreFrameRef.current !== null) {
-      window.cancelAnimationFrame(previewRestoreFrameRef.current);
-      previewRestoreFrameRef.current = null;
+    if (!restoreBrowsePosition) {
+      cancelPreviewViewRestoreRef.current?.();
+      cancelPreviewViewRestoreRef.current = null;
+      if (previewRestoreFrameRef.current !== null) {
+        window.cancelAnimationFrame(previewRestoreFrameRef.current);
+        previewRestoreFrameRef.current = null;
+      }
     }
     const closingAsset = previewAsset;
     if (!closingAsset) return;
@@ -3668,109 +3754,114 @@ function AppInner() {
     previewRestoringRef.current = restoreBrowsePosition;
     setPreviewRestoring(restoreBrowsePosition);
     setPreviewAsset(null);
+    cancelWorkspaceViewportRestoreRef.current?.();
+    cancelWorkspaceViewportRestoreRef.current = null;
+    pendingViewportRestoreRef.current = null;
     const assetId = previewFocusReturnRef.current;
     const scrollSnapshot = previewScrollSnapshotRef.current;
     previewFocusReturnRef.current = null;
     previewScrollSnapshotRef.current = null;
+    cancelPreviewViewRestoreRef.current?.();
+    cancelPreviewViewRestoreRef.current = null;
     if (previewRestoreFrameRef.current !== null) {
       window.cancelAnimationFrame(previewRestoreFrameRef.current);
       previewRestoreFrameRef.current = null;
     }
-    if (restoreBrowsePosition) previewRestoreFrameRef.current = window.requestAnimationFrame(() => {
+    const settleRestoredFocus = (remaining: number): void => {
       if (closeGeneration !== previewCloseGenerationRef.current) return;
-      // React must first commit the collapsed viewer host. A second frame
-      // restores scroll against the visible canvas; restoring in the first
-      // frame can be discarded by layout and jump back to the top.
-      previewRestoreFrameRef.current = window.requestAnimationFrame(() => {
-        if (closeGeneration !== previewCloseGenerationRef.current) return;
-        const canvas = workspaceCanvasRef.current;
-        if (canvas && scrollSnapshot) {
-          // REQ-VIEW-008: the grid may have reflowed while the viewer was
-          // open (e.g. inspector panel width changed). Land on the raw
-          // captured position first, measure where the previewed card
-          // actually ended up, then correct the delta so it returns to the
-          // exact spot it occupied before entering the viewer.
-          canvas.scrollTo({ left: scrollSnapshot.scrollLeft, top: scrollSnapshot.scrollTop });
-          const restoredCard = scrollSnapshot.anchor
-            ? Array.from(
-                canvas.querySelectorAll<HTMLElement>("[data-asset-id]"),
-              ).find((el) => el.dataset.assetId === scrollSnapshot.anchor!.assetId)
-            : null;
-          const target = resolveBrowseRestoreScroll(
-            scrollSnapshot,
-            restoredCard?.getBoundingClientRect() ?? null,
-            {
-              scrollWidth: canvas.scrollWidth,
-              scrollHeight: canvas.scrollHeight,
-              clientWidth: canvas.clientWidth,
-              clientHeight: canvas.clientHeight,
-            },
-          );
-          canvas.scrollTo({ left: target.left, top: target.top });
+      const currentCanvas = workspaceCanvasRef.current;
+      const restoredFocusTarget = currentCanvas?.querySelector<HTMLElement>(
+        `[data-asset-id="${assetId ?? ""}"]`,
+      );
+      if (currentCanvas && restoredFocusTarget) {
+        const canvasRect = currentCanvas.getBoundingClientRect();
+        const cardRect = restoredFocusTarget.getBoundingClientRect();
+        const cardIsVisible =
+          cardRect.bottom > canvasRect.top &&
+          cardRect.top < canvasRect.bottom &&
+          cardRect.right > canvasRect.left &&
+          cardRect.left < canvasRect.right;
+        if (!cardIsVisible) {
+          const cardTop =
+            currentCanvas.scrollTop + cardRect.top - canvasRect.top;
+          const cardBottom = cardTop + cardRect.height;
+          const nextTop =
+            cardTop < currentCanvas.scrollTop
+              ? cardTop
+              : cardBottom > currentCanvas.scrollTop + currentCanvas.clientHeight
+                ? cardBottom - currentCanvas.clientHeight
+                : currentCanvas.scrollTop;
+          if (
+            shouldApplyRestoredFocusScroll(
+              lastPreviewRestoredTopRef.current,
+              nextTop,
+              currentCanvas.clientHeight,
+            )
+          ) {
+            currentCanvas.scrollTo({
+              left: Math.max(
+                0,
+                currentCanvas.scrollLeft + cardRect.left - canvasRect.left,
+              ),
+              top: Math.max(0, nextTop),
+            });
+          } else {
+            logBrowseScrollWrite("settleRestoredFocus.skipped", currentCanvas, {
+              nextTop: Math.round(nextTop),
+              restoredTop: Math.round(lastPreviewRestoredTopRef.current),
+            });
+          }
         }
-        if (closeGeneration === previewCloseGenerationRef.current) {
-          previewRestoringRef.current = false;
-          setPreviewRestoring(false);
-          // The restoring class intentionally hides and disables the canvas.
-          // Wait several frames for layout/reflow restoration to settle before
-          // returning focus; focusing while the ancestor is hidden is ignored
-          // by the browser and leaves keyboard users on <body>. Re-checking
-          // each frame also prevents a pending card-size/masonry reflow from
-          // moving the focused card out of view immediately after close.
-          const settleRestoredFocus = (remaining: number): void => {
-            if (closeGeneration !== previewCloseGenerationRef.current) return;
-            const currentCanvas = workspaceCanvasRef.current;
-            const restoredFocusTarget = currentCanvas?.querySelector<HTMLElement>(
-              `[data-asset-id="${assetId ?? ""}"]`,
-            );
-            if (currentCanvas && restoredFocusTarget) {
-              const canvasRect = currentCanvas.getBoundingClientRect();
-              const cardRect = restoredFocusTarget.getBoundingClientRect();
-              const cardIsVisible =
-                cardRect.bottom > canvasRect.top &&
-                cardRect.top < canvasRect.bottom &&
-                cardRect.right > canvasRect.left &&
-                cardRect.left < canvasRect.right;
-              if (!cardIsVisible) {
-                const cardTop =
-                  currentCanvas.scrollTop + cardRect.top - canvasRect.top;
-                const cardBottom = cardTop + cardRect.height;
-                const nextTop =
-                  cardTop < currentCanvas.scrollTop
-                    ? cardTop
-                    : cardBottom > currentCanvas.scrollTop + currentCanvas.clientHeight
-                      ? cardBottom - currentCanvas.clientHeight
-                      : currentCanvas.scrollTop;
-                currentCanvas.scrollTo({
-                  left: Math.max(
-                    0,
-                    currentCanvas.scrollLeft + cardRect.left - canvasRect.left,
-                  ),
-                  top: Math.max(0, nextTop),
-                });
-              }
-              if (remaining <= 0) {
-                restoredFocusTarget.focus({ preventScroll: true });
-                previewRestoreFrameRef.current = null;
-                return;
-              }
-            } else if (!currentCanvas || remaining <= 0) {
-              previewRestoreFrameRef.current = null;
-              return;
-            }
-            previewRestoreFrameRef.current = window.requestAnimationFrame(() =>
-              settleRestoredFocus(remaining - 1),
-            );
-          };
-          previewRestoreFrameRef.current = window.requestAnimationFrame(() =>
-            settleRestoredFocus(12),
-          );
-        } else {
+        if (remaining <= 0) {
+          restoredFocusTarget.focus({ preventScroll: true });
           previewRestoreFrameRef.current = null;
+          return;
         }
-      });
-    });
-    if (!restoreBrowsePosition) setPreviewRestoring(false);
+      } else if (!currentCanvas || remaining <= 0) {
+        previewRestoreFrameRef.current = null;
+        return;
+      }
+      previewRestoreFrameRef.current = window.requestAnimationFrame(() =>
+        settleRestoredFocus(remaining - 1),
+      );
+    };
+    if (restoreBrowsePosition) {
+      const canvas = workspaceCanvasRef.current;
+      if (canvas && scrollSnapshot) {
+        armPreviewScrollHold(scrollSnapshot.scrollTop);
+        logBrowseScrollWrite("closeAssetPreview.restore", canvas, {
+          snapshotTop: Math.round(scrollSnapshot.scrollTop),
+        });
+        // REQ-VIEW-008 / Serpent-bd481f: wait until the live extent can hold
+        // the captured offset. Two frames used to clamp a collapsed canvas
+        // to scrollTop 0 and treat that as done.
+        cancelPreviewViewRestoreRef.current = scheduleBrowseViewRestore({
+          canvas,
+          snapshot: scrollSnapshot,
+          isCurrent: () => closeGeneration === previewCloseGenerationRef.current,
+          onComplete: () => {
+            if (closeGeneration !== previewCloseGenerationRef.current) return;
+            cancelPreviewViewRestoreRef.current = null;
+            armPreviewScrollHold(scrollSnapshot.scrollTop);
+            previewRestoringRef.current = false;
+            setPreviewRestoring(false);
+            previewRestoreFrameRef.current = window.requestAnimationFrame(() =>
+              settleRestoredFocus(12),
+            );
+          },
+        });
+      } else {
+        previewRestoringRef.current = false;
+        setPreviewRestoring(false);
+        previewRestoreFrameRef.current = window.requestAnimationFrame(() =>
+          settleRestoredFocus(12),
+        );
+      }
+    }
+    if (!restoreBrowsePosition) {
+      clearPreviewScrollHold();
+      setPreviewRestoring(false);
+    }
     try {
       if (api && library) {
         await api.closePreview({
@@ -3788,7 +3879,7 @@ function AppInner() {
         closingPreviewRef.current = null;
       }
     }
-  }, [api, library, navHistoryRef, previewAsset, setNavHistoryUi, syncActiveWorkspaceTabLocation]);
+  }, [api, armPreviewScrollHold, clearPreviewScrollHold, library, navHistoryRef, previewAsset, setNavHistoryUi, syncActiveWorkspaceTabLocation]);
 
   // Collection tree helper
   const collectionTree = useMemo(() => {
@@ -4951,14 +5042,13 @@ function AppInner() {
       const extent = Math.max(0, canvas.scrollHeight - canvas.clientHeight);
       canvas.scrollTop = resolveWorkspaceScrollTop(viewport, extent);
     }
+    // Cancel any in-flight restore first (its onComplete would clear the
+    // pending ref). Re-arm afterwards so the layout effect can place the
+    // offset in the commit where new content paints.
     restoreCurrentWorkspaceHistoryViewport(viewport, request.isCurrent, () => {
       pendingViewportRestoreRef.current = null;
       if (request.isCurrent()) setWorkspaceNavigationPending(false);
     });
-    // Arm the same-commit restore *after* the previous restore was cancelled
-    // (its onComplete clears the ref): the layout effect above positions the
-    // canvas before the browser paints the commit in which the new content
-    // lands, so the restored folder never shows a top-of-list first frame.
     pendingViewportRestoreRef.current = viewport;
   }
 
@@ -7756,6 +7846,7 @@ function AppInner() {
   async function executeSearchDefinition(
     definition: SearchDefinition,
     navigation?: WorkspaceNavigationRequest,
+    reloadViewport?: WorkspaceNavViewport,
   ) {
     if (!api || !library) return;
     const request = createWorkspaceNavigationRequest(navigation, "none");
@@ -7837,7 +7928,16 @@ function AppInner() {
         snippets: result.value.snippets,
       });
     }
-    if (!request.deferReveal) finishWorkspaceNavigation(request);
+    if (
+      shouldRestoreViewportAfterBrowseReload(
+        request.deferReveal ? "silent" : "submit",
+      )
+    ) {
+      finishWorkspaceNavigation(
+        request,
+        reloadViewport ?? captureWorkspaceNavViewport(workspaceCanvasRef.current),
+      );
+    }
     return result.value;
   }
 
@@ -7847,12 +7947,36 @@ function AppInner() {
   ) {
     event?.preventDefault();
     if (!api || !library) return;
+    if (opts?.silent && (previewAssetRef.current || previewRestoringRef.current)) {
+      return;
+    }
+    if (opts?.silent) {
+      try {
+        await executeSearchDefinition(currentQueryDefinition(), {
+          historyMode: "none",
+          isCurrent: () => true,
+          deferReveal: true,
+        });
+      } catch (caught) {
+        setError(toMessage(caught, t("toast.searchFailed"), locale));
+      } finally {
+        setUiState("ready");
+      }
+      return;
+    }
+    const reloadViewport = captureWorkspaceNavViewport(workspaceCanvasRef.current);
     const request = beginWorkspaceNavigationRequest("none");
     try {
-      await closeAssetPreview(false);
+      if (!opts?.silent) {
+        await closeAssetPreview(false);
+      }
       if (!request.isCurrent()) return;
       const definition = currentQueryDefinition();
-      const result = await executeSearchDefinition(definition, request);
+      const result = await executeSearchDefinition(
+        definition,
+        request,
+        reloadViewport,
+      );
       // Serpent-huvw: discovery debounce / reload must not toast "搜索完成"
       // and wipe AI completion / error toasts.
       if (result && !opts?.silent) {
@@ -7916,6 +8040,7 @@ function AppInner() {
     )
       return;
     const timer = window.setTimeout(() => {
+      if (previewAssetRef.current || previewRestoringRef.current) return;
       void runSearch(undefined, { silent: true });
     }, 200);
     return () => window.clearTimeout(timer);
@@ -12691,7 +12816,7 @@ function AppInner() {
         )}
         <div
           aria-busy={workspaceNavigationPending}
-          className={`workspace-canvas-host${previewAsset ? " is-viewing" : previewRestoring ? " is-restoring" : ""}${workspaceNavigationPending ? " is-navigating" : ""}`}
+          className={`workspace-canvas-host${previewAsset || previewRestoring ? " is-viewing" : ""}${previewRestoring ? " is-restoring" : ""}${workspaceNavigationPending ? " is-navigating" : ""}`}
         >
           {renderedToastStack.length > 0
             ? createPortal(
