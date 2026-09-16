@@ -132,6 +132,71 @@ describe('planSyncActions (Serpent-xffq)', () => {
     ]);
   });
 
+  it('downloads when a live local asset is missing on disk but still on the remote', () => {
+    const localManifest = manifest();
+    localManifest.entries.a1 = entry({});
+    const remoteManifest = manifest();
+    remoteManifest.entries.a1 = entry({});
+    const actions = planSyncActions({
+      localAssets: new Map(),
+      localMissing: new Map([['a1', 'a/b.png']]),
+      localManifest,
+      remoteManifest,
+      remoteTombstones: new Set(),
+    });
+    expect(actions).toEqual([
+      expect.objectContaining({ type: 'download', assetId: 'a1' }),
+    ]);
+  });
+
+  it('downloads by the last known path when a missing live asset has no remote manifest entry', () => {
+    const localManifest = manifest();
+    localManifest.entries.a1 = entry({});
+    const actions = planSyncActions({
+      localAssets: new Map(),
+      localMissing: new Map([['a1', 'a/b.png']]),
+      localManifest,
+      remoteManifest: manifest(),
+      remoteTombstones: new Set(),
+    });
+    expect(actions).toEqual([
+      expect.objectContaining({ type: 'download', assetId: 'a1', entry: expect.objectContaining({ path: 'a/b.png' }) }),
+    ]);
+  });
+
+  it('clears a stale tombstone and downloads when the remote file is still present', () => {
+    const localManifest = manifest();
+    localManifest.entries.a1 = entry({});
+    const remoteManifest = manifest();
+    remoteManifest.entries.a1 = entry({});
+    const actions = planSyncActions({
+      localAssets: new Map(),
+      localMissing: new Map([['a1', 'a/b.png']]),
+      localManifest,
+      remoteManifest,
+      remoteTombstones: new Set(['a1']),
+    });
+    expect(actions).toEqual([
+      expect.objectContaining({ type: 'download', assetId: 'a1' }),
+      expect.objectContaining({ type: 'clear-tombstone', assetId: 'a1' }),
+    ]);
+  });
+
+  it('clears the tombstone when a restored local file is no longer in the last sync point', () => {
+    const remoteManifest = manifest();
+    remoteManifest.entries.a1 = entry({});
+    const actions = planSyncActions({
+      localAssets: new Map([['a1', asset()]]),
+      localManifest: manifest(),
+      remoteManifest,
+      remoteTombstones: new Set(['a1']),
+    });
+    expect(actions.some((action) => action.type === 'delete-local')).toBe(false);
+    expect(actions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'clear-tombstone', assetId: 'a1' }),
+    ]));
+  });
+
   it('plans local recycle for a remote tombstone', () => {
     const localManifest = manifest();
     localManifest.entries.a1 = entry({});

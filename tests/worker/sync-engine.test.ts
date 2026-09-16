@@ -84,6 +84,7 @@ interface FakeAsset {
 
 class FakeLibrary implements SyncLibraryPort {
   assets = new Map<string, FakeAsset>();
+  missingSyncIds: string[] = [];
   private cache = new Map<string, string>();
   calls: string[] = [];
   conflictCopies: Array<{ syncId: string; name: string }> = [];
@@ -91,20 +92,27 @@ class FakeLibrary implements SyncLibraryPort {
   constructor(private readonly displayName = '参考库') {}
 
   async syncSnapshot(libraryId: string) {
-    const assets = [...this.assets.values()].map((asset) => ({
-      syncId: asset.syncId,
-      assetId: asset.syncId,
-      relativePath: asset.relativePath,
-      contentHash: `hash-${Buffer.from(asset.body).toString('hex').slice(0, 8)}`,
-      size: asset.body.length,
-      modifiedAt: '2026-08-15T10:00:00Z',
-      ...(asset.metadata === undefined ? {} : { metadata: asset.metadata }),
-    }));
-    return { library: { libraryId, displayName: this.displayName }, assets };
+    const missing = new Set(this.missingSyncIds);
+    const assets = [...this.assets.values()]
+      .filter((asset) => !missing.has(asset.syncId))
+      .map((asset) => ({
+        syncId: asset.syncId,
+        assetId: asset.syncId,
+        relativePath: asset.relativePath,
+        contentHash: `hash-${Buffer.from(asset.body).toString('hex').slice(0, 8)}`,
+        size: asset.body.length,
+        modifiedAt: '2026-08-15T10:00:00Z',
+        ...(asset.metadata === undefined ? {} : { metadata: asset.metadata }),
+      }));
+    return { library: { libraryId, displayName: this.displayName }, assets, missingAssets: [...missing].map((syncId) => {
+      const asset = this.assets.get(syncId);
+      return { syncId, relativePath: asset?.relativePath ?? `${syncId}.bin` };
+    }) };
   }
 
   async applySyncContentUpdate(libraryId: string, syncId: string, relativePath: string, body: Buffer) {
     this.calls.push(`update:${syncId}:${relativePath}`);
+    this.missingSyncIds = this.missingSyncIds.filter((id) => id !== syncId);
     const existing = this.assets.get(syncId);
     if (existing) {
       existing.body = body;
@@ -164,6 +172,25 @@ describe('SyncEngine end-to-end (Serpent-xffq)', () => {
     expect(driver.files.get('参考库/manifest.json')).toBeTruthy();
     expect(await library.readSyncManifestCache('lib-1')).toBeTruthy();
     expect(outcome.conflicts).toEqual([]);
+  });
+
+  it('redownloads a previously synced asset whose local file disappeared', async () => {
+    const driver = new MemoryDriver();
+    const library = new FakeLibrary();
+    library.assets.set('s1', { syncId: 's1', relativePath: 'dir/a.png', body: Buffer.from('aaa') });
+    const engine = new SyncEngine(library, { deviceId: 'dev-a' });
+    engine.buildDriver = () => driver;
+
+    await engine.syncOnce('lib-1', root);
+    library.missingSyncIds = ['s1'];
+    const outcome = await engine.syncOnce('lib-1', root);
+
+    expect(outcome.report.remoteDeletes).toBe(0);
+    expect(outcome.report.localRecycles).toBe(0);
+    expect(outcome.report.downloads).toBe(1);
+    expect(library.assets.get('s1')?.body.toString()).toBe('aaa');
+    expect(driver.files.get('参考库/assets/dir/a.png')?.toString()).toBe('aaa');
+    expect(library.missingSyncIds).toEqual([]);
   });
 
   it('downloads remote assets onto a fresh device', async () => {

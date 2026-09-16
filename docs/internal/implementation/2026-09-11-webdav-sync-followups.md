@@ -39,9 +39,10 @@
 4. **远端已有 `libraryId` 后，后写入设备不得用本机 UUID 覆盖。** `displayName` 以远端已有值为准，直到产品另做「重命名库并传播」。
 5. **一次同步不得因单个资产 HTTP 409 让整库停在 CONFLICT 循环。** 失败要落到该资产，其余动作继续，会话能写回一致的 manifest。
 6. **已进回收站或永久删除的资产，缺 artifact 不得把浏览界面打穿。**
-7. **迁移只加不改。** 元数据走交换格式文件，不改现有表语义。
-8. **Renderer 不接收路径/SQL。** WebDAV I/O 只在 Worker。
-9. 改资源库 / 同步引擎必须跑完 `npm run test:library-availability`，并补 sync plan/runner/engine 定向测试。
+7. **磁盘缺失不是删除。** 库内行仍在、未进回收站时，同步从远端拉回，禁止写墓碑、禁止批量进回收站。只有 Serpent 内回收站/永久删除才传播删除。产品确认见规格 §6.6 与 `Serpent-9e2a34`。
+8. **迁移只加不改。** 元数据走交换格式文件，不改现有表语义。
+9. **Renderer 不接收路径/SQL。** WebDAV I/O 只在 Worker。
+10. 改资源库 / 同步引擎必须跑完 `npm run test:library-availability`，并补 sync plan/runner/engine 定向测试。
 
 ## 4. 明确不做（本轮）
 

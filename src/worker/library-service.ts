@@ -23813,6 +23813,13 @@ export class LibraryService {
     return syncId;
   }
 
+  private readAssetSyncId(openLibrary: OpenLibrary, assetId: string): string | null {
+    const row = openLibrary.connection
+      .prepare('SELECT sync_id FROM assets WHERE asset_id = ?')
+      .get(assetId) as { sync_id: string | null } | undefined;
+    return row?.sync_id ?? null;
+  }
+
   private assetRowBySyncId(openLibrary: OpenLibrary, syncId: string) {
     return openLibrary.connection
       .prepare(
@@ -23833,6 +23840,8 @@ export class LibraryService {
 
   /**
    * 计算当前库的同步快照：每个可用资产的 syncId、内容哈希与路径。
+   * 磁盘文件缺失但库内行仍在的 syncId 单独列出，供规划器从远端拉回，
+   * 而不是当成用户删除去写墓碑。
    * 大库全量哈希耗时由调用方在后台执行；快照是 planSyncActions 的本地输入。
    */
   syncSnapshot(libraryId: string): {
@@ -23846,10 +23855,11 @@ export class LibraryService {
       modifiedAt: string;
       metadata?: SyncAssetMetadata;
     }>;
+    missingAssets: Array<{ syncId: string; relativePath: string }>;
   } {
     const openLibrary = this.requireOpenLibrary(libraryId);
     const assets = this.listAssets({ libraryId, recursive: true }).filter(
-      (asset) => asset.availability === 'available' && asset.deletedAt === null,
+      (asset) => asset.deletedAt === null,
     );
     const out: Array<{
       syncId: string;
@@ -23860,9 +23870,21 @@ export class LibraryService {
       modifiedAt: string;
       metadata?: SyncAssetMetadata;
     }> = [];
+    const missingAssets: Array<{ syncId: string; relativePath: string }> = [];
     for (const asset of assets) {
-      const absolutePath = this.resolveAssetPath(libraryId, asset.assetId);
-      if (!existsSync(absolutePath)) continue;
+      let absolutePath: string | undefined;
+      try {
+        absolutePath = this.resolveAssetPath(libraryId, asset.assetId);
+      } catch {
+        const syncId = this.readAssetSyncId(openLibrary, asset.assetId);
+        if (syncId) missingAssets.push({ syncId, relativePath: asset.relativeFilePath });
+        continue;
+      }
+      if (asset.availability !== 'available' || !existsSync(absolutePath)) {
+        const syncId = this.readAssetSyncId(openLibrary, asset.assetId);
+        if (syncId) missingAssets.push({ syncId, relativePath: asset.relativeFilePath });
+        continue;
+      }
       out.push({
         syncId: this.ensureAssetSyncId(openLibrary, asset.assetId),
         assetId: asset.assetId,
@@ -23879,6 +23901,7 @@ export class LibraryService {
     return {
       library: { libraryId, displayName: this.libraryDisplayName(libraryId) },
       assets: out,
+      missingAssets,
     };
   }
 

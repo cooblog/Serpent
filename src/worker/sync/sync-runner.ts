@@ -343,6 +343,10 @@ async function executeSyncAction(
       result.tombstones += 1;
       break;
     }
+    case 'clear-tombstone': {
+      await deleteRemoteIfPresent(driver, `${libraryDirectory}/${SYNC_TRASH_DIR}/${action.assetId}.json`);
+      break;
+    }
     case 'delete-local': {
       await context.recycleLocalAsset(action.assetId);
       delete manifest.entries[action.assetId];
