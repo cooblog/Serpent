@@ -13034,6 +13034,9 @@ export class LibraryService {
       directAssetCount: 0,
       childFolderCount: 0,
       createdAt,
+      // Every summary path reports appearance, so a single-row return and
+      // listManagedFolders must not disagree (Serpent-df3049 follow-up).
+      appearance: null,
     };
     try {
       mkdirSync(targetPath);
@@ -17963,6 +17966,8 @@ export class LibraryService {
         // Serpent-316493: echo the requested parent (null = library root).
         parentFolderId,
         createdAt: now,
+        // New linked root: default look, matching listLinkedFolders.
+        appearance: null,
       };
     } catch (error) {
       emitLinkedProgress('failed', 0, 0, 0, 0, true);
@@ -17981,10 +17986,19 @@ export class LibraryService {
     this.cancelReconciliationForClientMutation(input.libraryId);
     const folder = openLibrary.connection
       .prepare(
-        'SELECT folder_id, display_name, created_at FROM linked_folders WHERE folder_id = ?',
+        `SELECT folder_id, display_name, created_at, appearance_glyph_kind,
+                appearance_glyph_value, appearance_color_id
+           FROM linked_folders WHERE folder_id = ?`,
       )
       .get(input.folderId) as
-        | { folder_id: string; display_name: string; created_at: string }
+        | {
+            folder_id: string;
+            display_name: string;
+            created_at: string;
+            appearance_glyph_kind?: string | null;
+            appearance_glyph_value?: string | null;
+            appearance_color_id?: string | null;
+          }
         | undefined;
     if (!folder) throw new LibraryServiceError('FOLDER_NOT_FOUND');
 
@@ -18113,6 +18127,12 @@ export class LibraryService {
       relativePath: '',
       parentFolderId: null,
       createdAt: folder.created_at,
+      // Relinking keeps the custom look the user already chose.
+      appearance: sanitizeEntityAppearance({
+        glyphKind: folder.appearance_glyph_kind,
+        glyphValue: folder.appearance_glyph_value,
+        colorId: folder.appearance_color_id,
+      }),
     };
   }
 
@@ -18697,6 +18717,8 @@ export class LibraryService {
       position,
       assetCount: 0,
       childCollectionCount: 0,
+      // Single-row return must match listCollections, which always reports it.
+      appearance: null,
     };
   }
 
@@ -32835,6 +32857,8 @@ export class LibraryService {
       queryDefinition: input.queryDefinitionJson,
       position: 0,
       assetCount: this.countSmartCollectionMatches(input.libraryId, definition),
+      // Single-row return must match listSmartCollections.
+      appearance: null,
     };
   }
 
