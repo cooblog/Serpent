@@ -1,10 +1,16 @@
 import type { AssetSummary, BrowseLayoutEntry } from "../shared/asset-types";
 import {
+  resolveCaptionBandSource,
+  type CaptionBandAsset,
+  type CaptionBandSource,
+} from "./asset-caption-band";
+import {
   ASSET_GRID_GAP_PX,
   aspectRatioForAsset,
   countFittingColumns,
   distributeMasonryItems,
   layoutJustifiedRows,
+  type JustifiedRow,
 } from "./asset-grid-layout";
 import {
   resolveJustifiedCaptionBandPx,
@@ -120,14 +126,14 @@ export function masonryColumnWidthPx(
 }
 
 export function estimateMasonryCardBodyPx(
-  asset: Pick<AssetSummary, "width" | "height">,
+  asset: CaptionBandAsset,
   columnWidthPx: number,
   showCaption: boolean,
-  captionBandPx: number = MASONRY_CAPTION_BAND_PX,
+  captionBandPx: CaptionBandSource = MASONRY_CAPTION_BAND_PX,
 ): number {
   return (
     estimateMasonryPreviewHeightPx(asset.width, asset.height, columnWidthPx) +
-    (showCaption ? Math.max(0, captionBandPx) : 0)
+    (showCaption ? resolveCaptionBandSource(captionBandPx, asset) : 0)
   );
 }
 
@@ -146,7 +152,7 @@ export function layoutMasonryAssetRects(
   availableWidth: number,
   cardSize: number,
   showCaption: boolean,
-  captionBandPx: number = MASONRY_CAPTION_BAND_PX,
+  captionBandPx: CaptionBandSource = MASONRY_CAPTION_BAND_PX,
 ): CanvasAssetLayoutRect[] {
   const columnCount = countFittingColumns(availableWidth, cardSize);
   const columnWidth = masonryColumnWidthPx(availableWidth, columnCount);
@@ -180,11 +186,17 @@ export function layoutMasonryAssetRects(
   return rects;
 }
 
+/**
+ * Tiled (justified) rows reserve one caption band per row: the tallest band any
+ * card in that row needs (Serpent-b1b0f2). A row whose assets all lack a
+ * resolution line therefore shrinks, while a row containing one card with
+ * resolution still keeps every card in it aligned.
+ */
 export function layoutJustifiedAssetRects(
   assets: readonly BrowseLayoutEntry[],
   availableWidth: number,
   cardSize: number,
-  captionBandPx: number = DEFAULT_JUSTIFIED_CAPTION_BAND_PX,
+  captionBandPx: CaptionBandSource = DEFAULT_JUSTIFIED_CAPTION_BAND_PX,
 ): CanvasAssetLayoutRect[] {
   if (!(availableWidth > 0) || assets.length === 0) return [];
   const rows = layoutJustifiedRows(
@@ -196,12 +208,13 @@ export function layoutJustifiedAssetRects(
     cardSize,
     ASSET_GRID_GAP_PX,
   );
-  const caption = Math.max(0, captionBandPx);
+  const entryById = new Map(assets.map((asset) => [asset.assetId, asset] as const));
   const rects: CanvasAssetLayoutRect[] = [];
   let y = 0;
   for (const row of rows) {
-    let x = 0;
+    const caption = justifyRowCaptionBandPx(row, entryById, captionBandPx);
     const height = row.height + caption;
+    let x = 0;
     for (const item of row.items) {
       rects.push({
         id: item.id,
@@ -215,6 +228,21 @@ export function layoutJustifiedAssetRects(
     y += height + ASSET_GRID_GAP_PX;
   }
   return rects;
+}
+
+/** Tallest caption band any card in this justified row needs. */
+export function justifyRowCaptionBandPx(
+  row: Pick<JustifiedRow, "items">,
+  entryById: ReadonlyMap<string, BrowseLayoutEntry>,
+  captionBandPx: CaptionBandSource,
+): number {
+  let band = 0;
+  for (const item of row.items) {
+    const entry = entryById.get(item.id);
+    if (!entry) continue;
+    band = Math.max(band, resolveCaptionBandSource(captionBandPx, entry));
+  }
+  return band;
 }
 
 export function hitTestCanvasAssetLayout(

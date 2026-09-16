@@ -16,9 +16,13 @@ import {
   distributeIntegerRowWidths,
 } from "../asset-grid-layout";
 import {
+  resolveCaptionBandSource,
+  type CaptionBandAsset,
+  type CaptionBandSource,
+} from "../asset-caption-band";
+import {
   estimateMasonryCardBodyPx,
   masonryColumnWidthPx,
-  MASONRY_CAPTION_BAND_PX,
   publishCanvasAssetLayoutIndex,
   type CanvasAssetLayoutIndex,
 } from "../canvas-asset-layout";
@@ -67,16 +71,25 @@ function virtualJustifiedSlotStyle(input: {
  * (Serpent-614293). Masonry already does this with an explicit slot height.
  * Do not clip overflow here: the selection ring is an outward 2px box-shadow
  * that must paint into the 14px row gap (REQ-SELECT-003 / Serpent-ebff32).
+ *
+ * `captionBandPx` publishes the row's own caption band so its cards reserve
+ * exactly the tallest band the row needs (Serpent-b1b0f2).
  */
 export function virtualJustifiedRowStyle(input: {
   bodyHeightPx: number;
   isLast: boolean;
+  captionBandPx?: number;
 }): CSSProperties {
   return {
     height: Math.max(1, Math.round(input.bodyHeightPx)),
     flexShrink: 0,
     overflow: "visible",
     marginBottom: input.isLast ? undefined : ASSET_GRID_GAP_PX,
+    ...(input.captionBandPx === undefined
+      ? {}
+      : {
+          ["--justified-caption-band" as string]: `${Math.max(0, input.captionBandPx)}px`,
+        }),
   };
 }
 
@@ -267,7 +280,7 @@ export function buildMasonryGeometry(input: {
   columnCount: number;
   columnWidth: number;
   showCaption: boolean;
-  captionBand: number;
+  captionBand: CaptionBandSource;
   entryAt: (index: number) => BrowseLayoutEntry;
 }): MasonryColumnGeometry[] {
   const total = Math.max(0, Math.trunc(input.total));
@@ -310,7 +323,7 @@ export function buildChunkedMasonryGeometry(input: {
   columnCount: number;
   columnWidth: number;
   showCaption: boolean;
-  captionBand: number;
+  captionBand: CaptionBandSource;
   geometryEntries: ReadonlyMap<number, BrowseLayoutEntry>;
 }): MasonryColumnGeometry[] {
   const total = Math.max(0, Math.trunc(input.total));
@@ -453,6 +466,8 @@ function makeMasonryLayoutIndex(input: {
 type JustifiedRowGeometry = {
   previewHeight: number;
   bodyHeight: number;
+  /** Tallest caption band this row's own cards need (Serpent-b1b0f2). */
+  captionBand: number;
   widths: number[];
   offset: number;
 };
@@ -471,18 +486,20 @@ function buildJustifiedRowGeometry(input: {
   itemsPerRow: number;
   availableWidth: number;
   targetHeight: number;
-  captionBand: number;
+  captionBand: CaptionBandSource;
   entryAt: (index: number) => BrowseLayoutEntry;
 }): JustifiedRowGeometry {
   const start = input.row * input.itemsPerRow;
   const count = Math.min(input.itemsPerRow, input.total - start);
   const width = Math.max(1, Math.round(input.availableWidth));
   const targetHeight = Math.max(1, Math.round(input.targetHeight));
-  const captionBand = Math.max(0, input.captionBand);
-  const ratios = Array.from({ length: Math.max(0, count) }, (_, itemOffset) => {
-    const entry = input.entryAt(start + itemOffset);
-    return aspectRatioForAsset(entry.width, entry.height);
-  });
+  const entries = Array.from({ length: Math.max(0, count) }, (_, itemOffset) =>
+    input.entryAt(start + itemOffset));
+  let captionBand = 0;
+  for (const entry of entries) {
+    captionBand = Math.max(captionBand, resolveCaptionBandSource(input.captionBand, entry));
+  }
+  const ratios = entries.map((entry) => aspectRatioForAsset(entry.width, entry.height));
   const usable = Math.max(1, width - Math.max(0, count - 1) * ASSET_GRID_GAP_PX);
   const naturalWidth = ratios.reduce((sum, ratio) => sum + ratio, 0) * targetHeight;
   let scale = naturalWidth > 0 ? usable / naturalWidth : 1;
@@ -492,7 +509,13 @@ function buildJustifiedRowGeometry(input: {
   const widths = withholdStretch
     ? ratios.map((ratio) => Math.max(1, Math.round(ratio * previewHeight)))
     : distributeIntegerRowWidths(ratios, previewHeight, usable);
-  return { previewHeight, bodyHeight: previewHeight + captionBand, widths, offset: 0 };
+  return {
+    previewHeight,
+    bodyHeight: previewHeight + captionBand,
+    captionBand,
+    widths,
+    offset: 0,
+  };
 }
 
 export function buildJustifiedGeometry(input: {
@@ -500,14 +523,13 @@ export function buildJustifiedGeometry(input: {
   itemsPerRow: number;
   availableWidth: number;
   targetHeight: number;
-  captionBand: number;
+  captionBand: CaptionBandSource;
   entryAt: (index: number) => BrowseLayoutEntry;
 }): JustifiedRowGeometry[] {
   const total = Math.max(0, Math.trunc(input.total));
   const itemsPerRow = Math.max(1, Math.trunc(input.itemsPerRow));
   const width = Math.max(1, Math.round(input.availableWidth));
   const targetHeight = Math.max(1, Math.round(input.targetHeight));
-  const captionBand = Math.max(0, input.captionBand);
   const rows: JustifiedRowGeometry[] = [];
   let offset = 0;
   for (let start = 0; start < total; start += itemsPerRow) {
@@ -517,7 +539,7 @@ export function buildJustifiedGeometry(input: {
       itemsPerRow,
       availableWidth: width,
       targetHeight,
-      captionBand,
+      captionBand: input.captionBand,
       entryAt: input.entryAt,
     });
     rows.push({ ...row, offset });
@@ -542,6 +564,7 @@ function justifiedModelFromDenseRows(
     rowAt: (row) => rows[row] ?? {
       previewHeight: 1,
       bodyHeight: 1,
+      captionBand: 0,
       widths: [],
       offset: totalHeight,
     },
@@ -555,7 +578,7 @@ export function buildChunkedJustifiedGeometry(input: {
   itemsPerRow: number;
   availableWidth: number;
   targetHeight: number;
-  captionBand: number;
+  captionBand: CaptionBandSource;
   geometryEntries: ReadonlyMap<number, BrowseLayoutEntry>;
 }): JustifiedGeometryModel {
   const total = Math.max(0, Math.trunc(input.total));
@@ -820,20 +843,20 @@ export function VirtualMasonryColumns({
   layout,
   cardSize,
   showCaption,
-  captionBandPx,
+  captionBandForAsset,
   renderCard,
 }: {
   assets: AssetSummary[];
   layout: VirtualBrowseLayout;
   cardSize: number;
   showCaption: boolean;
-  captionBandPx?: number;
+  /** Every card resolves its own caption band (Serpent-b1b0f2). */
+  captionBandForAsset: (asset: CaptionBandAsset) => number;
   renderCard: (
     asset: AssetSummary,
     options: BrowseCardRenderOptions,
   ) => ReactNode;
 }) {
-  const resolvedCaptionBandPx = captionBandPx ?? MASONRY_CAPTION_BAND_PX;
   const containerRef = useRef<HTMLDivElement>(null);
   const [availableWidth, setAvailableWidth] = useState(0);
   const viewport = useCanvasLocalViewport(containerRef, cardSize);
@@ -850,7 +873,7 @@ export function VirtualMasonryColumns({
           columnCount,
           columnWidth,
           showCaption,
-          captionBand: resolvedCaptionBandPx,
+          captionBand: captionBandForAsset,
           geometryEntries: layout.geometryEntries,
         })
       : buildMasonryGeometry({
@@ -858,14 +881,14 @@ export function VirtualMasonryColumns({
           columnCount,
           columnWidth,
           showCaption,
-          captionBand: resolvedCaptionBandPx,
+          captionBand: captionBandForAsset,
           entryAt: (index) => layout.geometryEntries.get(index) ?? {
             assetId: `__geometry__:${index}`,
             width: null,
             height: null,
           },
         }),
-    [columnCount, columnWidth, layout.geometryEntries, layout.total, resolvedCaptionBandPx, showCaption],
+    [captionBandForAsset, columnCount, columnWidth, layout.geometryEntries, layout.total, showCaption],
   );
   useVirtualScrollAnchor(containerRef, layout.geometryRevision);
   const layoutIndex = useMemo(
@@ -944,7 +967,10 @@ export function VirtualMasonryColumns({
                     data-layout-rank={index}
                     key={virtualBrowseSlotKey(index)}
                     style={virtualMasonryCardSlotStyle({
-                      previewHeightPx: Math.max(1, bodyHeight - (showCaption ? resolvedCaptionBandPx : 0)),
+                      previewHeightPx: Math.max(
+                        1,
+                        bodyHeight - (showCaption ? captionBandForAsset(entry) : 0),
+                      ),
                       bodyHeightPx: bodyHeight,
                       isLast,
                     })}
@@ -970,13 +996,14 @@ export function VirtualJustifiedAssetRows({
   assets,
   layout,
   cardSize,
-  captionBandPx,
+  captionBandForAsset,
   renderCard,
 }: {
   assets: AssetSummary[];
   layout: VirtualBrowseLayout;
   cardSize: number;
-  captionBandPx: number;
+  /** Each row resolves the tallest band its own cards need (Serpent-b1b0f2). */
+  captionBandForAsset: (asset: CaptionBandAsset) => number;
   renderCard: (
     asset: AssetSummary,
     options: BrowseCardRenderOptions,
@@ -1000,7 +1027,7 @@ export function VirtualJustifiedAssetRows({
           itemsPerRow,
           availableWidth,
           targetHeight: cardSize,
-          captionBand: captionBandPx,
+          captionBand: captionBandForAsset,
           geometryEntries: layout.geometryEntries,
         })
       : justifiedModelFromDenseRows(buildJustifiedGeometry({
@@ -1008,14 +1035,14 @@ export function VirtualJustifiedAssetRows({
           itemsPerRow,
           availableWidth,
           targetHeight: cardSize,
-          captionBand: captionBandPx,
+          captionBand: captionBandForAsset,
           entryAt: (index) => layout.geometryEntries.get(index) ?? {
             assetId: `__geometry__:${index}`,
             width: null,
             height: null,
           },
         })),
-    [availableWidth, captionBandPx, cardSize, itemsPerRow, layout.geometryEntries, layout.total],
+    [availableWidth, captionBandForAsset, cardSize, itemsPerRow, layout.geometryEntries, layout.total],
   );
   useVirtualScrollAnchor(containerRef, layout.geometryRevision);
   const layoutIndex = useMemo(
@@ -1058,7 +1085,6 @@ export function VirtualJustifiedAssetRows({
       style={{
         gap: 0,
         minHeight: rowWindow.totalHeight,
-        ["--justified-caption-band" as string]: `${captionBandPx}px`,
       }}
     >
       {rowWindow.spacerBefore > 0 ? (
@@ -1084,6 +1110,7 @@ export function VirtualJustifiedAssetRows({
             style={virtualJustifiedRowStyle({
               bodyHeightPx: bodyHeight,
               isLast: rowIndex === geometry.count - 1,
+              captionBandPx: rowGeometry?.captionBand ?? 0,
             })}
           >
             {Array.from({ length: Math.max(0, count) }, (_, itemOffset) => {

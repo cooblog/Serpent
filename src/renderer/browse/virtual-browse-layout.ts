@@ -95,14 +95,19 @@ function mergeLayoutEntries(
       nextAssetIdsByIndex.delete(index);
       nextAssetIdsByIndex.set(index, entry.assetId);
     }
+    // mediaType decides whether a card renders a resolution line, so it is part
+    // of the geometry identity: a media-type-only correction must reflow the
+    // caption band instead of leaving the slot one line short (Serpent-b1b0f2).
     const geometryChanged = identityChanged
       || previous?.width !== entry.width
-      || previous?.height !== entry.height;
+      || previous?.height !== entry.height
+      || previous?.mediaType !== entry.mediaType;
     if (geometryChanged) {
       (mutableGeometryEntries ??= new Map(current.geometryEntries)).set(index, {
         assetId: entry.assetId,
         width: entry.width,
         height: entry.height,
+        ...(entry.mediaType === undefined ? {} : { mediaType: entry.mediaType }),
       });
       geometryRevisionDelta += 1;
     }
@@ -292,7 +297,8 @@ export function evictVirtualSummaryPage(
         ? {}
         : { previewRevisionId: entry.previewRevisionId }),
       // Eviction keeps the slot renderable from the index, so it must keep the
-      // card type too; dropping it would flip the card back to `other`.
+      // caption band inputs too: dropping mediaType would shrink the band and
+      // shift every row below it (Serpent-b1b0f2).
       ...(entry.mediaType === undefined ? {} : { mediaType: entry.mediaType }),
     };
     const hasGeometry = geometry.width !== undefined

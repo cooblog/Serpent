@@ -8,6 +8,11 @@ import {
 } from "react";
 
 import type { AssetSummary, BrowseLayoutEntry } from "../shared/asset-types";
+import {
+  createCaptionBandResolver,
+  type CaptionBandAsset,
+  type CardCaptionFields,
+} from "./asset-caption-band";
 import { FONT_SIZE_SCALES } from "./font-size-preferences";
 import {
   ASSET_GRID_GAP_PX,
@@ -16,6 +21,7 @@ import {
   type JustifiedPlacement,
 } from "./asset-grid-layout";
 import {
+  justifyRowCaptionBandPx,
   layoutJustifiedAssetRects,
   overlayLiveAssetGeometry,
   publishCanvasAssetLayout,
@@ -65,6 +71,10 @@ type JustifiedAssetRowsProps = {
   layout: BrowseLayoutEntry[];
   virtualLayout?: VirtualBrowseLayout | null;
   cardSize: number;
+  /** Caption toggles; each row resolves the tallest band its cards need (Serpent-b1b0f2). */
+  captionFields: CardCaptionFields;
+  /** A content-search snippet occupies the secondary caption line. */
+  snippetLine?: boolean;
   renderCard: (
     asset: AssetSummary,
     options?: BrowseCardRenderOptions,
@@ -73,19 +83,28 @@ type JustifiedAssetRowsProps = {
     entry: BrowseLayoutEntry,
     options?: BrowseCardRenderOptions,
   ) => ReactNode;
-  /** @deprecated Ignored. Preview height is locked to layout placement. */
-  captionBandPx?: number;
+};
+
+type JustifiedAssetRowsBodyProps = Omit<
+  JustifiedAssetRowsProps,
+  "captionFields" | "snippetLine" | "virtualLayout"
+> & {
+  captionBandForAsset: (asset: CaptionBandAsset) => number;
 };
 
 export function JustifiedAssetRows(props: JustifiedAssetRowsProps) {
   const { preferences } = useFontSize();
-  const captionBandPx = resolveJustifiedCaptionBandPx(
-    {
-      dimensions: true,
-      name: true,
-      secondary: true,
-    },
-    FONT_SIZE_SCALES[preferences.preference],
+  const captionFields = props.captionFields;
+  const snippetLine = props.snippetLine;
+  const captionBandForAsset = useMemo(
+    () =>
+      createCaptionBandResolver({
+        mode: "justified",
+        fields: captionFields,
+        fontScale: FONT_SIZE_SCALES[preferences.preference],
+        snippetLine,
+      }),
+    [captionFields, preferences.preference, snippetLine],
   );
   if (props.virtualLayout) {
     return (
@@ -93,22 +112,31 @@ export function JustifiedAssetRows(props: JustifiedAssetRowsProps) {
         assets={props.assets}
         layout={props.virtualLayout}
         cardSize={props.cardSize}
-        captionBandPx={captionBandPx}
+        captionBandForAsset={captionBandForAsset}
         renderCard={props.renderCard}
       />
     );
   }
-  return <RegularJustifiedAssetRows {...props} captionBandPx={captionBandPx} />;
+  return (
+    <RegularJustifiedAssetRows
+      assets={props.assets}
+      layout={props.layout}
+      cardSize={props.cardSize}
+      captionBandForAsset={captionBandForAsset}
+      renderCard={props.renderCard}
+      renderLayoutPreview={props.renderLayoutPreview}
+    />
+  );
 }
 
 function RegularJustifiedAssetRows({
   assets,
   layout,
   cardSize,
+  captionBandForAsset,
   renderCard,
   renderLayoutPreview,
-  captionBandPx = JUSTIFIED_CAPTION_BAND_PX,
-}: JustifiedAssetRowsProps) {
+}: JustifiedAssetRowsBodyProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [availableWidth, setAvailableWidth] = useState(0);
   const viewport = useCanvasLocalViewport(containerRef, cardSize);
@@ -129,6 +157,10 @@ function RegularJustifiedAssetRows({
         width: asset.width,
         height: asset.height,
         previewArtifactId: asset.thumbnailArtifactId,
+        // Caption bands need the media type: without it the entry looks like an
+        // unresolved placeholder and would reserve a resolution line the card
+        // never renders.
+        mediaType: asset.mediaType,
       })),
     [assets],
   );
@@ -162,13 +194,21 @@ function RegularJustifiedAssetRows({
       layoutEntries,
       availableWidth,
       cardSize,
-      captionBandPx,
+      captionBandForAsset,
     ),
-    [availableWidth, captionBandPx, cardSize, layoutEntries],
+    [availableWidth, captionBandForAsset, cardSize, layoutEntries],
   );
+  const rowCaptionBands = useMemo(() => {
+    const entryById = new Map(layoutEntries.map((entry) => [entry.assetId, entry] as const));
+    return rows.map((row) => justifyRowCaptionBandPx(row, entryById, captionBandForAsset));
+  }, [captionBandForAsset, layoutEntries, rows]);
   const rowBodies = useMemo(
-    () => rows.map((row) => row.height + captionBandPx),
-    [captionBandPx, rows],
+    () => rows.map((row, index) => row.height + (rowCaptionBands[index] ?? 0)),
+    [rowCaptionBands, rows],
+  );
+  const containerCaptionBand = useMemo(
+    () => rowCaptionBands.reduce((tallest, band) => Math.max(tallest, band), 0),
+    [rowCaptionBands],
   );
   const rowWindow = columnWindow(
     stackItemHeights(rowBodies),
@@ -189,7 +229,7 @@ function RegularJustifiedAssetRows({
       style={{
         gap: 0,
         minHeight: rowWindow.totalHeight,
-        ["--justified-caption-band" as string]: `${captionBandPx}px`,
+        ["--justified-caption-band" as string]: `${containerCaptionBand}px`,
       }}
     >
       {rowWindow.spacerBefore > 0 ? (
@@ -201,13 +241,15 @@ function RegularJustifiedAssetRows({
       {rows.slice(rowWindow.start, rowWindow.end).map((row, offset) => {
         const rowIndex = rowWindow.start + offset;
         const isLast = rowIndex === rows.length - 1;
+        const captionBand = rowCaptionBands[rowIndex] ?? 0;
         return (
           <div
             className="justified-row"
             key={`justified-row-${rowIndex}`}
             style={virtualJustifiedRowStyle({
-              bodyHeightPx: row.height + captionBandPx,
+              bodyHeightPx: row.height + captionBand,
               isLast,
+              captionBandPx: captionBand,
             })}
           >
             {row.items.map((placement) => {

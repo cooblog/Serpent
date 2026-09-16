@@ -311,7 +311,6 @@ import { buildMultiAssetMenuSkipReport } from "./menu-skip-report";
 import { useAssetSelection } from "./useAssetSelection";
 import { buildMarqueeLayoutKey } from "./marquee-layout-key";
 import {
-  MASONRY_DIMENSIONS_CAPTION_BAND_PX,
   readPublishedCanvasAssetLayout,
 } from "./canvas-asset-layout";
 import { useSelectionKeyboard } from "./use-selection-keyboard";
@@ -13660,17 +13659,8 @@ function AppInner() {
                                 />
                               ) : null
                             }
-                            showCaption={
-                              canvasPrefs.fields.name ||
-                              canvasPrefs.fields.size ||
-                              canvasPrefs.fields.date ||
-                              canvasPrefs.fields.dimensions
-                            }
-                            captionBandPx={
-                              canvasPrefs.fields.dimensions
-                                ? MASONRY_DIMENSIONS_CAPTION_BAND_PX
-                                : undefined
-                            }
+                            captionFields={canvasPrefs.fields}
+                            snippetLine={searchSnippets.size > 0}
                             suspendScrollRestoration={
                               Boolean(previewAsset || previewRestoring)
                             }
@@ -13681,6 +13671,8 @@ function AppInner() {
                             layout={visibleBrowseLayout}
                             virtualLayout={virtualBrowseLayout}
                             cardSize={assetCardSize}
+                            captionFields={canvasPrefs.fields}
+                            snippetLine={searchSnippets.size > 0}
                             renderCard={renderAssetCard}
                             renderLayoutPreview={(entry, renderOptions) =>
                               library ? (

@@ -96,6 +96,19 @@ export function isSupportedVideoExtension(extensionOrFilename: string): boolean 
   return videoExtensions.has(normalizedExtension(extensionOrFilename));
 }
 
+/**
+ * Media whose decoded width/height is a real pixel resolution (Serpent-b1b0f2).
+ *
+ * Only images (including GIF) and videos qualify. Documents carry page sizes and
+ * 3D models carry bounding-box sizes; users do not read those as a resolution,
+ * so cards, the Inspector summary and the resolution filter must all skip them.
+ */
+export function mediaTypeHasPixelResolution(
+  mediaType: string | null | undefined,
+): boolean {
+  return mediaType === 'image' || mediaType === 'video';
+}
+
 export function isChromiumDirectPlayVideoExtension(extensionOrFilename: string): boolean {
   return chromiumDirectPlayVideoExtensions.has(normalizedExtension(extensionOrFilename));
 }

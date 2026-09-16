@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
 
+import { createCaptionBandResolver } from "../../src/renderer/asset-caption-band";
+import {
+  MASONRY_CAPTION_BAND_PX,
+  MASONRY_DIMENSIONS_CAPTION_BAND_PX,
+} from "../../src/renderer/canvas-asset-layout";
+import { estimateMasonryPreviewHeightPx } from "../../src/renderer/masonry-preview-frame";
 import {
   buildChunkedJustifiedGeometry,
   buildChunkedMasonryGeometry,
@@ -11,6 +17,22 @@ import {
 
 function entry(assetId: string, width: number | null, height: number | null) {
   return { assetId, width, height };
+}
+
+const CAPTION_FIELDS = {
+  name: true,
+  size: true,
+  date: true,
+  dimensions: true,
+} as const;
+
+/** Visual asset whose pixel size was never decoded (unsupported avif/raw…). */
+function unsizedEntry(assetId: string) {
+  return { assetId, width: null, height: null, mediaType: "image" as const };
+}
+
+function sizedEntry(assetId: string, width = 100, height = 100) {
+  return { assetId, width, height, mediaType: "image" as const };
 }
 
 describe("virtual browse canvas geometry", () => {
@@ -129,5 +151,72 @@ describe("virtual browse canvas geometry", () => {
     expect(style.marginBottom).toBe(14);
     expect(virtualJustifiedRowStyle({ bodyHeightPx: 258, isLast: true }).marginBottom)
       .toBeUndefined();
+  });
+
+  it("publishes the row's own caption band on the row style (Serpent-b1b0f2)", () => {
+    const style = virtualJustifiedRowStyle({
+      bodyHeightPx: 258,
+      isLast: false,
+      captionBandPx: 41,
+    }) as Record<string, unknown>;
+    expect(style["--justified-caption-band"]).toBe("41px");
+    const withoutBand = virtualJustifiedRowStyle({
+      bodyHeightPx: 258,
+      isLast: true,
+    }) as Record<string, unknown>;
+    expect(withoutBand["--justified-caption-band"]).toBeUndefined();
+  });
+
+  it("gives each waterfall card its own caption band (Serpent-b1b0f2)", () => {
+    const resolver = createCaptionBandResolver({
+      mode: "masonry",
+      fields: CAPTION_FIELDS,
+    });
+    const geometry = buildMasonryGeometry({
+      total: 2,
+      columnCount: 2,
+      columnWidth: 200,
+      showCaption: true,
+      captionBand: resolver,
+      entryAt: (index) => (
+        index === 0 ? sizedEntry("sized") : unsizedEntry("unsized")
+      ),
+    });
+
+    const sizedColumn = geometry[0];
+    const unsizedColumn = geometry[1];
+    if (!sizedColumn || !unsizedColumn) throw new Error("expected two columns");
+    // Each card carries its own band: the sized card keeps the resolution line
+    // (56px), the undecoded one drops to the two-line band (42px).
+    expect(sizedColumn.heights[0]).toBe(
+      estimateMasonryPreviewHeightPx(100, 100, 200) + MASONRY_DIMENSIONS_CAPTION_BAND_PX,
+    );
+    expect(unsizedColumn.heights[0]).toBe(
+      estimateMasonryPreviewHeightPx(null, null, 200) + MASONRY_CAPTION_BAND_PX,
+    );
+  });
+
+  it("sizes a virtual tiled row by its tallest caption (Serpent-b1b0f2)", () => {
+    const resolver = createCaptionBandResolver({
+      mode: "justified",
+      fields: CAPTION_FIELDS,
+    });
+    const rows = buildJustifiedGeometry({
+      total: 4,
+      itemsPerRow: 2,
+      availableWidth: 800,
+      targetHeight: 200,
+      captionBand: resolver,
+      entryAt: (index) => (index === 2 ? sizedEntry(`sized-${index}`) : unsizedEntry(`plain-${index}`)),
+    });
+
+    expect(rows).toHaveLength(2);
+    const plainRow = rows[0];
+    const mixedRow = rows[1];
+    if (!plainRow || !mixedRow) throw new Error("expected two rows");
+    // Every card in a row shares the row band, which is the tallest one needed.
+    expect(mixedRow.captionBand).toBeGreaterThan(plainRow.captionBand);
+    expect(mixedRow.bodyHeight).toBe(mixedRow.previewHeight + mixedRow.captionBand);
+    expect(plainRow.bodyHeight).toBe(plainRow.previewHeight + plainRow.captionBand);
   });
 });

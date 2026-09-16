@@ -2,8 +2,8 @@ import { z } from 'zod';
 
 import {
   isSupportedImageExtension,
-  isSupportedModelExtension,
   isSupportedVideoExtension,
+  mediaTypeHasPixelResolution,
 } from '../shared/media-formats';
 
 // ---------------------------------------------------------------------------
@@ -291,16 +291,17 @@ export function shouldShowGridDimensions(
 ): boolean {
   if (!fields.dimensions || width == null || height == null) return false;
 
-  // Resolution is meaningful for visual media only. Keep this check next to
-  // the preference gate so loaded cards and layout placeholders cannot drift:
-  // PDF/HTML/text/audio metadata must never turn into a fake pixel caption.
+  // Resolution is meaningful for pixel media only. Keep this check next to the
+  // preference gate so loaded cards and layout placeholders cannot drift:
+  // PDF/HTML/text/audio metadata must never turn into a fake pixel caption, and
+  // a 3D model's bounding-box size is not a resolution users read off a card
+  // (Serpent-b1b0f2).
   if (media.mediaType != null) {
-    return ['image', 'video', 'model'].includes(media.mediaType);
+    return mediaTypeHasPixelResolution(media.mediaType);
   }
   const sourceName = media.sourceName?.trim();
   return sourceName != null && (
     isSupportedImageExtension(sourceName) ||
-    isSupportedVideoExtension(sourceName) ||
-    isSupportedModelExtension(sourceName)
+    isSupportedVideoExtension(sourceName)
   );
 }

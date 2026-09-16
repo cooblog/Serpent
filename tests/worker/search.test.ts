@@ -134,10 +134,11 @@ function createSecondAsset(
   libraryId: string,
   libraryPath: string,
   description?: string,
+  fileName?: string,
 ): string {
   const managedFolder = service.listManagedFolders(libraryId)[0]!;
   const assetId = randomUUID();
-  const assetFileName = `${assetId}.png`;
+  const assetFileName = fileName ?? `${assetId}.png`;
   const assetsPath = path.join(libraryPath, 'Assets', managedFolder.relativePath);
   writeFileSync(path.join(assetsPath, assetFileName), 'test content 2');
 
@@ -1365,10 +1366,19 @@ describe('search filters', () => {
     const { service, libraryId, assetId, libraryPath } = createLibraryWithAssetAndTags();
     const portraitId = createSecondAsset(service, libraryId, libraryPath, 'Portrait');
     const unknownId = createSecondAsset(service, libraryId, libraryPath, 'Unknown');
+    // A 3D model with its own bounding-box metadata: it owns no resolution, so
+    // no bucket may claim it (Serpent-b1b0f2).
+    const modelId = createSecondAsset(
+      service,
+      libraryId,
+      libraryPath,
+      'Model',
+      `model-${randomUUID()}.fbx`,
+    );
     const db = new TestDatabase(path.join(libraryPath, '.serpent', 'library.db'));
     const revisions = db.prepare(
-      'SELECT asset_id, current_revision_id FROM assets WHERE asset_id IN (?, ?)',
-    ).all(assetId, portraitId) as Array<{ asset_id: string; current_revision_id: string }>;
+      'SELECT asset_id, current_revision_id FROM assets WHERE asset_id IN (?, ?, ?)',
+    ).all(assetId, portraitId, modelId) as Array<{ asset_id: string; current_revision_id: string }>;
     const insert = db.prepare(
       `INSERT INTO revision_artifacts
          (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
@@ -1390,8 +1400,8 @@ describe('search filters', () => {
     }
     db.close();
 
-    // Both assets have long edge 1920 regardless of orientation; the
-    // metadata-less asset is omitted from positive matches.
+    // Both pixel assets have long edge 1920 regardless of orientation; the
+    // metadata-less asset and the 3D model are omitted from positive matches.
     const atLeast1K = service.searchAssets({
       libraryId,
       filters: [{ field: 'long_edge', ranges: [{ min: 1900 }], exclude: false }],
@@ -1411,12 +1421,14 @@ describe('search filters', () => {
     });
     expect(bucket2K.items).toHaveLength(0);
 
-    // Exclusion retains metadata-less assets, matching the other numeric fields.
+    // Exclusion retains metadata-less assets and non-pixel media, matching the
+    // other numeric fields.
     const excludeBig = service.searchAssets({
       libraryId,
       filters: [{ field: 'long_edge', ranges: [{ min: 1900 }], exclude: true }],
     });
-    expect(excludeBig.items.map((asset) => asset.assetId)).toEqual([unknownId]);
+    expect(excludeBig.items.map((asset) => asset.assetId).sort())
+      .toEqual([unknownId, modelId].sort());
     service.closeAll();
   });
 });
