@@ -24,8 +24,10 @@ import { createMediaSeekSession, type MediaSeekSession } from "./media-seek-sess
 import {
   clampScrubTime,
   formatVideoClockTime,
+  applyMediaAutoplayIntent,
   nextPlaybackIntent,
   scrubRatioFromClientX,
+  shouldAutoStartMediaPlayback,
   scrubRatioFromTime,
   scrubTimeFromRatio,
   shouldHandleVideoSpaceKey,
@@ -106,13 +108,20 @@ export function AudioPlayerControls({
   const [scrubRatio, setScrubRatio] = useState<number | null>(null);
   const [trailParticles, setTrailParticles] = useState<TrailParticle[]>([]);
   const [trailNowMs, setTrailNowMs] = useState(0);
+  const autoPlayRef = useRef(autoPlay);
+  const userPausedRef = useRef(false);
+  useEffect(() => {
+    autoPlayRef.current = autoPlay;
+  }, [autoPlay]);
 
   const togglePlayback = useCallback(() => {
     const audio = audioRef.current;
     if (!audio) return;
     if (nextPlaybackIntent(audio.paused) === "play") {
+      userPausedRef.current = false;
       void audio.play().catch(() => undefined);
     } else {
+      userPausedRef.current = true;
       audio.pause();
     }
   }, []);
@@ -140,6 +149,19 @@ export function AudioPlayerControls({
     if (!audio) return;
     applyViewerVolumeToMedia(audio, { volume, muted });
   }, [volume, muted, src]);
+
+  useEffect(() => {
+    userPausedRef.current = false;
+    const audio = audioRef.current;
+    if (!audio) return;
+    applyMediaAutoplayIntent(
+      audio,
+      shouldAutoStartMediaPlayback({
+        autoPlay,
+        userPaused: userPausedRef.current,
+      }),
+    );
+  }, [autoPlay, src]);
 
   // Particle trail pump: emit while playing; always prune/fade (incl. pause).
   // Serpent-mrsm: the pump only runs while there is something to draw — the
@@ -328,9 +350,18 @@ export function AudioPlayerControls({
         onEnded={() => setPaused(true)}
         onError={onError}
         onLoadedMetadata={(event) => {
-          setDuration(event.currentTarget.duration || 0);
+          const audio = event.currentTarget;
+          setDuration(audio.duration || 0);
           onReady?.();
           onPresentationReady?.();
+          if (
+            shouldAutoStartMediaPlayback({
+              autoPlay: autoPlayRef.current,
+              userPaused: userPausedRef.current,
+            })
+          ) {
+            applyMediaAutoplayIntent(audio, true);
+          }
         }}
         onPause={() => setPaused(true)}
         onPlay={() => setPaused(false)}

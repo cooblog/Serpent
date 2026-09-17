@@ -28,6 +28,41 @@ export function nextPlaybackIntent(paused: boolean): PlaybackIntent {
   return paused ? "play" : "pause";
 }
 
+/** Minimal media surface so autoplay intent stays unit-testable. */
+export type MediaPlaybackControls = {
+  paused: boolean;
+  pause(): void;
+  play(): Promise<void> | void;
+};
+
+/**
+ * Viewer navigation mounts the next surface with `autoPlay=false` so it can
+ * decode without sound. Promoting it only flips the prop; the HTML `autoPlay`
+ * attribute does not start an already-loaded element. Call this whenever the
+ * intended autoplay state changes, and again on `canplay` if the source was
+ * not ready yet.
+ */
+export function applyMediaAutoplayIntent(
+  media: MediaPlaybackControls,
+  autoPlay: boolean,
+): void {
+  if (autoPlay) {
+    if (media.paused) {
+      void Promise.resolve(media.play()).catch(() => undefined);
+    }
+    return;
+  }
+  if (!media.paused) media.pause();
+}
+
+/** True when a promoted viewer surface should start (or resume) playback. */
+export function shouldAutoStartMediaPlayback(options: {
+  autoPlay: boolean;
+  userPaused: boolean;
+}): boolean {
+  return options.autoPlay && !options.userPaused;
+}
+
 export function isEditableKeyboardTarget(
   target: KeyboardTargetLike | EventTarget | null,
 ): boolean {
