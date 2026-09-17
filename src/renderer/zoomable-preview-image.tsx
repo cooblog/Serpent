@@ -16,6 +16,7 @@ import { VIEWER_CHROME_TAB_INDEX } from "./viewer-focus-policy";
 import {
   isDecodedImage,
   resolveViewerImageDisplay,
+  shouldRecoverCachedFullImage,
 } from "./viewer-mip-upgrade";
 import {
   IDENTITY_VIEWER_DISPLAY_TRANSFORM,
@@ -121,6 +122,7 @@ export const ZoomableImage = forwardRef<
 ) {
   const t = useT();
   const imageRef = useRef<HTMLImageElement>(null);
+  const fullImageRef = useRef<HTMLImageElement>(null);
   const [decodedSource, setDecodedSource] = useState<string | null>(null);
   const [imageError, setImageError] = useState(false);
   const decodeRequestRef = useRef(0);
@@ -229,14 +231,28 @@ export const ZoomableImage = forwardRef<
     },
     [measureFromImage, notifyPresentationReady],
   );
+  const promoteDecodedImageRef = useRef(promoteDecodedImage);
+  promoteDecodedImageRef.current = promoteDecodedImage;
 
-  // Invalidate pending decode continuations before React can reconcile a new
-  // source. The source identity latch above also makes this safe across the
-  // passive-effect boundary of a thumbnail → original prop update.
-  useEffect(() => {
+  // Invalidate in layout, not a passive effect. A cache-hit `load` can fire
+  // during commit (ABCBA's second A); a later useEffect would bump the decode
+  // token after that promotion had already started, and no second load
+  // arrives. Recover here if the full-source image is already decoded.
+  useLayoutEffect(() => {
     decodeRequestRef.current += 1;
     setDecodedSource(null);
     setImageError(false);
+    const image = fullImageRef.current;
+    if (
+      image &&
+      shouldRecoverCachedFullImage({
+        image,
+        decodedSource: null,
+        source: fullSource,
+      })
+    ) {
+      promoteDecodedImageRef.current(image, fullSource);
+    }
   }, [fullSource, placeholderSrc, src]);
 
   const handleImageError = useCallback(() => {
@@ -369,7 +385,12 @@ export const ZoomableImage = forwardRef<
                 setImageError(false);
                 promoteDecodedImage(event.currentTarget, fullSource);
               }}
-              ref={fullLayerDecoded ? imageRef : undefined}
+              ref={(node) => {
+                fullImageRef.current = node;
+                if (fullLayerDecoded) {
+                  imageRef.current = node;
+                }
+              }}
               src={fullSource}
               style={{
                 width: displayW,
@@ -391,7 +412,10 @@ export const ZoomableImage = forwardRef<
               setImageError(false);
               promoteDecodedImage(event.currentTarget, paintSrc);
             }}
-            ref={imageRef}
+            ref={(node) => {
+              imageRef.current = node;
+              fullImageRef.current = node;
+            }}
             src={display.displayUrl ?? src}
             style={{
               width: displayW,
