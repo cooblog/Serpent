@@ -52,7 +52,6 @@ function makeActions(calls: RecordedCall[]): SidebarCommandActions {
     trashManagedFolder: record('trashManagedFolder'),
     deleteFolderFromDisk: record('deleteFolderFromDisk'),
     removeLinkedFolder: record('removeLinkedFolder'),
-    trashLinkedFolderSubtree: record('trashLinkedFolderSubtree'),
     renameOrganization: record('renameOrganization'),
     createSubcollection: record('createSubcollection'),
     editCollectionDetails: record('editCollectionDetails'),
@@ -180,7 +179,6 @@ describe('文件夹分支：可见性矩阵（与历史内联 JSX 条件一致�
       'folder.copy-path',
       'folder.copy',
       'folder.paste',
-      'folder.move-to-trash',
       'folder.delete-from-disk',
       'folder.remove-from-library',
     ]);
@@ -203,7 +201,6 @@ describe('文件夹分支：可见性矩阵（与历史内联 JSX 条件一致�
       'folder.copy-path',
       'folder.copy',
       'folder.paste',
-      'folder.move-to-trash',
       'folder.delete-from-disk',
     ]);
   });
@@ -222,7 +219,6 @@ describe('文件夹分支：可见性矩阵（与历史内联 JSX 条件一致�
       'folder.copy-path',
       'folder.copy',
       'folder.paste',
-      'folder.move-to-trash',
       'folder.delete-from-disk',
       'folder.remove-from-library',
     ]);
@@ -245,7 +241,6 @@ describe('文件夹分支：可见性矩阵（与历史内联 JSX 条件一致�
       'folder.copy-path',
       'folder.copy',
       'folder.paste',
-      'folder.move-to-trash',
       'folder.delete-from-disk',
       'folder.remove-from-library',
     ]);
@@ -308,7 +303,7 @@ describe('文件夹分支：快捷键展示（Serpent-vf8x）', () => {
     );
   });
 
-  it('linked 子文件夹的操作使用虚拟目录 id，删除仍传入链接根和相对路径', () => {
+  it('linked 子文件夹的操作使用虚拟目录 id（删除走强制删除，不再有系统回收站）', () => {
     const { ctx, calls } = makeCtx({
       locationKind: 'linked',
       status: 'available',
@@ -330,12 +325,11 @@ describe('文件夹分支：快捷键展示（Serpent-vf8x）', () => {
       { action: 'createSubfolder', args: ['lfv:folder-1/props/wood'] },
       { action: 'renameFolder', args: ['lfv:folder-1/props/wood', '素材'] },
       { action: 'pasteIntoFolder', args: ['lfv:folder-1/props/wood'] },
-      {
-        action: 'trashLinkedFolderSubtree',
-        args: ['folder-1', 'props/wood', '素材'],
-      },
       { action: 'deleteFolderFromDisk', args: ['lfv:folder-1/props/wood', '素材'] },
     ]);
+    // 2026-09-15 用户决定：链接文件夹不再有「移入回收站」。即使命令被直接调用，
+    // 它也必须对链接目标不可见——旧的逐文件系统回收站路径因此不再可达。
+    expect(resolveIds(ctx)).not.toContain('folder.move-to-trash');
   });
 });
 
@@ -485,27 +479,16 @@ describe('run 委托到 actions 回调包', () => {
       ['folder-1', '素材'],
     ],
     [
-      'folder.move-to-trash',
+      // 2026-09-15 用户决定：链接文件夹没有「移入回收站」，只保留强制删除。
+      'folder.delete-from-disk',
       {
         locationKind: 'linked',
         isLinkedRoot: true,
         linkedFolderResolved: true,
         linkedFolder: LINKED_FOLDER,
       },
-      'trashLinkedFolderSubtree',
-      ['folder-1', '', '素材'],
-    ],
-    [
-      'folder.move-to-trash',
-      {
-        locationKind: 'linked',
-        isLinkedRoot: false,
-        linkedRelativePath: 'props/wood',
-        linkedFolderResolved: true,
-        linkedFolder: LINKED_FOLDER,
-      },
-      'trashLinkedFolderSubtree',
-      ['folder-1', 'props/wood', '素材'],
+      'deleteFolderFromDisk',
+      ['folder-1', '素材'],
     ],
     [
       'folder.delete-from-disk',

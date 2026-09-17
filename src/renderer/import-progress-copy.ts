@@ -36,6 +36,12 @@ export function shouldApplyImportProgressEvent(
   return TERMINAL_IMPORT_PROGRESS_PHASES.has(progress.phase);
 }
 
+/**
+ * Whether import work is far enough along for a progress overlay. The renderer
+ * still waits ~3 seconds (`LIBRARY_LOADING_DISPLAY_DELAY_MS`) before showing it,
+ * matching library-open wait feedback. File-picker time does not count: this
+ * stays false until the worker emits a progress event.
+ */
 export function isBlockingImportOverlayVisible(
   _uiState: string,
   progress: ImportProgressEvent | null,
@@ -65,6 +71,8 @@ export type ImportOverlayDetail = {
     | "progress.validating"
     | "progress.copyingFiles"
     | "progress.copying"
+    | "progress.processingFiles"
+    | "progress.processing"
     | "progress.extractingFiles"
     | "progress.extracting"
     | "progress.verifyingFiles"
@@ -90,10 +98,11 @@ export function importOverlayDetail(
             },
           }
         : { key: "progress.validating" };
-    case "copy":
+    case "copy": {
+      const processing = progress.copiesFiles === false;
       return progress.totalFiles > 0
         ? {
-            key: "progress.copyingFiles",
+            key: processing ? "progress.processingFiles" : "progress.copyingFiles",
             params: {
               processed: progress.filesProcessed,
               total: progress.totalFiles,
@@ -101,7 +110,8 @@ export function importOverlayDetail(
               bytesTotal: formatBytes(progress.totalBytes),
             },
           }
-        : { key: "progress.copying" };
+        : { key: processing ? "progress.processing" : "progress.copying" };
+    }
     case "extract":
       return progress.totalFiles > 0
         ? {

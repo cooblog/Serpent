@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  COLLECTION_SORT_PREF_KEY,
+  DEFAULT_COLLECTION_SORT_PREFERENCES,
   DEFAULT_FOLDER_SORT_PREFERENCES,
   FOLDER_SORT_PREF_KEY,
+  loadCollectionSortPreferences,
   loadFolderSortPreferences,
+  saveCollectionSortPreferences,
   saveFolderSortPreferences,
+  withCollectionSort,
   withFolderSort,
   type FolderSortPreferencesStorage,
 } from "../../src/renderer/folder-sort-preferences";
@@ -76,5 +81,38 @@ describe("folder-sort-preferences", () => {
         }),
       ),
     ).toEqual(DEFAULT_FOLDER_SORT_PREFERENCES);
+  });
+
+  it("stores collection sorting independently through the shared preference codec", () => {
+    const storage = memoryStorage();
+    saveCollectionSortPreferences(
+      withCollectionSort(DEFAULT_COLLECTION_SORT_PREFERENCES, {
+        mode: "count",
+        order: "desc",
+      }),
+      storage,
+    );
+
+    expect(loadCollectionSortPreferences(storage)).toEqual({
+      version: 1,
+      mode: "count",
+      order: "desc",
+    });
+    expect(storage.dump()[COLLECTION_SORT_PREF_KEY]).toContain('"count"');
+    expect(storage.dump()[FOLDER_SORT_PREF_KEY]).toBeUndefined();
+  });
+
+  it("normalizes a legacy collection time sort to name sort", () => {
+    expect(
+      loadCollectionSortPreferences(
+        memoryStorage({
+          [COLLECTION_SORT_PREF_KEY]: JSON.stringify({
+            version: 1,
+            mode: "created",
+            order: "desc",
+          }),
+        }),
+      ),
+    ).toEqual({ version: 1, mode: "name", order: "desc" });
   });
 });

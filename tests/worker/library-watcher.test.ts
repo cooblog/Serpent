@@ -2,10 +2,11 @@ import { mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync, 
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   LibraryService,
+  type AssetObserverEvent,
   type AssetObserverFactory,
   type DebounceScheduler,
 } from '../../src/worker/library-service';
@@ -58,7 +59,7 @@ class ManualScheduler implements DebounceScheduler {
 }
 
 function observerHarness() {
-  const callbacks: Array<() => void> = [];
+  const callbacks: Array<(event?: AssetObserverEvent) => void> = [];
   const errorCallbacks: Array<(error: unknown) => void> = [];
   const closed: number[] = [];
   const roots: string[] = [];
@@ -457,9 +458,171 @@ describe('managed asset watcher', () => {
     service.closeLibrary(library.libraryId);
     expect(scheduler.pendingCount()).toBe(0);
   });
+
+  it('does not arm another network scan until the active reconciliation settles', async () => {
+    const root = temporaryRoot();
+    const scheduler = new ManualScheduler();
+    let reconciliationStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      reconciliationStarted = resolve;
+    });
+    let releaseReconciliation!: () => void;
+    const reconciliationGate = new Promise<void>((resolve) => {
+      releaseReconciliation = resolve;
+    });
+    const service = newService({
+      scheduler,
+      storageKindOverrideForTests: 'network',
+      networkScanIntervalMs: 1,
+    });
+    const reconcile = vi.spyOn(
+      service as unknown as {
+        runWatcherReconciliation: (
+          libraryId: string,
+          reason: 'watcher' | 'network',
+        ) => Promise<void>;
+      },
+      'runWatcherReconciliation',
+    ).mockImplementation(async () => {
+      reconciliationStarted();
+      await reconciliationGate;
+    });
+    const library = service.createLibrary({ displayName: 'Network backpressure', selectedParentPath: root });
+
+    // The network timer starts one debounced reconciliation, but does not
+    // independently enqueue another periodic scan while that work is pending.
+    await scheduler.flush();
+    expect(scheduler.pendingCount()).toBe(1);
+    const activeRefresh = scheduler.flush();
+    await started;
+    expect(scheduler.pendingCount()).toBe(0);
+
+    releaseReconciliation();
+    await activeRefresh;
+    expect(reconcile).toHaveBeenCalledTimes(1);
+    expect(scheduler.pendingCount()).toBe(1);
+
+    service.closeLibrary(library.libraryId);
+    expect(scheduler.pendingCount()).toBe(0);
+  });
 });
 
 describe('linked folder watcher', () => {
+  it('refreshes a changed existing linked file without walking its root', async () => {
+    const root = temporaryRoot();
+    const linkedRoot = path.join(root, 'linked');
+    mkdirSync(linkedRoot);
+    const sourcePath = path.join(linkedRoot, 'changed.txt');
+    writeFileSync(sourcePath, 'before');
+    const observers = observerHarness();
+    const scheduler = new ManualScheduler();
+    const events: unknown[] = [];
+    const service = newService({
+      observerFactory: observers.factory,
+      scheduler,
+      watcherStableFileWindowMs: 0,
+      onAssetsChanged: (event) => events.push(event),
+    });
+    const library = service.createLibrary({ displayName: 'Linked changed file', selectedParentPath: root });
+    const linked = service.importFolderAsLinked({
+      libraryId: library.libraryId,
+      sourceRootPath: linkedRoot,
+    });
+    const original = service.listAssets({
+      libraryId: library.libraryId,
+      folderId: linked.folderId,
+      recursive: true,
+    })[0]!;
+    const enumerateSources = vi.spyOn(
+      service as unknown as {
+        enumerateSourcesAsync(input: { rootPath: string }): Promise<unknown>;
+      },
+      'enumerateSourcesAsync',
+    );
+
+    writeFileSync(sourcePath, 'after with a larger payload');
+    const changedAt = new Date(Date.now() + 2_000);
+    utimesSync(sourcePath, changedAt, changedAt);
+    observers.callbacks[1]!({ eventType: 'change', filename: 'changed.txt' });
+    await scheduler.flush();
+
+    const changed = service.listAssets({
+      libraryId: library.libraryId,
+      folderId: linked.folderId,
+      recursive: true,
+    })[0]!;
+    expect(changed.byteSize).toBe(Buffer.byteLength('after with a larger payload'));
+    expect(changed.currentRevisionId).not.toBe(original.currentRevisionId);
+    expect(enumerateSources).not.toHaveBeenCalled();
+    expect(events).toEqual([
+      {
+        type: 'asset.changed',
+        libraryId: library.libraryId,
+        changedCount: 1,
+        missingCount: 0,
+        source: 'watcher',
+      },
+    ]);
+  });
+
+  it('coalesces linked watcher events while reconciling only the changed roots', async () => {
+    const root = temporaryRoot();
+    const firstLinkedRoot = path.join(root, 'linked-a');
+    const secondLinkedRoot = path.join(root, 'linked-b');
+    mkdirSync(firstLinkedRoot);
+    mkdirSync(secondLinkedRoot);
+    writeFileSync(path.join(firstLinkedRoot, 'existing-a.png'), 'a');
+    writeFileSync(path.join(secondLinkedRoot, 'existing-b.png'), 'b');
+    const observers = observerHarness();
+    const scheduler = new ManualScheduler();
+    const events: unknown[] = [];
+    const service = newService({
+      observerFactory: observers.factory,
+      scheduler,
+      watcherStableFileWindowMs: 0,
+      onAssetsChanged: (event) => events.push(event),
+    });
+    const library = service.createLibrary({ displayName: 'Scoped linked refresh', selectedParentPath: root });
+    service.importFolderAsLinked({ libraryId: library.libraryId, sourceRootPath: firstLinkedRoot });
+    service.importFolderAsLinked({ libraryId: library.libraryId, sourceRootPath: secondLinkedRoot });
+
+    const enumerateSources = vi.spyOn(
+      service as unknown as {
+        enumerateSourcesAsync(input: { rootPath: string }): Promise<unknown>;
+      },
+      'enumerateSourcesAsync',
+    );
+    writeFileSync(path.join(firstLinkedRoot, 'added-a.png'), 'new-a');
+    writeFileSync(path.join(secondLinkedRoot, 'added-b.png'), 'new-b');
+    observers.callbacks[1]!();
+    observers.callbacks[2]!();
+    observers.callbacks[1]!();
+    expect(scheduler.pendingCount()).toBe(1);
+    await scheduler.flush();
+
+    expect(enumerateSources.mock.calls.map(([input]) => input.rootPath).sort()).toEqual([
+      realpathSync(firstLinkedRoot),
+      realpathSync(secondLinkedRoot),
+    ].sort());
+    expect(service.listAssets({ libraryId: library.libraryId, recursive: true })
+      .map((asset) => asset.relativeFilePath).sort()).toEqual([
+      'existing-a.png',
+      'existing-b.png',
+      'added-a.png',
+      'added-b.png',
+    ].sort());
+    expect(events).toEqual([
+      {
+        type: 'asset.changed',
+        libraryId: library.libraryId,
+        changedCount: 2,
+        missingCount: 0,
+        source: 'watcher',
+      },
+    ]);
+    service.closeAll();
+  });
+
   it('starts one observer per available root and discovers new files after a debounced event', async () => {
     const root = temporaryRoot();
     const linkedRoot = path.join(root, 'linked');

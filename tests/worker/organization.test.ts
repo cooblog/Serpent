@@ -646,6 +646,66 @@ describe('collections', () => {
     service.closeAll();
   });
 
+  it('moves a nested collection back to the library root', () => {
+    const { service, libraryId } = createLibraryWithAsset();
+    const parent = service.createCollection({ libraryId, name: 'Parent' });
+    const child = service.createCollection({
+      libraryId,
+      parentId: parent.collectionId,
+      name: 'Child',
+    });
+
+    const moved = service.updateCollection({
+      libraryId,
+      collectionId: child.collectionId,
+      parentId: null,
+      position: 1,
+    });
+
+    expect(moved).toMatchObject({
+      collectionId: child.collectionId,
+      parentId: null,
+      position: 1,
+    });
+    expect(
+      service.listCollections(libraryId)
+        .filter((collection) => collection.parentId === null)
+        .map((collection) => collection.collectionId),
+    ).toEqual([parent.collectionId, child.collectionId]);
+
+    service.closeAll();
+  });
+
+  it('nests a root collection under another collection', () => {
+    const { service, libraryId } = createLibraryWithAsset();
+    const parent = service.createCollection({ libraryId, name: 'Parent' });
+    const child = service.createCollection({ libraryId, name: 'Child' });
+
+    const moved = service.updateCollection({
+      libraryId,
+      collectionId: child.collectionId,
+      parentId: parent.collectionId,
+      position: 0,
+    });
+
+    expect(moved).toMatchObject({
+      collectionId: child.collectionId,
+      parentId: parent.collectionId,
+      position: 0,
+    });
+    expect(
+      service.listCollections(libraryId)
+        .filter((collection) => collection.parentId === parent.collectionId)
+        .map((collection) => collection.collectionId),
+    ).toEqual([child.collectionId]);
+    expect(
+      service.listCollections(libraryId).find((collection) => collection.collectionId === parent.collectionId)
+        ?.childCollectionCount,
+    ).toBe(1);
+
+    service.closeAll();
+  });
+
   it('rejects creating a collection under a nonexistent parent', () => {
     const { service, libraryId } = createLibraryWithAsset();
     expectServiceCode(

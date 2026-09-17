@@ -117,7 +117,7 @@ describe('可见性（与历史内联 JSX 条件一致）', () => {
     ]);
   });
 
-  it('linked + available：move-to-trash 可见，move-to-folder / relink 隐藏', () => {
+  it('linked + available：只有强制删除可见（移入回收站已按 2026-09-15 决定移除）', () => {
     const { ctx } = makeCtx({ locationKind: 'linked' });
     expect(resolveIds(ctx)).toEqual([
       'asset.view',
@@ -129,11 +129,11 @@ describe('可见性（与历史内联 JSX 条件一致）', () => {
       'asset.rename',
       'asset.ai-analyze',
       'asset.clear-ai-content',
-      'asset.move-to-trash',
+      'asset.delete-from-disk',
     ]);
   });
 
-  it('linked + unavailable：relink 与 move-to-trash 可见，move-to-folder 隐藏', () => {
+  it('linked + unavailable：relink 与强制删除可见，move-to-folder 隐藏', () => {
     const { ctx } = makeCtx({ locationKind: 'linked', assetAvailable: false });
     expect(resolveIds(ctx)).toEqual([
       'asset.view',
@@ -146,7 +146,7 @@ describe('可见性（与历史内联 JSX 条件一致）', () => {
       'asset.rename',
       'asset.ai-analyze',
       'asset.clear-ai-content',
-      'asset.move-to-trash',
+      'asset.delete-from-disk',
     ]);
   });
 
@@ -243,7 +243,7 @@ describe('禁用原因（disabledReason 是唯一禁用来源）', () => {
     });
   });
 
-  it('linked + unavailable：路径操作禁用，relink 与 move-to-trash 保持启用', () => {
+  it('linked + unavailable：路径操作禁用，relink 与强制删除保持启用', () => {
     const { ctx } = makeCtx({ locationKind: 'linked', assetAvailable: false });
     const menu = registry.resolveMenu(ctx);
     expect(findItem(menu, 'asset.open-external').disabledReason).toBe(
@@ -253,7 +253,8 @@ describe('禁用原因（disabledReason 是唯一禁用来源）', () => {
       disabled: false,
       disabledReason: null,
     });
-    expect(findItem(menu, 'asset.move-to-trash')).toMatchObject({
+    // 链接资产的源文件缺失时仍允许强制删除：它只删库内记录，不依赖源文件存在。
+    expect(findItem(menu, 'asset.delete-from-disk')).toMatchObject({
       disabled: false,
       disabledReason: null,
     });

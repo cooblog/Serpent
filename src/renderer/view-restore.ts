@@ -56,6 +56,23 @@ export interface ScrollExtent {
  * position, so the delta only needs to correct for reflow that happened
  * while the viewer was open.
  */
+/**
+ * True when the live canvas can actually hold the captured offset.
+ * A collapsed host (viewer overlay teardown, virtual window not yet
+ * remounted) reports max scroll 0; clamping then would finish at the top.
+ */
+export function browseRestoreExtentIsReady(
+  snapshot: BrowseViewSnapshot,
+  extent: ScrollExtent,
+): boolean {
+  if (extent.clientHeight <= 1 || extent.clientWidth <= 1) return false;
+  const maxTop = Math.max(0, extent.scrollHeight - extent.clientHeight);
+  const maxLeft = Math.max(0, extent.scrollWidth - extent.clientWidth);
+  if (snapshot.scrollTop > maxTop + 1) return false;
+  if (snapshot.scrollLeft > maxLeft + 1) return false;
+  return true;
+}
+
 export function resolveBrowseRestoreScroll(
   snapshot: BrowseViewSnapshot,
   restoredCardRect: RectLike | null,

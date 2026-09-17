@@ -40,18 +40,12 @@ export interface SidebarCommandActions {
   readonly cloneFolder: (folderId: string) => void;
   /** Open move-target dialog for managed folder(s). */
   readonly moveFolder: (folderIds: string[]) => void;
-  /** Folder → app/OS trash (clarification #7). */
+  /** 托管文件夹 → Serpent 回收站。 */
   readonly trashManagedFolder: (folderId: string, name: string) => void;
-  /** Managed or linked folder → irreversible disk delete. */
+  /** 托管或链接文件夹 → 不可逆的硬盘删除。 */
   readonly deleteFolderFromDisk: (folderId: string, name: string) => void;
-  /** Linked root only: remove index; never deletes source files. */
+  /** 仅链接根：删除链接记录；从不删除外部源文件。 */
   readonly removeLinkedFolder: (folderId: string, name: string) => void;
-  /** Linked child path → OS trash + drop index rows. */
-  readonly trashLinkedFolderSubtree: (
-    linkedFolderId: string,
-    relativePath: string,
-    name: string,
-  ) => void;
   readonly renameOrganization: (id: string, name: string) => void;
   readonly createSubcollection: (collectionId: string) => void;
   readonly editCollectionDetails: (collectionId: string) => void;
@@ -70,9 +64,8 @@ export interface SidebarCommandContext extends CommandContext {
   readonly linkedFolderResolved: boolean;
   readonly linkedFolder?: LinkedFolderSummary;
   /**
-   * Linked roots expose both "move to trash" (OS recycle bin) and
-   * "remove from library" (index only). Linked child folders use the same
-   * trash / disk-delete entries as managed.
+   * 2026-09-15 用户决定：链接文件夹没有「移入回收站」。链接根提供「移除链接文件夹」
+   * （只删链接记录）与「强制从硬盘删除」；链接子文件夹只提供后者。
    */
   readonly isLinkedRoot?: boolean;
   /** Present when the subject is a linked child directory path. */
@@ -234,29 +227,30 @@ export const sidebarCommandDefinitions: readonly SidebarCommandDefinition[] = [
       mac: { label: '⌘⌫', key: 'Backspace', metaKey: true },
       windows: { label: 'Delete', key: 'Delete' },
     },
+    // 2026-09-15 用户决定：链接文件夹不再有「移入回收站」。链接条目本来就不属于
+    // 资源库，之前却逐个文件送进系统回收站（实测 126 ms/文件，1.5 万文件约 31 分钟，
+    // 且期间独占调度器）。链接文件夹现在只有「移除链接文件夹」与「强制从硬盘删除」。
     visible: (ctx) =>
       ctx.menuKind === 'folder' &&
       !ctx.isLibraryRoot &&
-      (ctx.locationKind === 'managed' || ctx.locationKind === 'linked'),
+      ctx.locationKind === 'managed',
     disabledReason: offlineReason,
     run: (ctx) => {
-      if (ctx.locationKind === 'managed') {
-        ctx.actions.trashManagedFolder(ctx.subjectId, ctx.subjectName);
-        return;
-      }
-      if (ctx.locationKind === 'linked') {
-        ctx.actions.trashLinkedFolderSubtree(
-          ctx.linkedFolder?.linkedFolderId ?? ctx.subjectId,
-          ctx.linkedRelativePath ?? '',
-          ctx.subjectName,
-        );
-      }
+      // 防御：visible 已把链接目标挡住，但直接调用（快捷键/自动化）也必须落空，
+      // 否则会误走托管回收站。
+      if (ctx.locationKind !== 'managed') return;
+      ctx.actions.trashManagedFolder(ctx.subjectId, ctx.subjectName);
     },
   },
   {
     id: 'folder.delete-from-disk',
     title: (ctx) =>
-      translateForLocale(ctx.locale, 'command.folder.deleteFromDisk'),
+      translateForLocale(
+        ctx.locale,
+        ctx.locationKind === 'linked'
+          ? 'command.folder.forceDeleteFromDisk'
+          : 'command.folder.deleteFromDisk',
+      ),
     group: 'delete',
     shortcut: {
       mac: {
@@ -278,7 +272,7 @@ export const sidebarCommandDefinitions: readonly SidebarCommandDefinition[] = [
   {
     id: 'folder.remove-from-library',
     title: (ctx) =>
-      translateForLocale(ctx.locale, 'command.folder.removeFromLibrary'),
+      translateForLocale(ctx.locale, 'command.folder.removeLinkedFolder'),
     group: 'delete',
     visible: (ctx) =>
       ctx.menuKind === 'folder' &&

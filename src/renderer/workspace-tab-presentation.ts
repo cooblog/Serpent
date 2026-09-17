@@ -6,6 +6,7 @@ import type {
   SmartCollectionSummary,
   TagSummary,
 } from "../shared/asset-types";
+import type { EntityAppearance } from "../shared/entity-appearance";
 import type { IconName } from "./Icons";
 import type { TranslateFn } from "./i18n";
 import type { PluginSidebarViewDescriptor } from "./plugin-sidebar-views";
@@ -18,6 +19,8 @@ export interface WorkspaceTabPresentation {
   /** Hover text: a folder's location, otherwise the title. */
   tip: string;
   icon: IconName;
+  appearance?: EntityAppearance | null;
+  linkedBadge?: "link" | "link-off" | null;
   entity:
     | { kind: "folder"; id: string; name: string }
     | { kind: "collection"; id: string; name: string }
@@ -92,11 +95,19 @@ function presentLocation(
       const managed = input.folders.find((folder) => folder.folderId === location.folderId);
       const linked = input.linkedFolders.find((folder) => folder.folderId === location.folderId);
       const name = managed?.name ?? linked?.displayName ?? tab.cachedTitle ?? input.t("scope.workspace");
+      const linkedRoot = Boolean(linked && (linked.relativePath ?? "") === "");
+      const appearance = managed?.appearance ?? (linkedRoot ? linked?.appearance : null) ?? null;
+      const customGlyph = Boolean(appearance?.glyphKind);
+      const linkedOffline = linked?.status === "offline";
       return {
         id: tab.id,
         title: name,
         tip: folderTabHoverPath(managed, linked, name),
-        icon: linked ? "link" : "folder",
+        icon: linked
+          ? (customGlyph ? "folder" : linkedOffline ? "link-off" : "link")
+          : "folder",
+        appearance,
+        linkedBadge: linked && customGlyph ? (linkedOffline ? "link-off" : "link") : null,
         entity: { kind: "folder", id: location.folderId, name },
       };
     }
@@ -110,21 +121,24 @@ function presentLocation(
       };
     }
     case "collection": {
-      const name = input.collections.find(
-        (collection) => collection.collectionId === location.collectionId,
-      )?.name ?? tab.cachedTitle ?? input.t("scope.collectionView");
+      const collection = input.collections.find(
+        (item) => item.collectionId === location.collectionId,
+      );
+      const name = collection?.name ?? tab.cachedTitle ?? input.t("scope.collectionView");
       return {
         id: tab.id,
         title: name,
         icon: "collection",
+        appearance: collection?.appearance ?? null,
         entity: { kind: "collection", id: location.collectionId, name },
       };
     }
     case "smart-collection": {
-      const name = input.smartCollections.find(
-        (collection) => collection.collectionId === location.collectionId,
-      )?.name ?? tab.cachedTitle ?? input.t("scope.smartCollections");
-      return { id: tab.id, title: name, icon: "smart", entity: null };
+      const collection = input.smartCollections.find(
+        (item) => item.collectionId === location.collectionId,
+      );
+      const name = collection?.name ?? tab.cachedTitle ?? input.t("scope.smartCollections");
+      return { id: tab.id, title: name, icon: "smart", appearance: collection?.appearance ?? null, entity: null };
     }
     case "trash":
       return { id: tab.id, title: input.t("scope.trash"), icon: "trash", entity: null };

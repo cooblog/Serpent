@@ -32,7 +32,10 @@ import {
 import { useLocale } from "./i18n";
 
 import type { AssetSummary, AssetMetadataResult, ExtractedVideoMetadata, TagSummary } from "../shared/asset-types";
-import { isRawImageExtension } from "../shared/media-formats";
+import {
+  isRawImageExtension,
+  mediaTypeHasPixelResolution,
+} from "../shared/media-formats";
 import type { PreviewResolution, SerpentLibraryApi } from "../shared/library-api";
 import type { SerpentPluginManagerApi } from "../shared/plugin-manager-api";
 import type { PluginContributionContext } from "../plugins/plugin-context";
@@ -909,7 +912,13 @@ export function InspectorPanel(props: InspectorPanelProps) {
         fps: selectedAsset.sequence.fps,
       }));
     }
-    if (selectedAsset.width !== null && selectedAsset.height !== null) {
+    // Only pixel media (image / video / GIF) show a resolution here; a 3D
+    // model's bounding box is not one (Serpent-b1b0f2).
+    if (
+      selectedAsset.width !== null
+      && selectedAsset.height !== null
+      && mediaTypeHasPixelResolution(selectedAsset.mediaType)
+    ) {
       parts.push(`${selectedAsset.width} × ${selectedAsset.height}`);
     }
     const durationMs =

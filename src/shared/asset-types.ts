@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { entityAppearanceSchema } from './entity-appearance';
+
 const nonBlankString = z.string().min(1).refine((value) => value.trim().length > 0);
 const boundedSearchValue = nonBlankString.max(512);
 
@@ -37,6 +39,8 @@ export const managedFolderSummarySchema = z.strictObject({
    * Optional so rows summarized off non-navigation queries stay forward-compatible.
    */
   createdAt: z.string().min(1).optional(),
+  /** Custom sidebar/tab look; omitted or null means the default folder icon. */
+  appearance: entityAppearanceSchema.optional(),
 });
 
 export type ManagedFolderSummary = z.infer<typeof managedFolderSummarySchema>;
@@ -99,6 +103,13 @@ export const linkedFolderSummarySchema = z.strictObject({
   /** Path relative to the linked root; empty string for the import root. */
   relativePath: z.string().max(4096).optional().default(''),
   parentFolderId: nonBlankString.nullable().optional(),
+  /**
+   * Linked-root row creation time (ISO-8601), for sidebar folder sorting.
+   * Virtual child directories have no row and omit this.
+   */
+  createdAt: z.string().min(1).optional(),
+  /** Linked roots only; virtual child directories stay on the default look. */
+  appearance: entityAppearanceSchema.optional(),
 });
 
 export type LinkedFolderSummary = z.infer<typeof linkedFolderSummarySchema>;
@@ -266,6 +277,7 @@ export const collectionSummarySchema = z.strictObject({
   position: z.number().int().nonnegative(),
   assetCount: z.number().int().nonnegative(),
   childCollectionCount: z.number().int().nonnegative(),
+  appearance: entityAppearanceSchema.optional(),
 });
 
 export type CollectionSummary = z.infer<typeof collectionSummarySchema>;
@@ -560,6 +572,7 @@ export const smartCollectionSummarySchema = z.strictObject({
   position: z.number().int().nonnegative(),
   /** Live match count for the saved query (CU-M6); computed via search total. */
   assetCount: z.number().int().nonnegative(),
+  appearance: entityAppearanceSchema.optional(),
 });
 
 export type SmartCollectionSummary = z.infer<typeof smartCollectionSummarySchema>;

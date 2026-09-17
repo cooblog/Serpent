@@ -48,6 +48,7 @@ import type {
   TrashedFolderSummary,
   SearchQuery,
 } from './asset-types';
+import type { EntityAppearance, EntityAppearanceTarget } from './entity-appearance';
 import type {
   ImportCompletion,
   ImportConflictPlan,
@@ -171,6 +172,8 @@ export interface MediaJobStatus {
   paused: number;
   cancelled: number;
   jobs: MediaJob[];
+  nextCursor?: { createdAt: string; jobId: string } | null;
+  hasMore?: boolean;
 }
 
 export interface AiJobStatus {
@@ -253,6 +256,11 @@ export interface SerpentLibraryApi {
     folderId: string;
     newName: string;
   }): Promise<LibraryApiResult<ManagedFolderSummary & { historyEntryId?: string }>>;
+  setEntityAppearance(input: {
+    libraryId: string;
+    target: EntityAppearanceTarget;
+    appearance: EntityAppearance | null;
+  }): Promise<LibraryApiResult<{ target: EntityAppearanceTarget; appearance: EntityAppearance | null }>>;
   /** Create a physical directory inside a linked-folder root or virtual child. */
   createLinkedFolderDirectory(input: {
     libraryId: string;
@@ -487,7 +495,7 @@ export interface SerpentLibraryApi {
   // Collections
   listCollections(input: { libraryId: string }): Promise<LibraryApiResult<CollectionSummary[]>>;
   createCollection(input: { libraryId: string; parentId?: string; name: string }): Promise<LibraryApiResult<CollectionSummary & { historyEntryId?: string }>>;
-  updateCollection(input: { libraryId: string; collectionId: string; name?: string; description?: string | null; coverAssetId?: string | null; position?: number }): Promise<LibraryApiResult<CollectionSummary & { historyEntryId?: string }>>;
+  updateCollection(input: { libraryId: string; collectionId: string; name?: string; parentId?: string | null; description?: string | null; coverAssetId?: string | null; position?: number }): Promise<LibraryApiResult<CollectionSummary & { historyEntryId?: string }>>;
   reorderCollections(input: { libraryId: string; orderedCollectionIds: string[] }): Promise<LibraryApiResult<{ orderedCollectionIds: string[]; historyEntryId?: string }>>;
   deleteCollection(input: { libraryId: string; collectionId: string }): Promise<LibraryApiResult<{ collectionId: string; historyEntryId?: string }>>;
   addCollectionAssets(input: { libraryId: string; collectionId: string; assetIds: string[] }): Promise<LibraryApiResult<{ collectionId: string; historyEntryId?: string }>>;
@@ -548,7 +556,12 @@ export interface SerpentLibraryApi {
     lineCount: number;
   }>>;
   deleteAssetsPermanent(input: { libraryId: string; assetIds: string[] }): Promise<LibraryApiResult<{ deletedCount: number; skippedCount: number; skippedReasons: Array<{ assetId: string; reason: PublicErrorReason }> }>>;
-  deleteAssetsFromDisk(input: { libraryId: string; assetIds: string[] }): Promise<LibraryApiResult<{ deletedCount: number }>>;
+  deleteAssetsFromDisk(input: {
+    libraryId: string;
+    assetIds: string[];
+    /** Confirmation-copy hint only; the worker resolves the real location kinds. */
+    locationKind?: 'managed' | 'linked' | 'mixed';
+  }): Promise<LibraryApiResult<{ deletedCount: number }>>;
   cancelDiskDelete(input: { operationId: string }): Promise<LibraryApiResult<{ operationId: string }>>;
   listTrash(input: { libraryId: string }): Promise<LibraryApiResult<AssetSummary[]>>;
   listTrashedFolders(input: { libraryId: string }): Promise<LibraryApiResult<TrashedFolderSummary[]>>;
@@ -581,7 +594,7 @@ export interface SerpentLibraryApi {
   cancelLibraryExport(input: { exportId: string }): Promise<LibraryApiResult<{ exportId: string }>>;
   importLibrary(): Promise<LibraryApiResult<ImportValidatedResult>>;
   importLibraryZip(): Promise<LibraryApiResult<ImportCompletedResult>>;
-  cancelLibraryImport(input: { importId: string }): Promise<LibraryApiResult<{ importId: string }>>;
+  cancelLibraryImport(input: { importId: string; mode?: "abandon" | "stop" }): Promise<LibraryApiResult<{ importId: string }>>;
   importLibraryCopy(input: { importId: string }): Promise<LibraryApiResult<ImportCompletedResult>>;
   importLibraryOpenInPlace(input: { importId: string }): Promise<LibraryApiResult<ImportCompletedResult>>;
   onProgress(listener: (event: ExportProgressEvent | ImportProgressEvent | SyncProgressEvent | DeleteProgressEvent) => void): () => void;
@@ -721,7 +734,20 @@ export interface SerpentLibraryApi {
   openFolderWith(input: { libraryId: string; folderId: string }): Promise<LibraryApiResult<void>>;
   copyFolderPath(input: { libraryId: string; folderId: string }): Promise<LibraryApiResult<void>>;
   retryArtifact(input: { libraryId: string; assetId: string; kind: 'thumbnail' | 'webm_proxy' | 'audio_proxy' }): Promise<LibraryApiResult<{ assetId: string; kind: string }>>;
-  listMediaJobs(input: { libraryId: string }): Promise<LibraryApiResult<MediaJobStatus>>;
+  listMediaJobs(input: {
+    libraryId: string;
+    summaryOnly?: boolean;
+    cursor?: { createdAt: string; jobId: string };
+    limit?: number;
+  }): Promise<LibraryApiResult<MediaJobStatus>>;
+  getMediaJobSummary(input: { libraryId: string }): Promise<LibraryApiResult<{
+    queued: number;
+    running: number;
+    succeeded: number;
+    failed: number;
+    paused: number;
+    cancelled: number;
+  }>>;
   pauseMediaJobs(input: { libraryId: string; jobIds?: string[] }): Promise<LibraryApiResult<{ pausedCount: number }>>;
   resumeMediaJobs(input: { libraryId: string; jobIds?: string[] }): Promise<LibraryApiResult<{ resumedCount: number }>>;
   cancelMediaJobs(input: { libraryId: string; jobIds?: string[] }): Promise<LibraryApiResult<{ cancelledCount: number }>>;

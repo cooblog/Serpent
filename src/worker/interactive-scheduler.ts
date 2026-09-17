@@ -116,6 +116,22 @@ const LANE_PRIORITY: Record<PerformanceLane, number> = {
 };
 
 /**
+ * Read-only state snapshots that may share the Worker with maintenance.
+ * Unlike background task execution, these complete bounded SQLite reads and
+ * must not wait for a potentially multi-second filesystem reconciliation.
+ */
+const MAINTENANCE_STATUS_READ_LABELS = new Set([
+  'library.navigation-summary',
+  'media.list-jobs',
+  'media.job-summary',
+  'ai.status',
+  'plugin.jobs.list',
+  'history.status',
+  'sync.asset-card-status',
+]);
+const MAX_MAINTENANCE_STATUS_READS = 3;
+
+/**
  * A library transition (open/create/close/delete-from-disk) is the one request
  * that must not wait its turn.
  *
@@ -596,6 +612,13 @@ export class InteractiveScheduler {
     const activeBackgroundEntries = [...this.#active]
       .filter((entry) => isBackgroundPerformanceLane(entry.request.lane));
     const activeBackground = activeBackgroundEntries.length;
+    const activeMaintenanceStatusReads = activeBackgroundEntries.filter((entry) =>
+      entry.request.lane === 'background-secondary'
+      && MAINTENANCE_STATUS_READ_LABELS.has(entry.request.label ?? ''),
+    );
+    const hasSingleMaintenanceWithOnlyStatusReads = activeBackgroundEntries.length > 0
+      && activeBackgroundEntries.filter((entry) => entry.request.lane === 'maintenance').length === 1
+      && activeBackgroundEntries.length === 1 + activeMaintenanceStatusReads.length;
     // Serpent-52eed4（实测 2026-09-14）：开库对账是 30 秒级的 maintenance owner，
     // 而缩略图泵与可见卡 artifact 路径解析是 background-primary。「同时只允许一个
     // 后台任务」让用户切文件夹后等 34.6 秒才看到 15 张缩略图（schedulerWaitMs
@@ -631,7 +654,16 @@ export class InteractiveScheduler {
                   entry.request.lane !== 'visible-media')
               : activeInteractive < 1)
             : !hasQueuedMutation
-              && (activeBackground < 1 || (lane === 'background-primary' && onlyMaintenanceActive));
+              && (
+                activeBackground < 1
+                || (lane === 'background-primary' && onlyMaintenanceActive)
+                || (
+                  lane === 'background-secondary'
+                  && MAINTENANCE_STATUS_READ_LABELS.has(this.#queue[index]!.request.label ?? '')
+                  && hasSingleMaintenanceWithOnlyStatusReads
+                  && activeMaintenanceStatusReads.length < MAX_MAINTENANCE_STATUS_READS
+                )
+              );
       if (!canStart) continue;
       const priority = this.#queue[index]!.request.lifecyclePriority === true
         ? LIFECYCLE_PRIORITY

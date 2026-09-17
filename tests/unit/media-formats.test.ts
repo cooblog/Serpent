@@ -11,6 +11,7 @@ import {
   isSupportedImageExtension,
   isSupportedModelExtension,
   isSupportedVideoExtension,
+  mediaTypeHasPixelResolution,
   modelMimeForExtension,
   videoMimeForExtension,
 } from '../../src/shared/media-formats';
@@ -97,5 +98,21 @@ describe('media format registry', () => {
     expect(modelMimeForExtension('.fbx')).toBe('model/fbx');
     expect(modelMimeForExtension('.stl')).toBe('model/stl');
     expect(modelMimeForExtension('.zip')).toBeNull();
+  });
+
+  it('limits pixel resolution to image and video media (Serpent-b1b0f2)', () => {
+    // Cards, the Inspector summary row and the resolution filter all read this
+    // one predicate: images (GIF included) and videos own a resolution.
+    expect(mediaTypeHasPixelResolution('image')).toBe(true);
+    expect(mediaTypeHasPixelResolution('video')).toBe(true);
+    // A 3D model carries a bounding box and a document a page size; neither is
+    // a resolution users filter or read.
+    expect(mediaTypeHasPixelResolution('model')).toBe(false);
+    expect(mediaTypeHasPixelResolution('document')).toBe(false);
+    expect(mediaTypeHasPixelResolution('audio')).toBe(false);
+    expect(mediaTypeHasPixelResolution('text')).toBe(false);
+    expect(mediaTypeHasPixelResolution('other')).toBe(false);
+    expect(mediaTypeHasPixelResolution(null)).toBe(false);
+    expect(mediaTypeHasPixelResolution(undefined)).toBe(false);
   });
 });

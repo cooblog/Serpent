@@ -26,6 +26,7 @@ const BOUNDED_WRITE_COMMAND_TYPES = new Set<string>([
   'tag.assign',
   'tag.remove',
   'folder.create',
+  'appearance.set',
   'collection.create',
   'collection.update',
   'collection.reorder',
@@ -266,6 +267,15 @@ export function executeBoundedWriteWorkerCommand(
               : [folder.folderId],
           },
         },
+      };
+    }
+    case 'appearance.set': {
+      const result = libraryService.setEntityAppearance(command);
+      return {
+        ok: true,
+        type: 'appearance.updated',
+        target: result.target,
+        appearance: result.appearance,
       };
     }
     case 'collection.create': {

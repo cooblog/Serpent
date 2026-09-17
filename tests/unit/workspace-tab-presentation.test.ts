@@ -114,6 +114,55 @@ describe("workspace tab presentation", () => {
     });
   });
 
+  it("carries folder and collection appearance onto workspace tabs", () => {
+    const appearance = { glyphKind: "emoji" as const, glyphValue: "🎨", colorId: "blue" as const };
+    const folderState = createWorkspaceTabs(() => "folder-tab");
+    folderState.tabs[0]!.location = { kind: "folder", folderId: "folder-1" };
+    expect(presentWorkspaceTab(folderState.tabs[0]!, {
+      folders: [{
+        folderId: "folder-1",
+        parentFolderId: null,
+        name: "Characters",
+        relativePath: "Characters",
+        directAssetCount: 2,
+        childFolderCount: 0,
+        appearance,
+      }],
+      linkedFolders: [],
+      collections: [],
+      smartCollections: [],
+      tags: [],
+      assets: [],
+      pluginViews: [],
+      t: (key, params) => translateForLocale("en", key, params),
+    })).toMatchObject({ appearance, linkedBadge: null });
+
+    const linkedState = createWorkspaceTabs(() => "linked-tab");
+    linkedState.tabs[0]!.location = { kind: "folder", folderId: "linked-1" };
+    expect(presentWorkspaceTab(linkedState.tabs[0]!, {
+      folders: [],
+      linkedFolders: [{
+        folderId: "linked-1",
+        displayName: "Paint",
+        status: "offline",
+        assetCount: 2,
+        absoluteRootPath: "E:\\Media\\Paint",
+        relativePath: "",
+        appearance,
+      }],
+      collections: [],
+      smartCollections: [],
+      tags: [],
+      assets: [],
+      pluginViews: [],
+      t: (key, params) => translateForLocale("en", key, params),
+    })).toMatchObject({
+      appearance,
+      icon: "folder",
+      linkedBadge: "link-off",
+    });
+  });
+
   it("repeats the title when a tab is not a folder", () => {
     const state = createWorkspaceTabs(() => "all-tab");
     expect(presentWorkspaceTab(state.tabs[0]!, {

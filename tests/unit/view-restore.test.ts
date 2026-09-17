@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  browseRestoreExtentIsReady,
   captureBrowseViewSnapshot,
   resolveBrowseRestoreScroll,
   type ScrollExtent,
@@ -79,5 +80,18 @@ describe("resolveBrowseRestoreScroll", () => {
     const result = resolveBrowseRestoreScroll(snapshot, reflowedCardRect, extent);
     expect(result.top).toBeLessThanOrEqual(extent.scrollHeight - extent.clientHeight);
     expect(result.top).toBeGreaterThanOrEqual(0);
+  });
+
+  it("treats a collapsed canvas as not ready so a deep offset is not finished at 0", () => {
+    const snapshot = captureBrowseViewSnapshot("asset-1", null, 0, 2400);
+    const collapsed: ScrollExtent = {
+      scrollWidth: 800,
+      scrollHeight: 0,
+      clientWidth: 800,
+      clientHeight: 0,
+    };
+    expect(resolveBrowseRestoreScroll(snapshot, null, collapsed).top).toBe(0);
+    expect(browseRestoreExtentIsReady(snapshot, collapsed)).toBe(false);
+    expect(browseRestoreExtentIsReady(snapshot, extent)).toBe(true);
   });
 });

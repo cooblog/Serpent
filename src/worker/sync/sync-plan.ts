@@ -7,7 +7,8 @@
  * - 同资产单侧内容变更 → upload/download
  * - 同资产单侧路径变更（hash 不变）→ 远端 MOVE / 本地 relocate（GitHub #31 / Serpent-038ecf）
  * - 同资产双侧变更且哈希不同 → 冲突（LWW 定正式版，败者存冲突副本）
- * - 本地删除 → 远端删除 + 墓碑上传；远端墓碑 → 本地进回收站
+ * - 本地删除（库内行已进回收站/已消失）→ 远端删除 + 墓碑上传；远端墓碑 → 本地进回收站
+ * - 本地文件缺失但库内行仍在（换路径、Assets 未带上、磁盘丢失）→ 从远端下载，禁止当成删除写墓碑
  * 该模块不触碰 SQLite 与网络，保证可完全单测。
  */
 
@@ -55,6 +56,7 @@ export type SyncAction =
   | { type: 'relocate-local'; assetId: string; entry: SyncManifestEntry }
   | { type: 'delete-remote'; assetId: string }
   | { type: 'tombstone-upload'; assetId: string }
+  | { type: 'clear-tombstone'; assetId: string }
   | { type: 'delete-local'; assetId: string }
   | {
       type: 'upload-metadata';
@@ -67,6 +69,11 @@ export type SyncAction =
 export interface PlanSyncInput {
   /** 本地资产当前快照（路径 → 指纹）。 */
   localAssets: Map<string, LocalAssetSnapshotEntry>;
+  /**
+   * 库内仍有未进回收站的行，但磁盘文件不在：syncId → 库内相对路径。
+   * 这些不能当成「用户删除」。
+   */
+  localMissing?: Map<string, string>;
   /** 本地 manifest 缓存（上次同步点）。 */
   localManifest: SyncManifest;
   /** 远端 manifest（已拉取解析）。 */
@@ -138,9 +145,11 @@ function planPathOnlyAction(input: {
 
 export function planSyncActions(input: PlanSyncInput): SyncAction[] {
   const { localAssets, localManifest, remoteManifest, remoteTombstones } = input;
+  const localMissing = input.localMissing ?? new Map<string, string>();
   const actions: SyncAction[] = [];
   const assetIds = new Set([
     ...localAssets.keys(),
+    ...localMissing.keys(),
     ...Object.keys(localManifest.entries),
     ...Object.keys(remoteManifest.entries),
     ...remoteTombstones,
@@ -151,14 +160,44 @@ export function planSyncActions(input: PlanSyncInput): SyncAction[] {
     const localEntry = localManifest.entries[assetId];
     const remoteEntry = remoteManifest.entries[assetId];
     const remoteTombstone = remoteTombstones.has(assetId);
+    const fileMissing = !localAsset && localMissing.has(assetId);
 
-    // 远端墓碑：远端用户删除 → 本地进回收站（删除动作由应用层执行）。
-    if (localAsset && remoteTombstone) {
+    // 远端墓碑：上次同步点仍在，说明对端删了 → 本地进回收站。
+    // 用户从回收站恢复后缓存条目已不在，应清墓碑而不是再丢回去。
+    if (localAsset && remoteTombstone && localEntry) {
       actions.push({ type: 'delete-local', assetId });
       continue;
     }
+    if (localAsset && remoteTombstone && !localEntry) {
+      actions.push({ type: 'clear-tombstone', assetId });
+    }
 
-    // 本地删除：本地已无该资产但上次同步点存在。
+    // 库内行还在、只是磁盘文件没了：从云端拉回。禁止写墓碑，否则之后再也下不下来。
+    if (fileMissing) {
+      const fallbackPath = localMissing.get(assetId) ?? localEntry?.path;
+      const downloadEntry = remoteEntry ?? (
+        fallbackPath
+          ? {
+              path: fallbackPath,
+              contentHash: localEntry?.contentHash ?? '',
+              size: localEntry?.size ?? 0,
+              version: localEntry?.version ?? 1,
+              deviceId: localEntry?.deviceId ?? '',
+              modifiedAt: localEntry?.modifiedAt ?? '1970-01-01T00:00:00.000Z',
+              metadataVersion: localEntry?.metadataVersion ?? 1,
+              ...(localEntry?.etag === undefined ? {} : { etag: localEntry.etag }),
+              ...(localEntry?.metadataHash === undefined ? {} : { metadataHash: localEntry.metadataHash }),
+            }
+          : undefined
+      );
+      if (downloadEntry) {
+        actions.push({ type: 'download', assetId, entry: downloadEntry });
+        if (remoteTombstone) actions.push({ type: 'clear-tombstone', assetId });
+      }
+      continue;
+    }
+
+    // 本地删除：库内已无该资产（进回收站或永久删除）但上次同步点存在。
     if (!localAsset && localEntry) {
       if (remoteEntry && !remoteTombstone) {
         actions.push({ type: 'delete-remote', assetId });

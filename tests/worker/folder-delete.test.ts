@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -311,7 +311,7 @@ describe('deleteManagedFolderFromDisk (clarification #7 / Serpent-ekj)', () => {
 });
 
 describe('removeLinkedFolder (clarification #7 / Serpent-ekj)', () => {
-  it('removes the linked root index and keeps the external source directory', () => {
+  it('removes the linked root index and keeps the external source directory', async () => {
     const temp = root();
     const external = path.join(temp, 'external-root');
     mkdirSync(external);
@@ -336,7 +336,7 @@ describe('removeLinkedFolder (clarification #7 / Serpent-ekj)', () => {
       }).length,
     ).toBeGreaterThan(0);
 
-    const result = service.removeLinkedFolder({
+    const result = await service.removeLinkedFolder({
       libraryId: library.libraryId,
       folderId: linked.folderId,
     });
@@ -347,7 +347,7 @@ describe('removeLinkedFolder (clarification #7 / Serpent-ekj)', () => {
 });
 
 describe('deleteLinkedFolderSubtree (clarification #7 / Serpent-ekj)', () => {
-  it('moves a linked child path to the OS trash by default', async () => {
+  it('removes a linked child from the index only and never touches its sources', async () => {
     const temp = root();
     const external = path.join(temp, 'linked-tree');
     const child = path.join(external, 'child');
@@ -355,10 +355,10 @@ describe('deleteLinkedFolderSubtree (clarification #7 / Serpent-ekj)', () => {
     writeFileSync(path.join(child, 'd.png'), 'child-bytes');
     writeFileSync(path.join(external, 'root.png'), 'root-bytes');
 
-    const trashed: string[] = [];
+    const deletedSources: string[] = [];
     const service = newService({
-      trashItem: async (sourcePath: string) => {
-        trashed.push(sourcePath);
+      removeLinkedSourceFile: async (sourcePath: string) => {
+        deletedSources.push(sourcePath);
         rmSync(sourcePath, { force: true, recursive: true });
       },
     });
@@ -372,33 +372,42 @@ describe('deleteLinkedFolderSubtree (clarification #7 / Serpent-ekj)', () => {
       displayName: '树',
     });
 
-    const trashResult = await service.deleteLinkedFolderSubtree({
+    // 2026-09-15 用户决定：链接条目的「移除」只删链接记录（deleteFromDisk: false），
+    // 源文件一律不动；旧实现会把每个文件送进系统回收站。
+    const removeResult = await service.deleteLinkedFolderSubtree({
       libraryId: library.libraryId,
       linkedFolderId: linked.folderId,
       relativePath: 'child',
       deleteFromDisk: false,
     });
-    expect(trashResult.deletedAssetCount).toBe(1);
-    expect(trashed.some((entry) => entry.includes(`${path.sep}child`))).toBe(true);
+    expect(removeResult.deletedAssetCount).toBe(1);
+    expect(deletedSources).toEqual([]);
+    expect(existsSync(path.join(child, 'd.png'))).toBe(true);
     expect(existsSync(path.join(external, 'root.png'))).toBe(true);
+    expect(
+      service.listAssets({
+        libraryId: library.libraryId,
+        folderId: linked.folderId,
+        recursive: true,
+      }).map((asset) => asset.relativeFilePath),
+    ).toEqual(['root.png']);
   });
 
-  it('moves a linked folder root to the OS trash and drops the index', async () => {
+  it('removes a linked folder root from the index only and keeps the source tree', async () => {
     const temp = root();
     const external = path.join(temp, 'linked-root');
     mkdirSync(external, { recursive: true });
     writeFileSync(path.join(external, 'root.png'), 'root-bytes');
-    const canonicalExternal = realpathSync(external);
 
-    const trashed: string[] = [];
+    const deletedSources: string[] = [];
     const service = newService({
-      trashItem: async (sourcePath: string) => {
-        trashed.push(sourcePath);
+      removeLinkedSourceFile: async (sourcePath: string) => {
+        deletedSources.push(sourcePath);
         rmSync(sourcePath, { force: true, recursive: true });
       },
     });
     const library = service.createLibrary({
-      displayName: 'LinkedRootTrash',
+      displayName: 'LinkedRootRemove',
       selectedParentPath: temp,
     });
     const linked = service.importFolderAsLinked({
@@ -407,15 +416,15 @@ describe('deleteLinkedFolderSubtree (clarification #7 / Serpent-ekj)', () => {
       displayName: '根',
     });
 
-    const trashResult = await service.deleteLinkedFolderSubtree({
+    const removeResult = await service.deleteLinkedFolderSubtree({
       libraryId: library.libraryId,
       linkedFolderId: linked.folderId,
       relativePath: '',
       deleteFromDisk: false,
     });
-    expect(trashResult.deletedAssetCount).toBe(1);
-    expect(trashed.some((entry) => entry === canonicalExternal)).toBe(true);
-    expect(existsSync(external)).toBe(false);
+    expect(removeResult.deletedAssetCount).toBe(1);
+    expect(deletedSources).toEqual([]);
+    expect(existsSync(path.join(external, 'root.png'))).toBe(true);
 
     const remaining = service.listLinkedFolders(library.libraryId);
     expect(remaining.map((folder) => folder.folderId)).not.toContain(

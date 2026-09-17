@@ -23,6 +23,7 @@ export function createLibrarySyncPort(libraryService: LibraryService): SyncLibra
           modifiedAt: asset.modifiedAt,
           ...(asset.metadata === undefined ? {} : { metadata: asset.metadata }),
         })),
+        missingAssets: snapshot.missingAssets,
       };
     },
     async readLocalAssetMetadata(libraryId, syncId) {

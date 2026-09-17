@@ -88,6 +88,8 @@ describe('managed folder rename', () => {
       directAssetCount: 1,
       childFolderCount: 0,
       createdAt: expect.any(String),
+      // Single-row returns report appearance like listManagedFolders.
+      appearance: null,
     });
     expect(existsSync(path.join(assetsRoot, 'a', 'b'))).toBe(false);
     expect(readFileSync(path.join(assetsRoot, 'a', 'bee', 'pic.png'), 'utf8')).toBe('nested-content');
@@ -107,6 +109,8 @@ describe('managed folder rename', () => {
       directAssetCount: 1,
       childFolderCount: 1,
       createdAt: expect.any(String),
+      // Single-row returns report appearance like listManagedFolders.
+      appearance: null,
     });
     expect(existsSync(path.join(assetsRoot, 'a'))).toBe(false);
     expect(readFileSync(path.join(assetsRoot, 'ex', 'bee', 'pic.png'), 'utf8')).toBe('nested-content');
@@ -136,8 +140,8 @@ describe('managed folder rename', () => {
     }
 
     expect(service.listManagedFolders(library.libraryId)).toEqual([
-      { folderId: top.folderId, parentFolderId: null, name: 'ex', relativePath: 'ex', directAssetCount: 1, childFolderCount: 1, createdAt: expect.any(String) },
-      { folderId: nested.folderId, parentFolderId: top.folderId, name: 'bee', relativePath: 'ex/bee', directAssetCount: 1, childFolderCount: 0, createdAt: expect.any(String) },
+      { folderId: top.folderId, parentFolderId: null, name: 'ex', relativePath: 'ex', directAssetCount: 1, childFolderCount: 1, createdAt: expect.any(String), appearance: null },
+      { folderId: nested.folderId, parentFolderId: top.folderId, name: 'bee', relativePath: 'ex/bee', directAssetCount: 1, childFolderCount: 0, createdAt: expect.any(String), appearance: null },
     ]);
     service.closeAll();
   });
@@ -206,6 +210,8 @@ describe('managed folder rename', () => {
       directAssetCount: 0,
       childFolderCount: 0,
       createdAt: expect.any(String),
+      // Single-row returns report appearance like listManagedFolders.
+      appearance: null,
     });
     expect(existsSync(path.join(library.libraryPath, 'Assets', 'Same'))).toBe(true);
 

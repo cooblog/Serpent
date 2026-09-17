@@ -1,3 +1,12 @@
+// A sandboxed preload cannot load `node:crypto` — importing it here makes the
+// whole preload fail (`Unable to load preload script`), which leaves the
+// renderer without the `serpent` bridge. Web Crypto is available in the
+// preload's renderer context and produces the same RFC 4122 v4 shape the
+// navigation-id schema requires.
+function createNavigationId(): string {
+  return globalThis.crypto.randomUUID();
+}
+
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
 import type { AiJobStatus, LibraryApiResult, LinkedAssetDeleteResult, MediaJobStatus, PluginJobStatus, PreviewResolution, RelinkAssetResult, SerpentLibraryApi, SyncCapabilities, SyncReport } from '../shared/library-api';
@@ -18,6 +27,7 @@ import {
   type SerpentMcpSettingsApi,
 } from '../shared/mcp';
 import { searchQuerySchema } from '../shared/asset-types';
+import type { EntityAppearance, EntityAppearanceTarget } from '../shared/entity-appearance';
 import type { FbxConversionResult, FbxConversionStats } from '../shared/fbx-conversion';
 import type { ModelCompanionAsset } from '../shared/model-companions';
 import type { AiSearchPlan, AssetSummary, AssetMetadataResult, ExtractedMetadataResult, CollectionSummary, FilterClause, FolderBrowseEntry, LinkedFolderDirectoryMutation, LinkedFolderRule, LinkedFolderSummary, ManagedFolderSummary, SearchQuery, SearchScope, SmartCollectionSummary, TagCooccurrenceGraph, TagSummary, TrashedFolderSummary } from '../shared/asset-types';
@@ -241,6 +251,20 @@ async function request(command: RendererRequest): Promise<RendererResult> {
     requestCounts.set(command.type, (requestCounts.get(command.type) ?? 0) + 1);
   }
   return parseRendererResult(await ipcRenderer.invoke(LIBRARY_REQUEST_CHANNEL, command));
+}
+
+function emitE2eBrowseSessionResponse(
+  navigationId: string,
+  ok: boolean,
+): void {
+  if (!e2eEnabled || process.env.SERPENT_E2E_LIBRARY_TRACE !== '1') return;
+  window.dispatchEvent(new CustomEvent('serpent:e2e-browse-session-response', {
+    detail: JSON.stringify({
+      navigationId,
+      responseAtEpochMs: Date.now(),
+      ok,
+    }),
+  }));
 }
 
 function failure(result: Extract<RendererResult, { ok: false }>): LibraryApiResult<never> {
@@ -515,6 +539,17 @@ const library: SerpentLibraryApi = Object.freeze({
         ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}),
       },
     };
+  },
+
+  async setEntityAppearance(input: {
+    libraryId: string;
+    target: EntityAppearanceTarget;
+    appearance: EntityAppearance | null;
+  }) {
+    const result = await request({ type: 'appearance.set.request', ...input });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'appearance.updated') throw new Error('Unexpected set-appearance response.');
+    return { ok: true as const, value: { target: result.target, appearance: result.appearance } };
   },
 
   async createLinkedFolderDirectory(input: {
@@ -1185,8 +1220,8 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: { ...result.collection, ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}) } };
   },
 
-  async updateCollection({ libraryId, collectionId, name, description, coverAssetId, position }: { libraryId: string; collectionId: string; name?: string; description?: string | null; coverAssetId?: string | null; position?: number }): Promise<LibraryApiResult<CollectionSummary & { historyEntryId?: string }>> {
-    const result = await request({ type: 'collection.update.request', libraryId, collectionId, name, description, coverAssetId, position });
+  async updateCollection({ libraryId, collectionId, name, parentId, description, coverAssetId, position }: { libraryId: string; collectionId: string; name?: string; parentId?: string | null; description?: string | null; coverAssetId?: string | null; position?: number }): Promise<LibraryApiResult<CollectionSummary & { historyEntryId?: string }>> {
+    const result = await request({ type: 'collection.update.request', libraryId, collectionId, name, parentId, description, coverAssetId, position });
     if (!result.ok) return failure(result);
     if (result.type !== 'collection.updated') throw new Error('Unexpected update-collection response.');
     return { ok: true, value: { ...result.collection, ...(result.historyEntryId ? { historyEntryId: result.historyEntryId } : {}) } };
@@ -1354,6 +1389,8 @@ const library: SerpentLibraryApi = Object.freeze({
   },
 
   async openBrowseSession({ libraryId, query, filters, scope, sort, smartCollectionId, limit, showIgnored }: { libraryId: string; query: SearchQuery | null; filters?: FilterClause[]; scope?: SearchScope; sort?: { field: 'name' | 'modified_at' | 'created_at' | 'byte_size' | 'long_edge' | 'duration' | 'rating' | 'color' | 'author'; order: 'asc' | 'desc' }; smartCollectionId?: string; limit?: number; showIgnored?: boolean }) {
+    const navigationId = createNavigationId();
+    const navigationStartedAtEpochMs = Date.now();
     const delayedBrowse = e2eBrowseSessionDelay;
     const shouldDelay = delayedBrowse && (
       delayedBrowse.target.folderId !== undefined
@@ -1365,7 +1402,20 @@ const library: SerpentLibraryApi = Object.freeze({
       e2eBrowseSessionDelay = null;
       await new Promise((resolve) => setTimeout(resolve, delayedBrowse.delayMs));
     }
-    const result = await request({ type: 'browse.session.open.request', libraryId, query, filters, scope, sort, smartCollectionId, limit, showIgnored });
+    const result = await request({
+      type: 'browse.session.open.request',
+      libraryId,
+      navigationId,
+      navigationStartedAtEpochMs,
+      query,
+      filters,
+      scope,
+      sort,
+      smartCollectionId,
+      limit,
+      showIgnored,
+    });
+    emitE2eBrowseSessionResponse(navigationId, result.ok);
     if (!result.ok) return failure(result);
     if (result.type !== 'browse.session.opened') throw new Error('Unexpected open-browse-session response.');
     return {
@@ -1594,8 +1644,8 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: { deletedCount: result.deletedCount, skippedCount: result.skippedCount, skippedReasons: result.skippedReasons } };
   },
 
-  async deleteAssetsFromDisk({ libraryId, assetIds }: { libraryId: string; assetIds: string[] }): Promise<LibraryApiResult<{ deletedCount: number }>> {
-    const result = await request({ type: 'asset.delete-from-disk.request', libraryId, assetIds });
+  async deleteAssetsFromDisk({ libraryId, assetIds, locationKind }: { libraryId: string; assetIds: string[]; locationKind?: 'managed' | 'linked' | 'mixed' }): Promise<LibraryApiResult<{ deletedCount: number }>> {
+    const result = await request({ type: 'asset.delete-from-disk.request', libraryId, assetIds, locationKind });
     if (!result.ok) return failure(result);
     if (result.type !== 'asset.deleted-from-disk') throw new Error('Unexpected delete-from-disk response.');
     return { ok: true, value: { deletedCount: result.deletedCount } };
@@ -1803,8 +1853,12 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true as const, value: result };
   },
 
-  async cancelLibraryImport({ importId }: { importId: string }) {
-    const result = await request({ type: 'library.import.cancel.request', importId });
+  async cancelLibraryImport({ importId, mode }: { importId: string; mode?: 'abandon' | 'stop' }) {
+    const result = await request({
+      type: 'library.import.cancel.request',
+      importId,
+      ...(mode === undefined ? {} : { mode }),
+    });
     if (!result.ok) return failure(result);
     if (result.type !== 'library.closed') throw new Error('Unexpected import-cancel response.');
     return { ok: true as const, value: { importId } };
@@ -2251,12 +2305,49 @@ const library: SerpentLibraryApi = Object.freeze({
     return { ok: true, value: { assetId: result.assetId, kind: result.kind } };
   },
 
-  async listMediaJobs({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<MediaJobStatus>> {
-    const result = await request({ type: 'media.list-jobs.request', libraryId });
+  async getMediaJobSummary({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<{
+    queued: number;
+    running: number;
+    succeeded: number;
+    failed: number;
+    paused: number;
+    cancelled: number;
+  }>> {
+    const result = await request({
+      type: 'media.job-summary.request',
+      libraryId,
+    });
+    if (!result.ok) return failure(result);
+    if (result.type !== 'media.job-summary.read') throw new Error('Unexpected media job-summary response.');
+    const { queued, running, succeeded, failed, paused, cancelled } = result;
+    return { ok: true, value: { queued, running, succeeded, failed, paused, cancelled } };
+  },
+
+  async listMediaJobs({
+    libraryId,
+    summaryOnly,
+    cursor,
+    limit,
+  }: {
+    libraryId: string;
+    summaryOnly?: boolean;
+    cursor?: { createdAt: string; jobId: string };
+    limit?: number;
+  }): Promise<LibraryApiResult<MediaJobStatus>> {
+    const result = await request({
+      type: 'media.list-jobs.request',
+      libraryId,
+      ...(summaryOnly === undefined ? {} : { summaryOnly }),
+      ...(cursor === undefined ? {} : { cursor }),
+      ...(limit === undefined ? {} : { limit }),
+    });
     if (!result.ok) return failure(result);
     if (result.type !== 'media.jobs.listed') throw new Error('Unexpected media list-jobs response.');
-    const { queued, running, succeeded, failed, paused, cancelled, jobs } = result;
-    return { ok: true, value: { queued, running, succeeded, failed, paused, cancelled, jobs } };
+    const { queued, running, succeeded, failed, paused, cancelled, jobs, nextCursor, hasMore } = result;
+    return {
+      ok: true,
+      value: { queued, running, succeeded, failed, paused, cancelled, jobs, nextCursor, hasMore },
+    };
   },
 
   async listPluginJobs({ libraryId }: { libraryId: string }): Promise<LibraryApiResult<PluginJobStatus>> {

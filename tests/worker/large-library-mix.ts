@@ -1,4 +1,4 @@
-export const LARGE_LIBRARY_FIXTURE_VERSION = 3;
+export const LARGE_LIBRARY_FIXTURE_VERSION = 4;
 export const LARGE_LIBRARY_SEARCH_TOKEN = 'serpent-large-library-needle';
 export const LARGE_LIBRARY_ASSET_COUNT = 20_000;
 

@@ -1,11 +1,20 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  canvasViewportIsMeasurable,
   columnWindow,
   itemIntersectsVisibleRange,
   quantizeCanvasViewportOffsetPx,
   viewportOverscanPx,
 } from "../../src/renderer/viewport-window";
+
+describe("canvasViewportIsMeasurable", () => {
+  it("rejects a collapsed canvas so windowing keeps the last real slice", () => {
+    expect(canvasViewportIsMeasurable({ clientHeight: 0, clientWidth: 800 })).toBe(false);
+    expect(canvasViewportIsMeasurable({ clientHeight: 600, clientWidth: 0 })).toBe(false);
+    expect(canvasViewportIsMeasurable({ clientHeight: 600, clientWidth: 800 })).toBe(true);
+  });
+});
 
 describe("columnWindow", () => {
   it("returns an empty window for no items", () => {

@@ -1,11 +1,17 @@
 import { describe, expect, it } from "vitest";
 
 import type { AssetSummary } from "../../src/shared/asset-types";
+import { createCaptionBandResolver } from "../../src/renderer/asset-caption-band";
+import { countFittingColumns } from "../../src/renderer/asset-grid-layout";
+import { resolveJustifiedCaptionBandPx } from "../../src/renderer/justified-caption-band";
+import { estimateMasonryPreviewHeightPx } from "../../src/renderer/masonry-preview-frame";
 import {
   estimateMasonryCardBodyPx,
   hitTestCanvasAssetLayout,
+  justifyRowCaptionBandPx,
   layoutJustifiedAssetRects,
   layoutMasonryAssetRects,
+  masonryColumnWidthPx,
   MASONRY_CAPTION_BAND_PX,
   MASONRY_DIMENSIONS_CAPTION_BAND_PX,
   overlayLiveAssetGeometry,
@@ -101,6 +107,80 @@ describe("canvas asset layout", () => {
 
   it("keeps trailing gap out of the last stacked item", () => {
     expect(stackItemHeights([100, 100, 100])).toEqual([114, 114, 100]);
+  });
+
+  it("shrinks only the waterfall cards that have no resolution (Serpent-b1b0f2)", () => {
+    const resolver = createCaptionBandResolver({
+      mode: "masonry",
+      fields: { name: true, size: true, date: true, dimensions: true },
+    });
+    const sized = asset("sized", 100, 100);
+    const unsized = { ...asset("unsized", 100, 100), width: null, height: null };
+    const rects = layoutMasonryAssetRects([sized, unsized], 400, 120, true, resolver);
+    const byId = new Map(rects.map((item) => [item.id, item]));
+    const columnWidth = masonryColumnWidthPx(400, countFittingColumns(400, 120));
+    // Each card reserves only its own caption band; the previews differ because
+    // an undecoded asset falls back to the placeholder aspect ratio.
+    expect(byId.get("sized")!.height).toBe(
+      estimateMasonryPreviewHeightPx(sized.width, sized.height, columnWidth) +
+        MASONRY_DIMENSIONS_CAPTION_BAND_PX,
+    );
+    expect(byId.get("unsized")!.height).toBe(
+      estimateMasonryPreviewHeightPx(null, null, columnWidth) + MASONRY_CAPTION_BAND_PX,
+    );
+  });
+
+  it("sizes a tiled row by the tallest caption in that row (Serpent-b1b0f2)", () => {
+    const resolver = createCaptionBandResolver({
+      mode: "justified",
+      fields: { name: true, size: true, date: true, dimensions: true },
+    });
+    const rows = [
+      {
+        height: 160,
+        items: [
+          { id: "plain", width: 160, height: 160 },
+          { id: "sized", width: 160, height: 160 },
+        ],
+      },
+    ];
+    const entryById = new Map([
+      ["plain", { assetId: "plain", width: null, height: null, mediaType: "image" as const }],
+      ["sized", { assetId: "sized", width: 800, height: 600, mediaType: "image" as const }],
+    ]);
+    expect(justifyRowCaptionBandPx(rows[0]!, entryById, resolver)).toBe(
+      resolveJustifiedCaptionBandPx({
+        dimensions: true,
+        name: true,
+        secondary: true,
+      }),
+    );
+  });
+
+  it("shrinks a tiled row whose assets all lack resolution (Serpent-b1b0f2)", () => {
+    const resolver = createCaptionBandResolver({
+      mode: "justified",
+      fields: { name: true, size: true, date: true, dimensions: true },
+    });
+    const unsized = (id: string) => ({
+      ...asset(id, 100, 100),
+      width: null,
+      height: null,
+    });
+    const withSize = layoutJustifiedAssetRects(
+      [asset("a", 100, 100), asset("b", 100, 100)],
+      400,
+      160,
+      resolver,
+    );
+    const withoutSize = layoutJustifiedAssetRects(
+      [unsized("a"), unsized("b")],
+      400,
+      160,
+      resolver,
+    );
+    expect(withoutSize[0]!.height).toBe(withoutSize[1]!.height);
+    expect(withoutSize[0]!.height).toBeLessThan(withSize[0]!.height);
   });
 
   it("overlays live asset dimensions onto a stale browse-layout snapshot (Serpent-9c9f97)", () => {

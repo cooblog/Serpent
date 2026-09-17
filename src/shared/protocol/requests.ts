@@ -14,6 +14,10 @@ import {
   CONTENT_REPLACE_STAGE_CHUNK_MAX_BASE64_LENGTH,
 } from '../content-replace';
 import { performanceRequestEnvelopeSchema } from '../performance-contract';
+import {
+  entityAppearanceSchema,
+  entityAppearanceTargetSchema,
+} from '../entity-appearance';
 
 const nonBlankString = z.string().min(1).refine((value) => value.trim().length > 0, {
   message: 'Value must not be blank.',
@@ -21,6 +25,7 @@ const nonBlankString = z.string().min(1).refine((value) => value.trim().length >
 
 const displayNameSchema = nonBlankString.max(255);
 const identifierSchema = nonBlankString.max(255);
+const importCancelModeSchema = z.enum(['abandon', 'stop']);
 /**
  * Linked-folder subtree path. Empty string means the linked folder root
  * (OS trash / disk delete of the whole linked tree).
@@ -258,6 +263,12 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
     folderId: identifierSchema,
     newName: displayNameSchema,
+  }),
+  z.strictObject({
+    type: z.literal('appearance.set.request'),
+    libraryId: identifierSchema,
+    target: entityAppearanceTargetSchema,
+    appearance: entityAppearanceSchema,
   }),
   // Folder shell actions (REQ-MENU-006) are identified by folder id only; no
   // filesystem path may cross this boundary (REQ-COMMAND-003). The Worker
@@ -742,6 +753,9 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     // reuse its opaque session instead of rebuilding scope SQL and COUNT.
     type: z.literal('browse.session.open.request'),
     libraryId: identifierSchema,
+    /** Correlates one visible navigation through Renderer, Main, and Worker diagnostics. */
+    navigationId: z.string().uuid().optional(),
+    navigationStartedAtEpochMs: z.number().finite().nonnegative().optional(),
     query: searchQuerySchema,
     filters: z.array(filterClauseSchema).max(16).optional(),
     scope: searchScopeSchema.optional(),
@@ -911,6 +925,13 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
       (assetIds) => new Set(assetIds).size === assetIds.length,
       { message: 'assetIds must not contain duplicates.' },
     ),
+    /**
+     * Confirmation-copy hint only: the renderer knows whether the selection is
+     * managed, linked, or both, and Main has no database access. It never
+     * influences what is deleted — the worker resolves each asset's location
+     * kind from `assets.location_kind` itself.
+     */
+    locationKind: z.enum(['managed', 'linked', 'mixed']).optional(),
   }),
   z.strictObject({
     type: z.literal('asset.delete-cancel.request'),
@@ -989,6 +1010,7 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('library.import.cancel.request'),
     importId: identifierSchema,
+    mode: importCancelModeSchema.optional(),
   }),
   z.strictObject({
     type: z.literal('library.import.copy.request'),
@@ -1187,8 +1209,18 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     kind: z.enum(['thumbnail', 'webm_proxy', 'audio_proxy']),
   }),
   z.strictObject({
+    type: z.literal('media.job-summary.request'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
     type: z.literal('media.list-jobs.request'),
     libraryId: identifierSchema,
+    summaryOnly: z.boolean().optional(),
+    cursor: z.strictObject({
+      createdAt: nonBlankString,
+      jobId: identifierSchema,
+    }).optional(),
+    limit: z.number().int().min(1).max(500).optional(),
   }),
   z.strictObject({
     type: z.literal('plugin.list-jobs.request'),
@@ -1441,6 +1473,12 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
     folderId: identifierSchema,
     newName: displayNameSchema,
+  }),
+  z.strictObject({
+    type: z.literal('appearance.set'),
+    libraryId: identifierSchema,
+    target: entityAppearanceTargetSchema,
+    appearance: entityAppearanceSchema,
   }),
   z.strictObject({
     type: z.literal('folder.clone'),
@@ -1871,6 +1909,7 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('browse.session.open'),
     libraryId: identifierSchema,
+    navigationId: z.string().uuid().optional(),
     query: searchQuerySchema,
     filters: z.array(filterClauseSchema).max(16).optional(),
     scope: searchScopeSchema.optional(),
@@ -2226,6 +2265,7 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('library.import-cancel'),
     importId: identifierSchema,
+    mode: importCancelModeSchema.optional(),
   }),
   z.strictObject({
     type: z.literal('library.import-validate'),
@@ -2298,8 +2338,18 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
   }),
   z.strictObject({
+    type: z.literal('media.job-summary'),
+    libraryId: identifierSchema,
+  }),
+  z.strictObject({
     type: z.literal('media.list-jobs'),
     libraryId: identifierSchema,
+    summaryOnly: z.boolean().optional(),
+    cursor: z.strictObject({
+      createdAt: nonBlankString,
+      jobId: identifierSchema,
+    }).optional(),
+    limit: z.number().int().min(1).max(500).optional(),
   }),
   z.strictObject({
     type: z.literal('media.pause-jobs'),

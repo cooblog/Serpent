@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { aiSearchPlanSchema, assetMetadataResultSchema, extractedMetadataResultSchema, assetSummarySchema, browseLayoutEntrySchema, collectionSummarySchema, folderBrowseEntrySchema, ignoredPathSchema, linkedFolderDirectoryMutationSchema, linkedFolderRuleSchema, linkedFolderSummarySchema, managedFolderSummarySchema, portableRelativePathSchema, smartCollectionSummarySchema, tagCooccurrenceGraphSchema, tagSummarySchema, trashedFolderSummarySchema } from '../asset-types';
+import { entityAppearanceSchema, entityAppearanceTargetSchema } from '../entity-appearance';
 import { libraryNavigationSummarySchema } from '../library-navigation';
 import { pluginJobRecordSchema } from '../../plugins/plugin-jobs';
 import { recentLibraryListSchema } from '../recent-libraries';
@@ -312,6 +313,12 @@ export const importProgressEventSchema = z.strictObject({
   phase: z.enum(['validate', 'copy', 'extract', 'verify', 'open', 'complete', 'failed', 'cancelled']),
   /** True when the import can be cancelled between batches. */
   cancelable: z.boolean().optional(),
+  /**
+   * False when files stay in place (linked-folder index). Omitted or true means
+   * bytes are actually being copied. The shared `copy` phase is reused for
+   * counted progress either way.
+   */
+  copiesFiles: z.boolean().optional(),
   filesProcessed: z.number().int().nonnegative(),
   totalFiles: z.number().int().nonnegative(),
   bytesProcessed: z.number().int().nonnegative(),
@@ -350,7 +357,9 @@ export const deleteProgressEventSchema = z.strictObject({
   type: z.literal('delete.progress'),
   operationId: nonBlankString,
   libraryId: nonBlankString,
-  kind: z.enum(['trash', 'disk', 'permanent']),
+  // 2026-09-15：新增 'linked-remove'——「移除链接文件夹 / 链接记录」既不是回收站操作也不动磁盘，
+  // 复用 'permanent' 会让遮罩标题显示成「正在清空回收站」（'permanent' 是回收站清空语义）。
+  kind: z.enum(['trash', 'disk', 'permanent', 'linked-remove']),
   phase: z.enum(['run', 'complete', 'failed', 'cancelled']),
   /** True when disk delete can be cancelled between files. */
   cancelable: z.boolean().optional(),
@@ -598,9 +607,20 @@ export type TagOperationSkip = z.infer<typeof tagOperationSkipSchema>;
 const assetOperationSuccessSchemas = [
   z.strictObject({
     ok: z.literal(true),
+    type: z.literal('media.job-summary.read'),
+    libraryId: nonBlankString,
+    ...mediaJobCountsShape,
+  }),
+  z.strictObject({
+    ok: z.literal(true),
     type: z.literal('media.jobs.listed'),
     libraryId: nonBlankString,
     ...mediaJobCountsShape,
+    nextCursor: z.strictObject({
+      createdAt: nonBlankString,
+      jobId: nonBlankString,
+    }).nullable(),
+    hasMore: z.boolean(),
     jobs: z.array(mediaJobSchema),
   }),
   z.strictObject({
@@ -708,6 +728,12 @@ const assetOperationSuccessSchemas = [
     type: z.literal('folder.renamed'),
     folder: managedFolderSummarySchema,
     historyEntryId: nonBlankString.optional(),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    type: z.literal('appearance.updated'),
+    target: entityAppearanceTargetSchema,
+    appearance: entityAppearanceSchema,
   }),
   z.strictObject({
     ok: z.literal(true),

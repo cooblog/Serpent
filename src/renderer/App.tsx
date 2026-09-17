@@ -133,6 +133,10 @@ import {
   withFolderRecursiveEnabled,
 } from "./folder-recursive-preferences";
 import {
+  FOLDER_BROWSE_CARD_PREFERENCES_CHANGED,
+  loadFolderBrowseCardPreferences,
+} from "./folder-browse-card-preferences";
+import {
   hasFeatureHintBeenShown,
   isFeatureHintEnabled,
   loadFeatureHintPreferences,
@@ -183,8 +187,10 @@ import { useWorkspaceTabsController } from "./use-workspace-tabs";
 import { presentWorkspaceTab } from "./workspace-tab-presentation";
 import {
   captureWorkspaceNavViewport,
+  pendingWorkspaceViewportAction,
   resolveWorkspaceScrollTop,
   restoreWorkspaceNavViewport,
+  shouldRestoreViewportAfterBrowseReload,
 } from "./workspace-scroll-position";
 import { mergeAssetSummaries } from "./merge-asset-summaries";
 import {
@@ -286,6 +292,13 @@ import {
   selectPluginJobActivity,
 } from "./plugin-job-activity";
 import { JobStatusCoordinator } from "./job-status-coordinator";
+import {
+  appendMediaJobListPage,
+  applyMediaJobSummary,
+  replaceMediaJobListPage,
+  type MediaJobSummaryCounts,
+} from "./media-job-status-state";
+import { MEDIA_JOB_LIST_PAGE_SIZE } from "../shared/media-jobs";
 import { useScrollbarActivity } from "./use-scrollbar-activity";
 import { splitFilenameForDisplay } from "./filename-display";
 
@@ -298,7 +311,6 @@ import { buildMultiAssetMenuSkipReport } from "./menu-skip-report";
 import { useAssetSelection } from "./useAssetSelection";
 import { buildMarqueeLayoutKey } from "./marquee-layout-key";
 import {
-  MASONRY_DIMENSIONS_CAPTION_BAND_PX,
   readPublishedCanvasAssetLayout,
 } from "./canvas-asset-layout";
 import { useSelectionKeyboard } from "./use-selection-keyboard";
@@ -406,6 +418,7 @@ import {
   libraryOpenBlockingTitleKey,
 } from "./error-utils";
 
+import type { EntityAppearance, EntityAppearanceTarget } from "../shared/entity-appearance";
 import type {
   AiSearchPlan,
   AssetSummary,
@@ -529,9 +542,17 @@ import {
 } from "./canvas-reflow-restore";
 import {
   captureBrowseViewSnapshot,
-  resolveBrowseRestoreScroll,
   type BrowseViewSnapshot,
 } from "./view-restore";
+import { scheduleBrowseViewRestore } from "./browse-view-restore-scheduler";
+import {
+  canvasHasPreviewScrollHold,
+  installBrowseScrollWriteSpy,
+  logBrowseScrollWrite,
+  PREVIEW_SCROLL_HOLD_MS,
+  setCanvasPreviewScrollHold,
+  shouldApplyRestoredFocusScroll,
+} from "./browse-scroll-debug";
 import {
   isMacPlatform,
   type CommandPlatform,
@@ -1033,6 +1054,10 @@ function AppInner() {
   const [folderRecursivePrefs, setFolderRecursivePrefs] = useState(() =>
     loadFolderRecursivePreferences(),
   );
+  const [showFolderCardsWhenRecursive, setShowFolderCardsWhenRecursive] =
+    useState(
+      () => loadFolderBrowseCardPreferences().showWhenRecursive,
+    );
   // Serpent-b8a853: one-time feature hints for hidden UI affordances share a
   // global switch (Settings → Feature hints) and per-key "seen" marks.
   const [featureHintPrefs, setFeatureHintPrefs] = useState(() =>
@@ -1074,6 +1099,20 @@ function AppInner() {
     },
     [],
   );
+  useEffect(() => {
+    const onChanged = (): void => {
+      setShowFolderCardsWhenRecursive(
+        loadFolderBrowseCardPreferences().showWhenRecursive,
+      );
+    };
+    window.addEventListener(FOLDER_BROWSE_CARD_PREFERENCES_CHANGED, onChanged);
+    return () => {
+      window.removeEventListener(
+        FOLDER_BROWSE_CARD_PREFERENCES_CHANGED,
+        onChanged,
+      );
+    };
+  }, []);
   // Hovering a highlighted affordance for >0.5s dismisses that hint
   // permanently (shared "all highlights" rule, Serpent-b8a853).
   const linkedFolderHintShow =
@@ -1532,6 +1571,10 @@ function AppInner() {
   const importProgressRef = useRef(importProgress);
   importProgressRef.current = importProgress;
   const importAwaitingUserDecisionRef = useRef(false);
+  const importInterruptRef = useRef<"abandon" | "stop" | null>(null);
+  const [importInterrupt, setImportInterrupt] = useState<"abandon" | "stop" | null>(
+    null,
+  );
   const [deleteProgress, setDeleteProgress] =
     useState<DeleteProgressEvent | null>(null);
   const [libraryTransferKind, setLibraryTransferKind] = useState<LibraryTransferKind>("import");
@@ -2017,6 +2060,36 @@ function AppInner() {
     [assetCardSize, canvasWidthPx],
   );
   const workspaceCanvasRef = useRef<HTMLDivElement>(null);
+  const previewScrollHoldTimerRef = useRef<number | null>(null);
+  const lastPreviewRestoredTopRef = useRef(0);
+  const clearPreviewScrollHold = useCallback(() => {
+    if (previewScrollHoldTimerRef.current !== null) {
+      window.clearTimeout(previewScrollHoldTimerRef.current);
+      previewScrollHoldTimerRef.current = null;
+    }
+    setCanvasPreviewScrollHold(workspaceCanvasRef.current, false);
+  }, []);
+  const armPreviewScrollHold = useCallback((restoredTop: number) => {
+    lastPreviewRestoredTopRef.current = restoredTop;
+    setCanvasPreviewScrollHold(workspaceCanvasRef.current, true);
+    if (previewScrollHoldTimerRef.current !== null) {
+      window.clearTimeout(previewScrollHoldTimerRef.current);
+    }
+    previewScrollHoldTimerRef.current = window.setTimeout(() => {
+      previewScrollHoldTimerRef.current = null;
+      setCanvasPreviewScrollHold(workspaceCanvasRef.current, false);
+    }, PREVIEW_SCROLL_HOLD_MS);
+  }, []);
+  useEffect(() => () => {
+    if (previewScrollHoldTimerRef.current !== null) {
+      window.clearTimeout(previewScrollHoldTimerRef.current);
+    }
+  }, []);
+  useLayoutEffect(() => {
+    const canvas = workspaceCanvasRef.current;
+    if (!canvas) return undefined;
+    return installBrowseScrollWriteSpy(canvas);
+  }, [library]);
   // A viewport restore waiting to be applied in the same commit the new
   // content paints in. Set when a navigation targets a saved offset; the
   // layout effect below positions the canvas before the browser paints, which
@@ -2030,7 +2103,34 @@ function AppInner() {
     if (!canvas) return;
     const extent = Math.max(0, canvas.scrollHeight - canvas.clientHeight);
     if (extent <= 0) return;
-    canvas.scrollTop = resolveWorkspaceScrollTop(viewport, extent);
+    const targetTop = resolveWorkspaceScrollTop(viewport, extent);
+    const previewActive =
+      Boolean(previewAsset) ||
+      previewRestoring ||
+      Boolean(previewAssetRef.current) ||
+      previewRestoringRef.current ||
+      canvasHasPreviewScrollHold(canvas) ||
+      Boolean(canvas.parentElement?.classList.contains("is-viewing"));
+    const action = pendingWorkspaceViewportAction({
+      previewActive,
+      navigationPending: workspaceNavigationPending,
+      restoreLoopActive: Boolean(cancelWorkspaceViewportRestoreRef.current),
+      intendedTop: viewport.scrollTop,
+      targetTop,
+      currentTop: canvas.scrollTop,
+      extent,
+    });
+    if (action === "clear") {
+      pendingViewportRestoreRef.current = null;
+      return;
+    }
+    logBrowseScrollWrite("pendingViewportRestore", canvas, {
+      targetTop,
+      intendedTop: viewport.scrollTop,
+      currentTop: Math.round(canvas.scrollTop),
+      navigationPending: workspaceNavigationPending,
+    });
+    canvas.scrollTop = targetTop;
   });
   const reportedVisibleWindowKeyRef = useRef("");
   // Serpent-wgl2: the marquee box div is always mounted and moved directly
@@ -2211,8 +2311,11 @@ function AppInner() {
   // focusing the previous card after a rapid reopen of the same asset.
   const previewCloseGenerationRef = useRef(0);
   const previewRestoreFrameRef = useRef<number | null>(null);
+  const cancelPreviewViewRestoreRef = useRef<(() => void) | null>(null);
   useEffect(
     () => () => {
+      cancelPreviewViewRestoreRef.current?.();
+      cancelPreviewViewRestoreRef.current = null;
       if (previewRestoreFrameRef.current !== null) {
         window.cancelAnimationFrame(previewRestoreFrameRef.current);
       }
@@ -2285,6 +2388,8 @@ function AppInner() {
     Map<string, string>
   >(new Map());
   const [mediaJobsOpen, setMediaJobsOpen] = useState(false);
+  const mediaJobsOpenRef = useRef(false);
+  const loadMediaJobsRef = useRef<(quiet?: boolean) => Promise<void>>(async () => undefined);
   const [mediaJobs, setMediaJobs] = useState<MediaJobStatus | null>(null);
   const [aiJobs, setAiJobs] = useState<AiJobStatus | null>(null);
   const [pluginJobs, setPluginJobs] = useState<PluginJobStatus | null>(null);
@@ -2308,10 +2413,9 @@ function AppInner() {
     return mediaActive || aiActive || pluginJobsActive;
   }, [aiAnalyzing, aiJobs, mediaJobs, pluginJobsActive]);
   const openMediaJobs = useCallback(() => {
-    // Matches the previous behaviour: opening the panel shows its loading state
-    // until the coordinator's immediate refresh settles.
     setMediaJobsLoading(true);
     setMediaJobsOpen(true);
+    void loadMediaJobsRef.current(true);
   }, []);
   const hidePluginJobActivity = useCallback((jobId: string) => {
     setHiddenPluginJobActivityId(jobId);
@@ -3117,10 +3221,15 @@ function AppInner() {
         if (!cancelled) setFolderBrowseEntries([]);
         return;
       }
-      // Serpent-7a9e89: 「递归显示子文件夹内容」的浏览语义是把子级资产
-      // 摊平进画布，子文件夹卡片会与摊平结果冲突——递归开启时不再
-      // 查询/展示子文件夹卡片（关闭后由 mutable 依赖恢复原行为）。
-      if (!shouldShowFolderBrowseCards(assetScope, folderRecursive)) {
+      // Recursive browse still shows direct child folder cards unless the
+      // Settings switch turns that off (Serpent-4e9caa).
+      if (
+        !shouldShowFolderBrowseCards(
+          assetScope,
+          folderRecursive,
+          showFolderCardsWhenRecursive,
+        )
+      ) {
         if (!cancelled) setFolderBrowseEntries([]);
         return;
       }
@@ -3155,6 +3264,7 @@ function AppInner() {
     searchValue,
     showIgnoredItems,
     folderRecursive,
+    showFolderCardsWhenRecursive,
     ensureLibraryView,
     isCurrentLibraryView,
     // Serpent-d0nv: a cover candidate's thumbnail.ready bumps this token so
@@ -3290,7 +3400,8 @@ function AppInner() {
       if (
         width === lastWidth ||
         previewAssetRef.current ||
-        previewRestoringRef.current
+        previewRestoringRef.current ||
+        canvasHasPreviewScrollHold(canvas)
       ) {
         lastWidth = width;
         return;
@@ -3470,6 +3581,8 @@ function AppInner() {
     options?: { recordHistory?: boolean },
   ) => {
     if (asset.availability !== "available" || asset.deletedAt) return;
+    previewAssetRef.current = asset;
+    pendingViewportRestoreRef.current = null;
     if (
       options?.recordHistory !== false &&
       navHistoryRef.current.current.kind !== "preview"
@@ -3486,8 +3599,13 @@ function AppInner() {
     }
     previewCloseGenerationRef.current += 1;
     closingPreviewRef.current = null;
+    previewAssetRef.current = asset;
     previewRestoringRef.current = false;
+    pendingViewportRestoreRef.current = null;
     setPreviewRestoring(false);
+    cancelPreviewViewRestoreRef.current?.();
+    cancelPreviewViewRestoreRef.current = null;
+    clearPreviewScrollHold();
     // A card-size or panel reflow may still have an anchor-restoration frame
     // queued when the user opens the viewer immediately after resizing. That
     // stale callback must not overwrite the viewer-close snapshot later.
@@ -3515,6 +3633,10 @@ function AppInner() {
         canvas.scrollLeft,
         canvas.scrollTop,
       );
+      logBrowseScrollWrite("openAssetPreview.capture", canvas, {
+        snapshotTop: Math.round(canvas.scrollTop),
+        hasCard: Boolean(card),
+      });
     } else {
       previewScrollSnapshotRef.current = null;
     }
@@ -3541,7 +3663,7 @@ function AppInner() {
         canForward: navHistoryRef.current.canForward,
       });
     }
-  }, [navHistoryRef, saveCurrentWorkspaceHistoryViewport, selectionAnchorRef, setNavHistoryUi, syncActiveWorkspaceTabLocation, wakeViewerChrome]);
+  }, [navHistoryRef, saveCurrentWorkspaceHistoryViewport, selectionAnchorRef, setNavHistoryUi, syncActiveWorkspaceTabLocation, wakeViewerChrome, clearPreviewScrollHold]);
 
   const persistAssetColorSpace = useCallback(async (assetId: string, colorSpace: string | null) => {
     if (!api || !library) return;
@@ -3608,12 +3730,16 @@ function AppInner() {
     updateHistory = true,
   ) => {
     // A scope transition can arrive after React has already cleared
-    // `previewAsset` but before the two-frame browse restoration runs. Cancel
-    // that stale restoration even when there is no longer an asset to close,
+    // `previewAsset` but before browse restoration finishes. Cancel that
+    // stale restoration even when there is no longer an asset to close,
     // otherwise the previous scope can scroll/focus the newly selected scope.
-    if (!restoreBrowsePosition && previewRestoreFrameRef.current !== null) {
-      window.cancelAnimationFrame(previewRestoreFrameRef.current);
-      previewRestoreFrameRef.current = null;
+    if (!restoreBrowsePosition) {
+      cancelPreviewViewRestoreRef.current?.();
+      cancelPreviewViewRestoreRef.current = null;
+      if (previewRestoreFrameRef.current !== null) {
+        window.cancelAnimationFrame(previewRestoreFrameRef.current);
+        previewRestoreFrameRef.current = null;
+      }
     }
     const closingAsset = previewAsset;
     if (!closingAsset) return;
@@ -3635,109 +3761,114 @@ function AppInner() {
     previewRestoringRef.current = restoreBrowsePosition;
     setPreviewRestoring(restoreBrowsePosition);
     setPreviewAsset(null);
+    cancelWorkspaceViewportRestoreRef.current?.();
+    cancelWorkspaceViewportRestoreRef.current = null;
+    pendingViewportRestoreRef.current = null;
     const assetId = previewFocusReturnRef.current;
     const scrollSnapshot = previewScrollSnapshotRef.current;
     previewFocusReturnRef.current = null;
     previewScrollSnapshotRef.current = null;
+    cancelPreviewViewRestoreRef.current?.();
+    cancelPreviewViewRestoreRef.current = null;
     if (previewRestoreFrameRef.current !== null) {
       window.cancelAnimationFrame(previewRestoreFrameRef.current);
       previewRestoreFrameRef.current = null;
     }
-    if (restoreBrowsePosition) previewRestoreFrameRef.current = window.requestAnimationFrame(() => {
+    const settleRestoredFocus = (remaining: number): void => {
       if (closeGeneration !== previewCloseGenerationRef.current) return;
-      // React must first commit the collapsed viewer host. A second frame
-      // restores scroll against the visible canvas; restoring in the first
-      // frame can be discarded by layout and jump back to the top.
-      previewRestoreFrameRef.current = window.requestAnimationFrame(() => {
-        if (closeGeneration !== previewCloseGenerationRef.current) return;
-        const canvas = workspaceCanvasRef.current;
-        if (canvas && scrollSnapshot) {
-          // REQ-VIEW-008: the grid may have reflowed while the viewer was
-          // open (e.g. inspector panel width changed). Land on the raw
-          // captured position first, measure where the previewed card
-          // actually ended up, then correct the delta so it returns to the
-          // exact spot it occupied before entering the viewer.
-          canvas.scrollTo({ left: scrollSnapshot.scrollLeft, top: scrollSnapshot.scrollTop });
-          const restoredCard = scrollSnapshot.anchor
-            ? Array.from(
-                canvas.querySelectorAll<HTMLElement>("[data-asset-id]"),
-              ).find((el) => el.dataset.assetId === scrollSnapshot.anchor!.assetId)
-            : null;
-          const target = resolveBrowseRestoreScroll(
-            scrollSnapshot,
-            restoredCard?.getBoundingClientRect() ?? null,
-            {
-              scrollWidth: canvas.scrollWidth,
-              scrollHeight: canvas.scrollHeight,
-              clientWidth: canvas.clientWidth,
-              clientHeight: canvas.clientHeight,
-            },
-          );
-          canvas.scrollTo({ left: target.left, top: target.top });
+      const currentCanvas = workspaceCanvasRef.current;
+      const restoredFocusTarget = currentCanvas?.querySelector<HTMLElement>(
+        `[data-asset-id="${assetId ?? ""}"]`,
+      );
+      if (currentCanvas && restoredFocusTarget) {
+        const canvasRect = currentCanvas.getBoundingClientRect();
+        const cardRect = restoredFocusTarget.getBoundingClientRect();
+        const cardIsVisible =
+          cardRect.bottom > canvasRect.top &&
+          cardRect.top < canvasRect.bottom &&
+          cardRect.right > canvasRect.left &&
+          cardRect.left < canvasRect.right;
+        if (!cardIsVisible) {
+          const cardTop =
+            currentCanvas.scrollTop + cardRect.top - canvasRect.top;
+          const cardBottom = cardTop + cardRect.height;
+          const nextTop =
+            cardTop < currentCanvas.scrollTop
+              ? cardTop
+              : cardBottom > currentCanvas.scrollTop + currentCanvas.clientHeight
+                ? cardBottom - currentCanvas.clientHeight
+                : currentCanvas.scrollTop;
+          if (
+            shouldApplyRestoredFocusScroll(
+              lastPreviewRestoredTopRef.current,
+              nextTop,
+              currentCanvas.clientHeight,
+            )
+          ) {
+            currentCanvas.scrollTo({
+              left: Math.max(
+                0,
+                currentCanvas.scrollLeft + cardRect.left - canvasRect.left,
+              ),
+              top: Math.max(0, nextTop),
+            });
+          } else {
+            logBrowseScrollWrite("settleRestoredFocus.skipped", currentCanvas, {
+              nextTop: Math.round(nextTop),
+              restoredTop: Math.round(lastPreviewRestoredTopRef.current),
+            });
+          }
         }
-        if (closeGeneration === previewCloseGenerationRef.current) {
-          previewRestoringRef.current = false;
-          setPreviewRestoring(false);
-          // The restoring class intentionally hides and disables the canvas.
-          // Wait several frames for layout/reflow restoration to settle before
-          // returning focus; focusing while the ancestor is hidden is ignored
-          // by the browser and leaves keyboard users on <body>. Re-checking
-          // each frame also prevents a pending card-size/masonry reflow from
-          // moving the focused card out of view immediately after close.
-          const settleRestoredFocus = (remaining: number): void => {
-            if (closeGeneration !== previewCloseGenerationRef.current) return;
-            const currentCanvas = workspaceCanvasRef.current;
-            const restoredFocusTarget = currentCanvas?.querySelector<HTMLElement>(
-              `[data-asset-id="${assetId ?? ""}"]`,
-            );
-            if (currentCanvas && restoredFocusTarget) {
-              const canvasRect = currentCanvas.getBoundingClientRect();
-              const cardRect = restoredFocusTarget.getBoundingClientRect();
-              const cardIsVisible =
-                cardRect.bottom > canvasRect.top &&
-                cardRect.top < canvasRect.bottom &&
-                cardRect.right > canvasRect.left &&
-                cardRect.left < canvasRect.right;
-              if (!cardIsVisible) {
-                const cardTop =
-                  currentCanvas.scrollTop + cardRect.top - canvasRect.top;
-                const cardBottom = cardTop + cardRect.height;
-                const nextTop =
-                  cardTop < currentCanvas.scrollTop
-                    ? cardTop
-                    : cardBottom > currentCanvas.scrollTop + currentCanvas.clientHeight
-                      ? cardBottom - currentCanvas.clientHeight
-                      : currentCanvas.scrollTop;
-                currentCanvas.scrollTo({
-                  left: Math.max(
-                    0,
-                    currentCanvas.scrollLeft + cardRect.left - canvasRect.left,
-                  ),
-                  top: Math.max(0, nextTop),
-                });
-              }
-              if (remaining <= 0) {
-                restoredFocusTarget.focus({ preventScroll: true });
-                previewRestoreFrameRef.current = null;
-                return;
-              }
-            } else if (!currentCanvas || remaining <= 0) {
-              previewRestoreFrameRef.current = null;
-              return;
-            }
-            previewRestoreFrameRef.current = window.requestAnimationFrame(() =>
-              settleRestoredFocus(remaining - 1),
-            );
-          };
-          previewRestoreFrameRef.current = window.requestAnimationFrame(() =>
-            settleRestoredFocus(12),
-          );
-        } else {
+        if (remaining <= 0) {
+          restoredFocusTarget.focus({ preventScroll: true });
           previewRestoreFrameRef.current = null;
+          return;
         }
-      });
-    });
-    if (!restoreBrowsePosition) setPreviewRestoring(false);
+      } else if (!currentCanvas || remaining <= 0) {
+        previewRestoreFrameRef.current = null;
+        return;
+      }
+      previewRestoreFrameRef.current = window.requestAnimationFrame(() =>
+        settleRestoredFocus(remaining - 1),
+      );
+    };
+    if (restoreBrowsePosition) {
+      const canvas = workspaceCanvasRef.current;
+      if (canvas && scrollSnapshot) {
+        armPreviewScrollHold(scrollSnapshot.scrollTop);
+        logBrowseScrollWrite("closeAssetPreview.restore", canvas, {
+          snapshotTop: Math.round(scrollSnapshot.scrollTop),
+        });
+        // REQ-VIEW-008 / Serpent-bd481f: wait until the live extent can hold
+        // the captured offset. Two frames used to clamp a collapsed canvas
+        // to scrollTop 0 and treat that as done.
+        cancelPreviewViewRestoreRef.current = scheduleBrowseViewRestore({
+          canvas,
+          snapshot: scrollSnapshot,
+          isCurrent: () => closeGeneration === previewCloseGenerationRef.current,
+          onComplete: () => {
+            if (closeGeneration !== previewCloseGenerationRef.current) return;
+            cancelPreviewViewRestoreRef.current = null;
+            armPreviewScrollHold(scrollSnapshot.scrollTop);
+            previewRestoringRef.current = false;
+            setPreviewRestoring(false);
+            previewRestoreFrameRef.current = window.requestAnimationFrame(() =>
+              settleRestoredFocus(12),
+            );
+          },
+        });
+      } else {
+        previewRestoringRef.current = false;
+        setPreviewRestoring(false);
+        previewRestoreFrameRef.current = window.requestAnimationFrame(() =>
+          settleRestoredFocus(12),
+        );
+      }
+    }
+    if (!restoreBrowsePosition) {
+      clearPreviewScrollHold();
+      setPreviewRestoring(false);
+    }
     try {
       if (api && library) {
         await api.closePreview({
@@ -3755,7 +3886,7 @@ function AppInner() {
         closingPreviewRef.current = null;
       }
     }
-  }, [api, library, navHistoryRef, previewAsset, setNavHistoryUi, syncActiveWorkspaceTabLocation]);
+  }, [api, armPreviewScrollHold, clearPreviewScrollHold, library, navHistoryRef, previewAsset, setNavHistoryUi, syncActiveWorkspaceTabLocation]);
 
   // Collection tree helper
   const collectionTree = useMemo(() => {
@@ -4918,14 +5049,13 @@ function AppInner() {
       const extent = Math.max(0, canvas.scrollHeight - canvas.clientHeight);
       canvas.scrollTop = resolveWorkspaceScrollTop(viewport, extent);
     }
+    // Cancel any in-flight restore first (its onComplete would clear the
+    // pending ref). Re-arm afterwards so the layout effect can place the
+    // offset in the commit where new content paints.
     restoreCurrentWorkspaceHistoryViewport(viewport, request.isCurrent, () => {
       pendingViewportRestoreRef.current = null;
       if (request.isCurrent()) setWorkspaceNavigationPending(false);
     });
-    // Arm the same-commit restore *after* the previous restore was cancelled
-    // (its onComplete clears the ref): the layout effect above positions the
-    // canvas before the browser paints the commit in which the new content
-    // lands, so the restored folder never shows a top-of-list first frame.
     pendingViewportRestoreRef.current = viewport;
   }
 
@@ -6460,41 +6590,25 @@ function AppInner() {
     }
   }
 
-  async function reorderCollectionSibling(sourceId: string, targetId: string) {
-    if (!api || !library || sourceId === targetId) return;
+  async function moveCollectionToRoot(collectionId: string) {
+    if (!api || !library) return;
+    const source = collections.find(
+      (collection) => collection.collectionId === collectionId,
+    );
+    if (!source || source.parentId === null) return;
     const targetLibraryId = library.libraryId;
     const viewSession = ensureLibraryView(targetLibraryId);
     if (!viewSession) return;
-    const source = collections.find(
-      (collection) => collection.collectionId === sourceId,
-    );
-    const target = collections.find(
-      (collection) => collection.collectionId === targetId,
-    );
     setDraggedCollectionId(null);
-    if (!source || !target || source.parentId !== target.parentId) {
-      setError(t("toast.collectionReorderSameLevelOnly"));
-      return;
-    }
-    const siblings = [...(collectionTree.get(source.parentId) ?? [])];
-    const sourceIndex = siblings.findIndex(
-      (collection) => collection.collectionId === sourceId,
-    );
-    const targetIndex = siblings.findIndex(
-      (collection) => collection.collectionId === targetId,
-    );
-    const [moved] = siblings.splice(sourceIndex, 1);
-    if (!moved) return;
-    siblings.splice(targetIndex, 0, moved);
     setUiState("loading");
     try {
-      const reordered = await api.reorderCollections({
+      const moved = await api.updateCollection({
         libraryId: targetLibraryId,
-        orderedCollectionIds: siblings.map(
-          (collection) => collection.collectionId,
-        ),
+        collectionId,
+        parentId: null,
+        position: (collectionTree.get(null) ?? []).length,
       });
-      if (!reordered.ok) throw new LibraryOperationError(reordered.error);
+      if (!moved.ok) throw new LibraryOperationError(moved.error);
       if (!isCurrentLibraryView(viewSession)) return;
       const result = await api.listCollections({
         libraryId: targetLibraryId,
@@ -6502,10 +6616,49 @@ function AppInner() {
       if (!result.ok) throw new LibraryOperationError(result.error);
       if (!isCurrentLibraryView(viewSession)) return;
       setCollections(result.value);
-      setNotice(t("toast.collectionOrderUpdated"), reordered.value.historyEntryId);
+      setNotice(t("toast.collectionOrderUpdated"), moved.value.historyEntryId);
     } catch (caught) {
       if (isCurrentLibraryView(viewSession)) {
         setError(toMessage(caught, t("toast.collectionReorderFailed"), locale));
+      }
+    } finally {
+      if (isCurrentLibraryView(viewSession)) setUiState("ready");
+    }
+  }
+
+  async function nestCollectionUnder(sourceId: string, targetId: string) {
+    if (!api || !library || sourceId === targetId) return;
+    const source = collections.find(
+      (collection) => collection.collectionId === sourceId,
+    );
+    const target = collections.find(
+      (collection) => collection.collectionId === targetId,
+    );
+    if (!source || !target || source.parentId === targetId) return;
+    const targetLibraryId = library.libraryId;
+    const viewSession = ensureLibraryView(targetLibraryId);
+    if (!viewSession) return;
+    setDraggedCollectionId(null);
+    setUiState("loading");
+    try {
+      const moved = await api.updateCollection({
+        libraryId: targetLibraryId,
+        collectionId: sourceId,
+        parentId: targetId,
+        position: (collectionTree.get(targetId) ?? []).length,
+      });
+      if (!moved.ok) throw new LibraryOperationError(moved.error);
+      if (!isCurrentLibraryView(viewSession)) return;
+      const result = await api.listCollections({
+        libraryId: targetLibraryId,
+      });
+      if (!result.ok) throw new LibraryOperationError(result.error);
+      if (!isCurrentLibraryView(viewSession)) return;
+      setCollections(result.value);
+      setNotice(t("toast.collectionNested", { name: target.name }), moved.value.historyEntryId);
+    } catch (caught) {
+      if (isCurrentLibraryView(viewSession)) {
+        setError(toMessage(caught, t("toast.collectionNestFailed"), locale));
       }
     } finally {
       if (isCurrentLibraryView(viewSession)) setUiState("ready");
@@ -7307,7 +7460,6 @@ function AppInner() {
     batchAddSelectionToCollection,
     batchRemoveSelectionFromCollection,
     trashManagedAssets,
-    trashLinkedAssets,
     deleteManagedAssetsFromDisk,
     copyManagedSelectionToLinked,
   } = useBatchActions({
@@ -7359,7 +7511,6 @@ function AppInner() {
     trashManagedFolder,
     openDiskDelete,
     removeLinkedFolder,
-    trashLinkedFolderSubtree,
   } = useFolderDeleteActions({
     api: api ?? null,
     libraryId: library?.libraryId ?? null,
@@ -7625,20 +7776,69 @@ function AppInner() {
   );
 
   function requestTrashFolder(folderId: string, name: string) {
-    const virtual = parseLinkedVirtualFolderId(folderId);
-    if (virtual) {
-      void trashLinkedFolderSubtree(
-        virtual.linkedFolderId,
-        virtual.relativePath,
-        name,
-      );
-      return;
-    }
-    if (linkedFolders.some((folder) => folder.folderId === folderId)) {
-      void trashLinkedFolderSubtree(folderId, "", name);
+    // 2026-09-15 用户决定：链接文件夹没有「移入回收站」。这里对链接目标直接落空，
+    // 而不是退回旧的逐文件系统回收站路径（链接文件夹请用「移除链接文件夹」或
+    // 「强制从硬盘删除」）。
+    if (
+      parseLinkedVirtualFolderId(folderId)
+      || linkedFolders.some((folder) => folder.folderId === folderId)
+    ) {
       return;
     }
     requestTrashManagedFolder(folderId, name);
+  }
+
+  function setEntityAppearance(
+    target: EntityAppearanceTarget,
+    appearance: EntityAppearance | null,
+  ) {
+    if (!api || !library) return;
+    void (async () => {
+      try {
+        const result = await api.setEntityAppearance({
+          libraryId: library.libraryId,
+          target,
+          appearance,
+        });
+        if (!result.ok) throw new LibraryOperationError(result.error);
+        const next = result.value.appearance;
+        switch (target.kind) {
+          case "managed-folder":
+            setFolders((current) =>
+              current.map((folder) =>
+                folder.folderId === target.id ? { ...folder, appearance: next } : folder,
+              ),
+            );
+            return;
+          case "linked-folder":
+            setLinkedFolders((current) =>
+              current.map((folder) =>
+                folder.folderId === target.id ? { ...folder, appearance: next } : folder,
+              ),
+            );
+            return;
+          case "collection":
+            setCollections((current) =>
+              current.map((collection) =>
+                collection.collectionId === target.id
+                  ? { ...collection, appearance: next }
+                  : collection,
+              ),
+            );
+            return;
+          case "smart-collection":
+            setSmartCollections((current) =>
+              current.map((collection) =>
+                collection.collectionId === target.id
+                  ? { ...collection, appearance: next }
+                  : collection,
+              ),
+            );
+        }
+      } catch (caught) {
+        setError(toMessage(caught, t("toast.appearanceFailed"), locale));
+      }
+    })();
   }
 
   // Serpent-vf8x: folder create/rename/trash chords (mac ⌘ / Windows Ctrl).
@@ -7706,6 +7906,7 @@ function AppInner() {
   async function executeSearchDefinition(
     definition: SearchDefinition,
     navigation?: WorkspaceNavigationRequest,
+    reloadViewport?: WorkspaceNavViewport,
   ) {
     if (!api || !library) return;
     const request = createWorkspaceNavigationRequest(navigation, "none");
@@ -7787,7 +7988,16 @@ function AppInner() {
         snippets: result.value.snippets,
       });
     }
-    if (!request.deferReveal) finishWorkspaceNavigation(request);
+    if (
+      shouldRestoreViewportAfterBrowseReload(
+        request.deferReveal ? "silent" : "submit",
+      )
+    ) {
+      finishWorkspaceNavigation(
+        request,
+        reloadViewport ?? captureWorkspaceNavViewport(workspaceCanvasRef.current),
+      );
+    }
     return result.value;
   }
 
@@ -7797,12 +8007,36 @@ function AppInner() {
   ) {
     event?.preventDefault();
     if (!api || !library) return;
+    if (opts?.silent && (previewAssetRef.current || previewRestoringRef.current)) {
+      return;
+    }
+    if (opts?.silent) {
+      try {
+        await executeSearchDefinition(currentQueryDefinition(), {
+          historyMode: "none",
+          isCurrent: () => true,
+          deferReveal: true,
+        });
+      } catch (caught) {
+        setError(toMessage(caught, t("toast.searchFailed"), locale));
+      } finally {
+        setUiState("ready");
+      }
+      return;
+    }
+    const reloadViewport = captureWorkspaceNavViewport(workspaceCanvasRef.current);
     const request = beginWorkspaceNavigationRequest("none");
     try {
-      await closeAssetPreview(false);
+      if (!opts?.silent) {
+        await closeAssetPreview(false);
+      }
       if (!request.isCurrent()) return;
       const definition = currentQueryDefinition();
-      const result = await executeSearchDefinition(definition, request);
+      const result = await executeSearchDefinition(
+        definition,
+        request,
+        reloadViewport,
+      );
       // Serpent-huvw: discovery debounce / reload must not toast "搜索完成"
       // and wipe AI completion / error toasts.
       if (result && !opts?.silent) {
@@ -7866,6 +8100,7 @@ function AppInner() {
     )
       return;
     const timer = window.setTimeout(() => {
+      if (previewAssetRef.current || previewRestoringRef.current) return;
       void runSearch(undefined, { silent: true });
     }, 200);
     return () => window.clearTimeout(timer);
@@ -9113,9 +9348,30 @@ function AppInner() {
     }
   }
 
-  function requestAssetDiskDelete(assetIds: string[]) {
+  function requestAssetDiskDelete(
+    assetIds: string[],
+    locationKind?: "managed" | "linked" | "mixed",
+  ) {
     if (assetIds.length === 0) return;
-    void deleteManagedAssetsFromDiskAfterClosingPreview(assetIds);
+    void deleteManagedAssetsFromDiskAfterClosingPreview(assetIds, locationKind);
+  }
+
+  /**
+   * 2026-09-15：主进程弹「确认危险操作」时需要按操作本身的语义写文案——链接资产的
+   * 源文件会被永久删除（不再送系统回收站），必须点明，不能沿用托管资产的通用说法。
+   * 渲染层知道当前列表的 locationKind，主进程没有数据库访问，因此这里只作为「文案
+   * 提示」随请求下发；真正的删除分流仍由 Worker 依 assets.location_kind 决定。
+   */
+  function assetSelectionLocationKind(
+    assetIds: string[],
+  ): "managed" | "linked" | "mixed" {
+    const byId = new Map(assets.map((asset) => [asset.assetId, asset]));
+    let linked = 0;
+    for (const assetId of assetIds) {
+      if (byId.get(assetId)?.locationKind === "linked") linked += 1;
+    }
+    if (linked === 0) return "managed";
+    return linked === assetIds.length ? "linked" : "mixed";
   }
 
   async function setIgnoreState(input: {
@@ -9158,9 +9414,10 @@ function AppInner() {
 
   async function deleteManagedAssetsFromDiskAfterClosingPreview(
     assetIds: string[],
+    locationKind?: "managed" | "linked" | "mixed",
   ) {
     await releaseAssetPreviewsBeforeDiskDelete();
-    await deleteManagedAssetsFromDisk(assetIds);
+    await deleteManagedAssetsFromDisk(assetIds, locationKind);
   }
 
   /**
@@ -9184,8 +9441,9 @@ function AppInner() {
     folderIds: readonly string[],
   ) {
     const folderIdList = [...folderIds];
+    const locationKind = assetSelectionLocationKind(assetIds);
     if (folderIdList.length === 0) {
-      requestAssetDiskDelete(assetIds);
+      requestAssetDiskDelete(assetIds, locationKind);
       return;
     }
     if (assetIds.length === 0 && folderIdList.length === 1) {
@@ -9198,12 +9456,13 @@ function AppInner() {
       openDiskDelete({ kind: "managed", folderId, name });
       return;
     }
-    void executeSelectionDiskDelete(assetIds, folderIdList);
+    void executeSelectionDiskDelete(assetIds, folderIdList, locationKind);
   }
 
   async function executeSelectionDiskDelete(
     assetIds: string[],
     folderIds: readonly string[],
+    locationKind: "managed" | "linked" | "mixed" = "managed",
   ) {
     if (!api || !library) return;
     if (assetIds.length === 0 && folderIds.length === 0) return;
@@ -9217,6 +9476,7 @@ function AppInner() {
         const result = await api.deleteAssetsFromDisk({
           libraryId: library.libraryId,
           assetIds,
+          locationKind,
         });
         if (!result.ok) {
           if (result.error.code === "CANCELLED") {
@@ -9271,43 +9531,18 @@ function AppInner() {
     if (assetIds.length === 0 && folderIds.length === 0) return;
     const startedAt = Date.now();
 
+    // 2026-09-15 用户决定：链接资产与链接文件夹不再有「移入回收站」（旧实现会逐个
+    // 文件送进系统回收站：实测 126 ms/文件，1.5 万文件约 31 分钟且独占调度器）。
+    // 链接项的唯一删除动作是「强制从硬盘删除」，这里只处理托管项。
     const assetById = new Map(assets.map((asset) => [asset.assetId, asset]));
-    const linkedAssetIds = assetIds.filter(
-      (assetId) => assetById.get(assetId)?.locationKind === "linked",
-    );
     const managedAssetIds = assetIds.filter(
       (assetId) => assetById.get(assetId)?.locationKind !== "linked",
     );
-    const linkedFolderIds: string[] = [];
-    const managedFolderIds: string[] = [];
-    for (const folderId of folderIds) {
-      if (
-        parseLinkedVirtualFolderId(folderId) ||
-        linkedFolders.some((folder) => folder.folderId === folderId)
-      ) {
-        linkedFolderIds.push(folderId);
-      } else {
-        managedFolderIds.push(folderId);
-      }
-    }
-
-    if (linkedAssetIds.length > 0) {
-      await trashLinkedAssets(linkedAssetIds);
-    }
-    for (const folderId of linkedFolderIds) {
-      const name = resolveManagedFolderName(folderId) ?? folderId;
-      const virtual = parseLinkedVirtualFolderId(folderId);
-      if (virtual) {
-        await trashLinkedFolderSubtree(
-          virtual.linkedFolderId,
-          virtual.relativePath,
-          name,
-        );
-      } else {
-        await trashLinkedFolderSubtree(folderId, "", name);
-      }
-    }
-
+    const managedFolderIds = folderIds.filter(
+      (folderId) =>
+        !parseLinkedVirtualFolderId(folderId)
+        && !linkedFolders.some((folder) => folder.folderId === folderId),
+    );
     if (managedAssetIds.length === 0 && managedFolderIds.length === 0) {
       return;
     }
@@ -9620,32 +9855,49 @@ function AppInner() {
     }
   }
 
-  async function cancelImport() {
+  async function cancelImport(mode: "abandon" | "stop" = "abandon") {
     if (!api) return;
     if (conflicts) {
       await abandonConflicts();
+      importInterruptRef.current = null;
+      setImportInterrupt(null);
       setImportProgress(null);
       return;
     }
     if (imageSequenceImportOffer) {
       setImageSequenceImportOffer(null);
       setImageSequenceImportError(null);
+      importInterruptRef.current = null;
+      setImportInterrupt(null);
       setImportProgress(null);
       return;
     }
     if (!importProgress?.importId) {
+      importInterruptRef.current = null;
+      setImportInterrupt(null);
       setImportProgress(null);
       setLibraryTransferKind("import");
       setLibraryTransferName("");
       return;
     }
+    const current = importInterruptRef.current;
+    if (current === "abandon") return;
+    if (current === "stop" && mode === "stop") return;
+    const firstRequest = current === null;
+    importInterruptRef.current = mode;
+    setImportInterrupt(mode);
+    if (firstRequest || mode === "abandon") {
+      setNotice(
+        t(mode === "stop" ? "toast.stoppingImport" : "toast.cancellingImport"),
+      );
+    }
     const importId = importProgress.importId;
     try {
       const result = await api.cancelLibraryImport({
         importId,
+        mode,
       });
       if (!result.ok) throw new LibraryOperationError(result.error);
-      setNotice(t("toast.cancellingImport"));
     } catch (caught) {
       const code = caught instanceof LibraryOperationError ? caught.code : "";
       if (
@@ -9656,11 +9908,15 @@ function AppInner() {
           isInFlightRequest: true,
         })
       ) {
+        importInterruptRef.current = null;
+        setImportInterrupt(null);
         setImportProgress(null);
         setLibraryTransferKind("import");
         return;
       }
       setError(toMessage(caught, t("toast.cancelImportFailed"), locale));
+      importInterruptRef.current = null;
+      setImportInterrupt(null);
     }
   }
 
@@ -10070,6 +10326,8 @@ function AppInner() {
         }
         setImportProgress(event);
         if (["complete", "cancelled", "failed"].includes(event.phase)) {
+          importInterruptRef.current = null;
+          setImportInterrupt(null);
           setImportProgress(null);
           setLibraryTransferKind("import");
         }
@@ -10113,10 +10371,14 @@ function AppInner() {
       importSourceFailurePlan,
   );
   importAwaitingUserDecisionRef.current = importAwaitingUserDecision;
-  const blockingImportOverlayVisible = isBlockingImportOverlayVisible(
+  const importOverlayReady = isBlockingImportOverlayVisible(
     uiState,
     importProgress,
     importAwaitingUserDecision,
+  );
+  const blockingImportOverlayVisible = useDelayedVisibility(
+    importOverlayReady,
+    LIBRARY_LOADING_DISPLAY_DELAY_MS,
   );
   const blockingDeleteOverlayVisible =
     isActiveDeleteProgress(deleteProgress) && deleteProgress.totalFiles >= 2;
@@ -10245,7 +10507,7 @@ function AppInner() {
     onDismissFatalAlert: dismissFatalAlert,
     onAbortAiConnectionFailure: onAiConnectionFailureAbort,
     onCancelBlockingImport: () => {
-      void cancelImport();
+      void cancelImport("abandon");
     },
     onCancelBlockingDelete: () => {
       void cancelDiskDelete();
@@ -10328,9 +10590,6 @@ function AppInner() {
     },
     onTrashManaged: (assetIds) => {
       void trashManagedAssets(assetIds);
-    },
-    onTrashLinked: (assetIds) => {
-      void trashLinkedAssets(assetIds);
     },
     onRename: openAssetRename,
     onCopyFiles: (assetIds) => {
@@ -11153,16 +11412,38 @@ function AppInner() {
     if (!api || !library) return;
     if (!quiet) setMediaJobsLoading(true);
     try {
-      const result = await api.listMediaJobs({ libraryId: library.libraryId });
+      const result = await api.listMediaJobs({
+        libraryId: library.libraryId,
+        limit: MEDIA_JOB_LIST_PAGE_SIZE,
+      });
       if (!result.ok) {
         if (!quiet) setError(toMessage(result.error, t("toast.mediaJobsLoadFailed"), locale));
         return;
       }
-      setMediaJobs(result.value);
+      setMediaJobs(replaceMediaJobListPage(result.value));
     } catch {
       if (!quiet) setError(t("toast.mediaJobsLoadNoResponse"));
     } finally {
       if (!quiet) setMediaJobsLoading(false);
+    }
+  }
+  loadMediaJobsRef.current = loadMediaJobs;
+
+  async function loadMoreMediaJobs() {
+    if (!api || !library || !mediaJobs?.nextCursor || mediaJobs.hasMore !== true) return;
+    try {
+      const result = await api.listMediaJobs({
+        libraryId: library.libraryId,
+        cursor: mediaJobs.nextCursor,
+        limit: MEDIA_JOB_LIST_PAGE_SIZE,
+      });
+      if (!result.ok) {
+        setError(toMessage(result.error, t("toast.mediaJobsLoadFailed"), locale));
+        return;
+      }
+      setMediaJobs((current) => appendMediaJobListPage(current, result.value));
+    } catch {
+      setError(t("toast.mediaJobsLoadNoResponse"));
     }
   }
 
@@ -11287,14 +11568,14 @@ function AppInner() {
     // a Worker blocked for 30 seconds can therefore not accumulate 30 requests.
     if (!api || !library) return;
     const libraryId = library.libraryId;
-    const mediaActive = (value: MediaJobStatus | null) =>
+    const mediaActive = (value: { queued?: number; running?: number } | null) =>
       (value?.queued ?? 0) + (value?.running ?? 0) > 0;
     const aiActive = (value: AiJobStatus | null) =>
       (value?.queued ?? 0) + (value?.running ?? 0) > 0;
     const coordinator = new JobStatusCoordinator({
       probes: {
         media: async () => {
-          const result = await api.listMediaJobs({ libraryId });
+          const result = await api.getMediaJobSummary({ libraryId });
           return result.ok ? { value: result.value, active: mediaActive(result.value) } : null;
         },
         ai: async () => {
@@ -11309,7 +11590,9 @@ function AppInner() {
         },
       },
       onResult: (kind, value) => {
-        if (kind === "media") setMediaJobs(value as MediaJobStatus);
+        if (kind === "media") {
+          setMediaJobs((current) => applyMediaJobSummary(current, value as MediaJobSummaryCounts));
+        }
         else if (kind === "ai") setAiJobs(value as AiJobStatus);
         else setPluginJobs(value as PluginJobStatus);
         // Diagnostics for the performance benchmark; counts only, no identifiers.
@@ -11339,7 +11622,9 @@ function AppInner() {
   useEffect(() => {
     // Opening the panel tightens the cadence and re-enables event-driven
     // refreshes; closing it drops browsing back to the slow fallback so the
-    // canvas does not pay for status queries it never displays.
+    // canvas does not pay for status queries it never displays. The first list
+    // page is loaded from the open handler, not from this effect.
+    mediaJobsOpenRef.current = mediaJobsOpen;
     jobStatusCoordinatorRef.current?.setPanelOpen(mediaJobsOpen);
     jobStatusCoordinatorRef.current?.setEventDrivenQueries(mediaJobsOpen);
   }, [mediaJobsOpen]);
@@ -11510,7 +11795,7 @@ function AppInner() {
         setAppSettingsCategory("general");
         setAppSettingsOpen(true);
       },
-      openBackgroundJobs: () => setMediaJobsOpen(true),
+      openBackgroundJobs: () => openMediaJobs(),
       openAppLog,
       openAbout,
       openGitHub: () => {
@@ -11790,8 +12075,12 @@ function AppInner() {
     ) : null}
     {blockingImportOverlayVisible ? (
       <ImportProgressOverlay
+        actionsDisabled={importInterrupt !== null}
         onCancel={() => {
-          void cancelImport();
+          void cancelImport("abandon");
+        }}
+        onStop={() => {
+          void cancelImport("stop");
         }}
         progress={importProgress}
         transferKind={libraryTransferKind}
@@ -12191,8 +12480,11 @@ function AppInner() {
         }
         onInlineSmartCollectionEditCancel={cancelInlineSmartCollectionEdit}
         onOpenContextMenu={openContextMenu}
-        onReorderCollection={(sourceId, targetId) =>
-          void reorderCollectionSibling(sourceId, targetId)
+        onNestCollection={(sourceId, targetId) =>
+          void nestCollectionUnder(sourceId, targetId)
+        }
+        onMoveCollectionToRoot={(collectionId) =>
+          void moveCollectionToRoot(collectionId)
         }
         onImportDroppedFiles={(files, targetFolderId, targetCollectionId, webPayload) =>
           void importDroppedFiles(files, targetFolderId, targetCollectionId, webPayload)
@@ -12606,7 +12898,7 @@ function AppInner() {
         )}
         <div
           aria-busy={workspaceNavigationPending}
-          className={`workspace-canvas-host${previewAsset ? " is-viewing" : previewRestoring ? " is-restoring" : ""}${workspaceNavigationPending ? " is-navigating" : ""}`}
+          className={`workspace-canvas-host${previewAsset || previewRestoring ? " is-viewing" : ""}${previewRestoring ? " is-restoring" : ""}${workspaceNavigationPending ? " is-navigating" : ""}`}
         >
           {renderedToastStack.length > 0
             ? createPortal(
@@ -13367,17 +13659,8 @@ function AppInner() {
                                 />
                               ) : null
                             }
-                            showCaption={
-                              canvasPrefs.fields.name ||
-                              canvasPrefs.fields.size ||
-                              canvasPrefs.fields.date ||
-                              canvasPrefs.fields.dimensions
-                            }
-                            captionBandPx={
-                              canvasPrefs.fields.dimensions
-                                ? MASONRY_DIMENSIONS_CAPTION_BAND_PX
-                                : undefined
-                            }
+                            captionFields={canvasPrefs.fields}
+                            snippetLine={searchSnippets.size > 0}
                             suspendScrollRestoration={
                               Boolean(previewAsset || previewRestoring)
                             }
@@ -13388,6 +13671,8 @@ function AppInner() {
                             layout={visibleBrowseLayout}
                             virtualLayout={virtualBrowseLayout}
                             cardSize={assetCardSize}
+                            captionFields={canvasPrefs.fields}
+                            snippetLine={searchSnippets.size > 0}
                             renderCard={renderAssetCard}
                             renderLayoutPreview={(entry, renderOptions) =>
                               library ? (
@@ -14253,6 +14538,7 @@ function AppInner() {
         pluginJobs={pluginJobs}
         onClose={() => setMediaJobsOpen(false)}
         onControlMediaJobs={(action, jobIds) => void controlMediaJobs(action, jobIds)}
+        onLoadMoreMediaJobs={() => void loadMoreMediaJobs()}
         onControlAiJobs={(action, jobIds) => void controlAiJobs(action, jobIds)}
         onRevealAppLog={revealAppLog}
         onViewAppLog={openAppLog}
@@ -14269,6 +14555,7 @@ function AppInner() {
         collections={collections}
         linkedFolders={linkedFolders}
         managedFolders={folders}
+        smartCollections={smartCollections}
         activeCollectionId={activeCollectionId}
         assets={visibleAssets}
         onCloseWorkspaceTab={(tabId) => void closeWorkspaceTab(tabId)}
@@ -14386,9 +14673,7 @@ function AppInner() {
         onRemoveLinkedFolder={(folderId, name) => {
           void removeLinkedFolder(folderId, name);
         }}
-        onTrashLinkedFolderSubtree={(linkedFolderId, relativePath, name) => {
-          void trashLinkedFolderSubtree(linkedFolderId, relativePath, name);
-        }}
+        onSetEntityAppearance={setEntityAppearance}
         onBatchAssignTag={(tagId, assetIds) => {
           void batchAssignTagToSelection(tagId, assetIds);
         }}

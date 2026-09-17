@@ -114,7 +114,7 @@ describe("JobStatusCoordinator", () => {
     harness.coordinator.stop();
   });
 
-  it("ignores completion events while the panel is closed and uses the slow fallback", async () => {
+  it("defaults to ignoring completion events while the panel is closed and uses the slow fallback", async () => {
     const harness = createHarness({
       results: IDLE_RESULTS,
       activeIntervalMs: 1000,
@@ -122,7 +122,6 @@ describe("JobStatusCoordinator", () => {
       closedPanelIntervalMs: 15000,
     });
 
-    harness.coordinator.setEventDrivenQueries(false);
     harness.coordinator.start();
     await flushMicrotasks();
     expect(harness.calls).toEqual({ media: 1, ai: 1, plugin: 1 });

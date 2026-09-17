@@ -50,6 +50,8 @@ export interface SyncLibraryPort {
       modifiedAt: string;
       metadata?: SyncAssetMetadata;
     }>;
+    /** 未进回收站、但磁盘文件不在的资产（syncId + 库内相对路径）。 */
+    missingAssets?: Array<{ syncId: string; relativePath: string }>;
   }>;
   readLocalAssetMetadata?(libraryId: string, syncId: string): Promise<SyncAssetMetadata>;
   applyRemoteAssetMetadata?(
@@ -136,6 +138,7 @@ export class SyncEngine {
     const localAssets = this.snapshotToMap(snapshot);
     const actions = planSyncActions({
       localAssets,
+      localMissing: this.snapshotToMissingMap(snapshot),
       localManifest,
       remoteManifest,
       remoteTombstones: tombstones,
@@ -161,6 +164,7 @@ export class SyncEngine {
     const localAssets = this.snapshotToMap(snapshot);
     const actions = planSyncActions({
       localAssets,
+      localMissing: this.snapshotToMissingMap(snapshot),
       localManifest,
       remoteManifest,
       remoteTombstones: tombstones,
@@ -325,6 +329,16 @@ export class SyncEngine {
         path: asset.relativePath,
         ...(asset.metadata === undefined ? {} : { metadata: asset.metadata }),
       });
+    }
+    return map;
+  }
+
+  private snapshotToMissingMap(
+    snapshot: Awaited<ReturnType<SyncLibraryPort['syncSnapshot']>>,
+  ): Map<string, string> {
+    const map = new Map<string, string>();
+    for (const asset of snapshot.missingAssets ?? []) {
+      map.set(asset.syncId, asset.relativePath);
     }
     return map;
   }

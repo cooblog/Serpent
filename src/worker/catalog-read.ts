@@ -4,6 +4,7 @@ import type { AssetSummary, BrowseLayoutEntry, FilterClause, SearchScope, SortDe
 import { parseLinkedVirtualFolderId } from '../shared/linked-folder-tree';
 import { colorFilterSql, parseColorFilterIds } from '../shared/color-filter-presets';
 import { expandFormatFilterTokens } from '../shared/text-media';
+import { IMAGE_EXTENSIONS, VIDEO_EXTENSIONS } from '../shared/media-formats';
 import { isSourceDirectPreview } from '../shared/preview-policy';
 import {
   formatImageSequenceDisplayName,
@@ -191,6 +192,20 @@ export function isDefaultCatalogBrowseIndexRequest(input: {
     && input.showIgnored !== true;
 }
 
+/**
+ * Pixel media (image + video, GIF included) whose width/height is a real
+ * resolution. Used by the resolution filter; keep in sync with `detectMediaType`
+ * and the renderer's `mediaTypeHasPixelResolution` (Serpent-b1b0f2).
+ */
+const PIXEL_MEDIA_EXTENSIONS: readonly string[] = [
+  ...IMAGE_EXTENSIONS,
+  ...VIDEO_EXTENSIONS,
+];
+
+const PIXEL_MEDIA_EXTENSION_LIKES = PIXEL_MEDIA_EXTENSIONS
+  .map(() => 'LOWER(a.relative_file_path) LIKE ?')
+  .join(' OR ');
+
 export function buildCatalogFilterWhere(
   filters: FilterClause[],
   options: { hasAiContent: boolean; hasAiAssetTags: boolean } = {
@@ -205,7 +220,6 @@ export function buildCatalogFilterWhere(
     if ('ranges' in filter) {
       const width = 'COALESCE(duration_meta.width, technical_thumbnail.width)';
       const height = 'COALESCE(duration_meta.height, technical_thumbnail.height)';
-      const longEdge = `NULLIF(MAX(COALESCE(${width}, 0), COALESCE(${height}, 0)), 0)`;
       const column = filter.field === 'width'
         ? width
         : filter.field === 'height'
@@ -213,8 +227,22 @@ export function buildCatalogFilterWhere(
           : filter.field === 'duration_ms'
             ? 'duration_meta.duration_ms'
             : filter.field === 'long_edge'
-              ? longEdge
+              // Resolution buckets read the longer edge of pixel media only.
+              ? `NULLIF(MAX(COALESCE(${width}, 0), COALESCE(${height}, 0)), 0)`
               : `(CAST(${width} AS REAL) / NULLIF(${height}, 0))`;
+      // Resolution buckets are pixel media only (Serpent-b1b0f2): a 3D model's
+      // bounding box (or a document page size) must not land in a 1K/2K/4K
+      // bucket. Media type is derived from the extension, so the gate mirrors
+      // `detectMediaType`. It is a separate condition rather than a CASE around
+      // the column: the range expression is emitted once per bound, and a
+      // parameterized expression must not be inlined twice.
+      const isResolutionFilter = filter.field === 'long_edge';
+      const pixelMediaPredicate = `(${PIXEL_MEDIA_EXTENSION_LIKES})`;
+      if (isResolutionFilter) {
+        for (const extension of PIXEL_MEDIA_EXTENSIONS) {
+          params.push(`%.${extension.slice(1)}`);
+        }
+      }
       const rangeClauses = filter.ranges.map((range) => {
         const bounds: string[] = [];
         if (range.min !== undefined) {
@@ -228,9 +256,18 @@ export function buildCatalogFilterWhere(
         return `(${bounds.join(' AND ')})`;
       });
       const matchesAnyRange = `(${rangeClauses.join(' OR ')})`;
+      if (!isResolutionFilter) {
+        conditions.push(filter.exclude
+          ? `(${column} IS NULL OR NOT ${matchesAnyRange})`
+          : matchesAnyRange);
+        continue;
+      }
+      // Excluding a bucket keeps non-pixel media (they own no resolution at
+      // all) and assets whose size was never measured - the same NULL rule the
+      // other dimension filters use.
       conditions.push(filter.exclude
-        ? `(${column} IS NULL OR NOT ${matchesAnyRange})`
-        : matchesAnyRange);
+        ? `(NOT ${pixelMediaPredicate} OR ${column} IS NULL OR NOT ${matchesAnyRange})`
+        : `(${pixelMediaPredicate} AND ${matchesAnyRange})`);
       continue;
     }
     if (filter.field === 'favorite') {

@@ -63,13 +63,31 @@ const GOLDEN_CHECKSUMS: Record<number, string> = {
   46: '553f7a5ab5b2860b5e5982369de3152bcbc8db242eee5066b8caa5f59f46f667',
   47: 'cdc4174b6a124c6a970afcfc786fb1b14b0f1db61da64756613114677a15af21',
   48: '5431d3057e7616c17832c127ae548a7a14b90926b7ed8c9307e3e661a0f3cdc5',
+  49: 'd593a8855e587060971c97d1892448ba526ab885dbdb71405930576e10b74fd7',
+  50: '137dfaaa8853d6e19889ff010109e4e1192b2f4c362aa44f3950ed5968ec55a1',
+  51: 'ea1236e1f06a7d9e867e9972501e53ef5cd6c44a3763d473f8e5df61243ebb42',
+  52: 'a8d128be5e6a98429359364a081c140915a8f1f5ef41cdfd5cd84d161b548223',
+  53: 'e16fa0f14d7430c41dfa12eeeac4cd7b342b795003ee8603db8b8f8e90fcff9e',
+  54: 'fe71a803bdedbe80d3414be4d4287538c788a8d5fe3f108a1c8654d05e2849a5',
+  55: '58970788995b80ef7fab34dc4b3dba0f9e6e710a1d76d068bc1b7bb1f6bb431b',
 };
 
 describe('golden migration checksum snapshot (Serpent-033e)', () => {
   it('every released migration keeps its exact checksum', () => {
     const snapshotVersions = Object.keys(GOLDEN_CHECKSUMS).map(Number).sort((a, b) => a - b);
     const migrationVersions = MIGRATIONS.map((migration) => migration.version);
-    // 快照必须覆盖当前全部已发布版本（新迁移必须先落进快照）。
+    // 快照必须覆盖当前全部已发布版本（新迁移必须先落进快照）。这条纪律已经被漏过两次
+    // （v49、v50），所以先给出可操作的失败信息，再退回数组比较，避免只看到一串数字 diff。
+    const missingVersions = migrationVersions.filter(
+      (version) => !(version in GOLDEN_CHECKSUMS),
+    );
+    if (missingVersions.length > 0) {
+      throw new Error(
+        `GOLDEN_CHECKSUMS 缺少 v${missingVersions.join('、v')}：新增迁移必须在同一改动里追加其 `
+        + 'checksum（发布后即不可变，见 Serpent-033e）。直接跑本测试会打印实际值，'
+        + '不要把已发布版本的 checksum 改成新值。',
+      );
+    }
     expect(migrationVersions).toEqual(snapshotVersions);
     for (const migration of MIGRATIONS) {
       expect(

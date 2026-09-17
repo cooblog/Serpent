@@ -50,4 +50,48 @@ describe("MediaJobsDialog asset labels", () => {
     expect(html).toContain("media-jobs-asset-name");
     expect(html).toContain("thumbnail");
   });
+
+  it("shows a load-more control only when another page exists", () => {
+    const dialog = createElement(MediaJobsDialog, {
+      open: true,
+      mediaJobsLoading: false,
+      mediaJobs: {
+        queued: 2,
+        running: 0,
+        succeeded: 0,
+        failed: 0,
+        paused: 0,
+        cancelled: 0,
+        hasMore: true,
+        nextCursor: { createdAt: "2026-09-16T12:00:00.000Z", jobId: "job-1" },
+        jobs: [{
+          jobId: "job-1",
+          assetId: "asset-1",
+          assetName: "poster.mp4",
+          revisionId: "revision-1",
+          kind: "generate_thumbnail",
+          status: "queued",
+          progress: 0,
+          attemptCount: 0,
+          errorCode: null,
+          errorDetail: null,
+          createdAt: "2026-09-16T12:00:00.000Z",
+          updatedAt: "2026-09-16T12:00:00.000Z",
+        }],
+      },
+      aiJobs: null,
+      pluginJobs: null,
+      onClose: () => undefined,
+      onControlMediaJobs: () => undefined,
+      onControlAiJobs: () => undefined,
+    });
+    const html = renderToStaticMarkup(
+      createElement(
+        LocaleProvider,
+        { initialPreference: "zh-CN", children: dialog },
+      ),
+    );
+
+    expect(html).toContain("加载更多");
+  });
 });

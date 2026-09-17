@@ -436,7 +436,14 @@ describe('canvas resolution caption visibility', () => {
   it('follows the preference in both canvas layouts for visual media', () => {
     expect(shouldShowGridDimensions(fields, 'grid', 1920, 1080, { mediaType: 'image' })).toBe(true);
     expect(shouldShowGridDimensions(fields, 'masonry', 1920, 1080, { mediaType: 'video' })).toBe(true);
-    expect(shouldShowGridDimensions(fields, 'masonry', 1920, 1080, { mediaType: 'model' })).toBe(true);
+  });
+
+  it('never shows a 3D model bounding box as a resolution caption', () => {
+    // Models carry width/height as well, but that is a bounding-box size, not a
+    // pixel resolution users read off a card (Serpent-b1b0f2).
+    expect(shouldShowGridDimensions(fields, 'grid', 1920, 1080, { mediaType: 'model' })).toBe(false);
+    expect(shouldShowGridDimensions(fields, 'masonry', 100, 100, { sourceName: 'scene.fbx' })).toBe(false);
+    expect(shouldShowGridDimensions(fields, 'grid', 100, 100, { sourceName: 'scene.obj' })).toBe(false);
   });
 
   it('does not expose document dimensions as a resolution caption', () => {

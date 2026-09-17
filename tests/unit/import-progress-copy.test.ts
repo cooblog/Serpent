@@ -31,6 +31,15 @@ describe("import overlay copy", () => {
     expect(isBlockingImportOverlayVisible("ready", null)).toBe(false);
   });
 
+  it("treats linked-folder validate events as overlay-ready work", () => {
+    expect(
+      isBlockingImportOverlayVisible(
+        "importing",
+        progress({ phase: "validate", cancelable: false, totalFiles: 0 }),
+      ),
+    ).toBe(true);
+  });
+
   it("keeps the overlay up while copy/validate events are in flight", () => {
     expect(isBlockingImportOverlayVisible("ready", progress())).toBe(true);
     expect(
@@ -64,6 +73,28 @@ describe("import overlay copy", () => {
     });
     expect(importOverlayDetail(null, () => "")).toEqual({
       key: "progress.importingStarted",
+    });
+  });
+
+  it("shows counted processing progress for linked-folder indexing", () => {
+    expect(
+      importOverlayDetail(
+        progress({ copiesFiles: false }),
+        (bytes) => `${bytes}B`,
+      ),
+    ).toEqual({
+      key: "progress.processingFiles",
+      params: {
+        processed: 3,
+        total: 10,
+        bytesProcessed: "1024B",
+        bytesTotal: "4096B",
+      },
+    });
+    expect(
+      importOverlayDetail(progress({ copiesFiles: false, totalFiles: 0 }), () => ""),
+    ).toEqual({
+      key: "progress.processing",
     });
   });
 });

@@ -139,6 +139,35 @@ describe('shared pure catalog reads', () => {
     ]);
   });
 
+  it('keeps resolution buckets to pixel media (Serpent-b1b0f2)', () => {
+    const result = buildCatalogFilterWhere([
+      { field: 'long_edge', ranges: [{ min: 2240, max: 4480 }], exclude: false },
+    ]);
+
+    // Only image/video extensions reach the long-edge range: a 3D model's
+    // bounding box or a document page size must not land in a 1K/2K/4K bucket.
+    expect(result.sql).toContain('LOWER(a.relative_file_path) LIKE ?');
+    expect(result.sql).toContain('NULLIF(MAX(COALESCE(COALESCE(duration_meta.width');
+    expect(result.sql).not.toContain('CASE WHEN (LOWER');
+    const extensionParams = result.params.slice(0, result.params.length - 2);
+    expect(extensionParams).toContain('%.png');
+    expect(extensionParams).toContain('%.gif');
+    expect(extensionParams).toContain('%.arw');
+    expect(extensionParams).toContain('%.mov');
+    expect(extensionParams).not.toContain('%.fbx');
+    expect(extensionParams).not.toContain('%.pdf');
+    expect(result.params.slice(-2)).toEqual([2240, 4480]);
+    // Every placeholder is bound exactly once.
+    expect(result.sql.match(/\?/g)).toHaveLength(result.params.length);
+
+    // Other dimension filters keep their plain expression and no media gate.
+    const widthFilter = buildCatalogFilterWhere([
+      { field: 'width', ranges: [{ min: 100 }], exclude: false },
+    ]);
+    expect(widthFilter.sql).not.toContain('LOWER(a.relative_file_path)');
+    expect(widthFilter.params).toEqual([100]);
+  });
+
   it('keeps folder and collection recursion SQL-only and checks missing scopes', () => {
     const missingCollection = readConnection({ getResults: [undefined] });
     expect(buildCatalogCollectionScope(missingCollection.connection, {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { InteractiveScheduler } from '../../src/worker/interactive-scheduler';
 
@@ -71,9 +71,10 @@ describe('InteractiveScheduler admission yield', () => {
     expect(events).toEqual(['mutation:ran', 'reconciliation:resumed']);
   });
 
-  it('keeps the slot ahead of other background work so the pass makes progress', async () => {
+  it('admits bounded status reads without blocking maintenance progress', async () => {
     const events: string[] = [];
     const scheduler = new InteractiveScheduler();
+    let releasePoll!: () => void;
 
     const maintenance = scheduler.schedule(
       { requestId: 'reconciliation:lib:1', lane: 'maintenance', label: 'reconciliation' },
@@ -88,16 +89,24 @@ describe('InteractiveScheduler admission yield', () => {
     await delay(0);
     const poll = scheduler.schedule(
       { requestId: 'media-list-jobs', lane: 'background-secondary', label: 'media.list-jobs' },
-      () => {
-        events.push('poll:ran');
-      },
+      () => new Promise<void>((resolve) => {
+        events.push('poll:started');
+        releasePoll = () => {
+          events.push('poll:finished');
+          resolve();
+        };
+      }),
     );
 
+    expect(events).toContain('poll:started');
+    // The admitted snapshot may overlap the maintenance owner, but it cannot
+    // hold that owner's permit or prevent its next bounded batch from running.
+    await vi.waitFor(() => expect(events).toContain('reconciliation:done'));
+    expect(events).not.toContain('poll:finished');
+    releasePoll();
     await Promise.all([maintenance, poll]);
-    // A status poll must not starve the reconciliation of its admission.
-    expect(events[0]).toBe('reconciliation:resumed');
     expect(events).toContain('reconciliation:done');
-    expect(events).toContain('poll:ran');
+    expect(events).toContain('poll:finished');
   });
 
   it('returns immediately when nothing interactive or mutating is waiting', async () => {

@@ -41,6 +41,12 @@ test("creates, closes, and reopens a library through the sandboxed UI", async ()
 
   try {
     const window = await application.firstWindow();
+    if (process.env.SERPENT_E2E_HIDE_WINDOW === "1") {
+      const anyWindowVisible = await application.evaluate(({ BrowserWindow }) =>
+        BrowserWindow.getAllWindows().some((candidate) => candidate.isVisible()),
+      );
+      expect(anyWindowVisible).toBe(false);
+    }
     await expect(
       window.getByRole("heading", { name: "创建本地资源库" }),
     ).toBeVisible();
@@ -83,6 +89,53 @@ test("creates, closes, and reopens a library through the sandboxed UI", async ()
     await expect(
       window.getByText(libraryName, { exact: true }).first(),
     ).toBeVisible();
+    const mediaJobSnapshots = await window.evaluate(async () => {
+      type Result<T> = { ok: true; value: T } | { ok: false; error: { code: string } };
+      type MediaStatus = {
+        queued: number;
+        running: number;
+        succeeded: number;
+        failed: number;
+        paused: number;
+        cancelled: number;
+        jobs: unknown[];
+      };
+      const bridge = globalThis as typeof globalThis & {
+        serpent: {
+          library: {
+            listOpen(): Promise<Result<Array<{ libraryId: string }>>>;
+            listMediaJobs(input: {
+              libraryId: string;
+              summaryOnly?: boolean;
+            }): Promise<Result<MediaStatus>>;
+          };
+        };
+      };
+      const opened = await bridge.serpent.library.listOpen();
+      const libraryId = opened.ok ? opened.value[0]?.libraryId : undefined;
+      if (!libraryId) throw new Error("Expected the newly created library to be open.");
+      const [summary, detailed] = await Promise.all([
+        bridge.serpent.library.listMediaJobs({ libraryId, summaryOnly: true }),
+        bridge.serpent.library.listMediaJobs({ libraryId }),
+      ]);
+      if (!summary.ok || !detailed.ok) {
+        throw new Error("Could not read media job status through the preload bridge.");
+      }
+      return {
+        summary: { ...summary.value, jobs: summary.value.jobs.length },
+        detailed: { ...detailed.value, jobs: detailed.value.jobs.length },
+      };
+    });
+    expect(mediaJobSnapshots.summary).toMatchObject({
+      queued: 0,
+      running: 0,
+      succeeded: 0,
+      failed: 0,
+      paused: 0,
+      cancelled: 0,
+      jobs: 0,
+    });
+    expect(mediaJobSnapshots.detailed).toEqual(mediaJobSnapshots.summary);
 
     await closeLibraryViaSwitcher(window, libraryName);
     await expect(
@@ -97,12 +150,14 @@ test("creates, closes, and reopens a library through the sandboxed UI", async ()
     await expect(
       window.getByText(libraryName, { exact: true }).first(),
     ).toBeVisible();
-    const screenshotPath = testInfo.outputPath("library-ready.png");
-    await window.screenshot({ path: screenshotPath });
-    await testInfo.attach("library-ready", {
-      path: screenshotPath,
-      contentType: "image/png",
-    });
+    if (process.env.SERPENT_E2E_HIDE_WINDOW !== "1") {
+      const screenshotPath = testInfo.outputPath("library-ready.png");
+      await window.screenshot({ path: screenshotPath });
+      await testInfo.attach("library-ready", {
+        path: screenshotPath,
+        contentType: "image/png",
+      });
+    }
   } finally {
     await application.close();
     rmSync(temporaryRoot, { force: true, recursive: true });

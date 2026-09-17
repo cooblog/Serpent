@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, unlinkSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -157,6 +157,21 @@ describe('library sync integration (Serpent-xffq)', () => {
     expect(trashed.some((asset) => asset.assetId === assetId)).toBe(true);
     const snapshot = service.syncSnapshot(libraryId);
     expect(snapshot.assets.some((asset) => asset.syncId === syncId)).toBe(false);
+    expect(snapshot.missingAssets).toEqual([]);
+    service.closeAll();
+  });
+
+  it('lists still-indexed assets whose files vanished as missing, not as a local deletion', () => {
+    const service = new LibraryService();
+    const { libraryId, assetId } = createLibraryWithAsset(service, '缺文件快照库');
+    const first = service.syncSnapshot(libraryId);
+    expect(first.assets).toHaveLength(1);
+    const syncId = first.assets[0]!.syncId;
+    unlinkSync(service.resolveAssetPath(libraryId, assetId));
+
+    const snapshot = service.syncSnapshot(libraryId);
+    expect(snapshot.assets).toEqual([]);
+    expect(snapshot.missingAssets).toEqual([{ syncId, relativePath: 'source.txt' }]);
     service.closeAll();
   });
 

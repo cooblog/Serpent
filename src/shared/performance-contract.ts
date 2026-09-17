@@ -181,6 +181,7 @@ const MUTATION_COMMANDS = new Set([
   'extension.save-from-file',
   'folder.create',
   'folder.rename',
+  'appearance.set',
   'folder.move',
   'folder.trash',
   'folder.delete-empty',
@@ -324,6 +325,7 @@ const BACKGROUND_SECONDARY_COMMANDS = new Set([
   // Renderer status polls used to default to interactive-control and steal
   // the only user-facing slot every second (media/ai/plugin job lists).
   'media.list-jobs',
+  'media.job-summary',
   'ai.status',
   'plugin.jobs.list',
   'history.status',
@@ -398,6 +400,7 @@ const NON_PREEMPTIVE_MEDIA_COMMANDS = new Set([
   'ai.status',
   'sync.asset-card-status',
   'media.list-jobs',
+  'media.job-summary',
   'media.get-artifact-path',
   'media.get-artifact-paths',
   'media.get-thumbnail-artifact',

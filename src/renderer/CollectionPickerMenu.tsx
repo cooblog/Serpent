@@ -7,6 +7,7 @@ import {
   type KeyboardEvent,
 } from "react";
 import type { CollectionSummary } from "../shared/asset-types";
+import { AppearanceGlyph } from "./AppearanceGlyph";
 import { useContextMenu } from "./context-menu";
 import { Icon } from "./Icons";
 import { useT } from "./i18n";
@@ -184,7 +185,13 @@ export function CollectionPickerMenu({
               tabIndex={-1}
               type="button"
             >
-              <span className="tag-picker-option-icon"><Icon name="collection" size={14} /></span>
+              <span className="tag-picker-option-icon">
+                <AppearanceGlyph
+                  appearance={collection.appearance}
+                  fallback="collection"
+                  size={14}
+                />
+              </span>
               <span className="tag-picker-option-name">{collection.name}</span>
               <span className="tag-picker-option-count">{collection.assetCount}</span>
             </button>

@@ -189,6 +189,28 @@ describe('renderer request protocol', () => {
     })).toMatchObject({ type: 'asset.recovery-probe.result' });
   });
 
+  it('accepts the optional linked-asset hint on delete-from-disk requests', () => {
+    // 2026-09-15：Main 的确认窗按这个提示写文案（链接资产 = 源文件永久删除）。
+    expect(parseRendererRequest({
+      type: 'asset.delete-from-disk.request',
+      libraryId: 'library-01',
+      assetIds: ['asset-01'],
+      locationKind: 'linked',
+    })).toMatchObject({ locationKind: 'linked' });
+    // 旧调用方与混合选择可以省略这一提示。
+    expect(parseRendererRequest({
+      type: 'asset.delete-from-disk.request',
+      libraryId: 'library-01',
+      assetIds: ['asset-01'],
+    })).not.toHaveProperty('locationKind');
+    expect(() => parseRendererRequest({
+      type: 'asset.delete-from-disk.request',
+      libraryId: 'library-01',
+      assetIds: ['asset-01'],
+      locationKind: 'external',
+    })).toThrow();
+  });
+
   it('requires an opaque preview token to apply or cancel batch relinking', () => {
     expect(parseRendererRequest({
       type: 'asset.relink-batch.apply.request',
@@ -1002,6 +1024,47 @@ describe('renderer request protocol', () => {
     });
   });
 
+  it('accepts appearance.set by entity id and catalog values only', () => {
+    const appearance = { glyphKind: 'emoji', glyphValue: '🎨', colorId: 'blue' };
+    const target = { kind: 'managed-folder', id: 'folder-01' };
+    expect(parseRendererRequest({
+      type: 'appearance.set.request',
+      libraryId: 'library-01',
+      target,
+      appearance,
+    })).toEqual({
+      type: 'appearance.set.request',
+      libraryId: 'library-01',
+      target,
+      appearance,
+    });
+    expect(parseWorkerRequest({
+      requestId: 'appearance-set-01',
+      command: {
+        type: 'appearance.set',
+        libraryId: 'library-01',
+        target,
+        appearance,
+      },
+    }).command).toEqual({
+      type: 'appearance.set',
+      libraryId: 'library-01',
+      target,
+      appearance,
+    });
+    expect(parseRendererResult({
+      ok: true,
+      type: 'appearance.updated',
+      target,
+      appearance,
+    })).toEqual({
+      ok: true,
+      type: 'appearance.updated',
+      target,
+      appearance,
+    });
+  });
+
   it('rejects injected and malformed folder rename requests at the schema layer', () => {
     // REQ-COMMAND-003: the renderer must never supply filesystem paths.
     expect(() => parseRendererRequest({
@@ -1284,6 +1347,15 @@ describe('renderer request protocol', () => {
       type: 'library.import.cancel.request',
       importId: 'import-01',
     })).toEqual({ type: 'library.import.cancel.request', importId: 'import-01' });
+    expect(parseRendererRequest({
+      type: 'library.import.cancel.request',
+      importId: 'import-01',
+      mode: 'stop',
+    })).toEqual({
+      type: 'library.import.cancel.request',
+      importId: 'import-01',
+      mode: 'stop',
+    });
     expect(() => parseRendererRequest({
       type: 'library.export.cancel.request',
       exportId: 'export-01',
@@ -1296,6 +1368,25 @@ describe('renderer request protocol', () => {
       type: 'media.list-jobs.request',
       libraryId: 'library-01',
     })).toMatchObject({ type: 'media.list-jobs.request' });
+    expect(parseRendererRequest({
+      type: 'media.list-jobs.request',
+      libraryId: 'library-01',
+      summaryOnly: true,
+    })).toMatchObject({ type: 'media.list-jobs.request', summaryOnly: true });
+    expect(parseRendererRequest({
+      type: 'media.job-summary.request',
+      libraryId: 'library-01',
+    })).toMatchObject({ type: 'media.job-summary.request' });
+    expect(parseRendererRequest({
+      type: 'media.list-jobs.request',
+      libraryId: 'library-01',
+      cursor: { createdAt: '2026-09-16T12:00:00.000Z', jobId: 'job-01' },
+      limit: 100,
+    })).toMatchObject({
+      type: 'media.list-jobs.request',
+      cursor: { createdAt: '2026-09-16T12:00:00.000Z', jobId: 'job-01' },
+      limit: 100,
+    });
     expect(parseRendererRequest({
       type: 'plugin.list-jobs.request',
       libraryId: 'library-01',
@@ -1452,6 +1543,8 @@ describe('preview response protocol', () => {
       failed: 0,
       paused: 0,
       cancelled: 0,
+      nextCursor: null,
+      hasMore: false,
       jobs: [{
         jobId: 'job-01',
         assetId: 'asset-01',

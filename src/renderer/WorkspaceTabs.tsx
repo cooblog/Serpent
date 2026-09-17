@@ -7,6 +7,8 @@ import {
   type KeyboardEvent,
 } from "react";
 import { Icon, type IconName } from "./Icons";
+import { AppearanceGlyph } from "./AppearanceGlyph";
+import type { EntityAppearance } from "../shared/entity-appearance";
 import { useT } from "./i18n";
 import {
   horizontalScrollDeltaFromWheel,
@@ -21,6 +23,8 @@ export interface WorkspaceTabItem {
   /** Hover text; a folder tab names its location instead of repeating its label. */
   tip?: string;
   icon: IconName;
+  appearance?: EntityAppearance | null;
+  linkedBadge?: "link" | "link-off" | null;
 }
 
 export interface WorkspaceTabsProps {
@@ -209,7 +213,12 @@ export function WorkspaceTabs({
               onClick={() => onSelect(tab.id)}
               onKeyDown={(event) => handleKey(event, index)}
             >
-              <Icon name={tab.icon} size={16} />
+              <AppearanceGlyph
+                appearance={tab.appearance}
+                fallback={tab.icon}
+                linkedBadge={tab.linkedBadge}
+                size={16}
+              />
               <span className="workspace-tab-title">{tab.title}</span>
             </button>
             {canClose ? (

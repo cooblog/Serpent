@@ -42,6 +42,11 @@ describe("delete overlay copy", () => {
     expect(deleteOverlayTitleKey("trash")).toBe("progress.trashingAssets");
     expect(deleteOverlayTitleKey("permanent")).toBe("progress.purgingTrash");
     expect(deleteOverlayTitleKey("disk")).toBe("progress.deletingAssets");
+    // 2026-09-15：移除链接文件夹只删链接记录，既不是清空回收站也不是从硬盘删除，
+    // 必须有独立标题（曾复用 'permanent' 导致弹窗显示「正在清空回收站」）。
+    expect(deleteOverlayTitleKey("linked-remove")).toBe(
+      "progress.removingLinkedFolder",
+    );
     expect(deleteOverlayDetail(progress())).toEqual({
       key: "progress.deletingFiles",
       params: { processed: 3, total: 20 },

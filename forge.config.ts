@@ -83,7 +83,8 @@ const config: ForgeConfig = {
     icon: appIconBase,
     asar: {
       unpack:
-        '**/node_modules/trash/lib/{macos-trash,windows-trash.exe},' +
+        // 2026-09-15：链接删除改为永久删除源文件后，产品不再调用系统回收站，
+        // `trash` 依赖与其本地 helper 已移除，这里不再需要解包它。
         '**/node_modules/libarchive-wasm/dist/libarchive.wasm,' +
         // Sharp 0.35 ships prebuilt natives under @img/* (e.g.
         // @img/sharp-darwin-arm64/lib/*.node); native modules cannot load

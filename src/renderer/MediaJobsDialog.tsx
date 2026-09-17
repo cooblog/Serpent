@@ -39,6 +39,7 @@ export interface MediaJobsDialogProps {
     action: "pause" | "resume" | "cancel" | "retry",
     jobIds?: string[],
   ) => void;
+  onLoadMoreMediaJobs?: () => void;
   onControlAiJobs: (
     action: "pause" | "resume" | "cancel" | "retry",
     jobIds?: string[],
@@ -57,6 +58,7 @@ export function MediaJobsDialog({
   pluginJobs,
   onClose,
   onControlMediaJobs,
+  onLoadMoreMediaJobs,
   onControlAiJobs,
   onRevealAppLog,
   onViewAppLog,
@@ -201,6 +203,17 @@ export function MediaJobsDialog({
               ) : (
                 <p className="field-help">{t("dialog.mediaJobs.empty")}</p>
               )}
+              {mediaJobs.hasMore === true ? (
+                <div className="dialog-actions dialog-actions-start is-spaced" style={{ padding: "8px 2px" }}>
+                  <button
+                    className="secondary-button"
+                    onClick={() => onLoadMoreMediaJobs?.()}
+                    type="button"
+                  >
+                    {t("dialog.mediaJobs.loadMore")}
+                  </button>
+                </div>
+              ) : null}
             </div>
             {aiJobs && (
               <section

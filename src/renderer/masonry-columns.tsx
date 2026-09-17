@@ -8,6 +8,12 @@ import {
 } from "react";
 
 import type { AssetSummary, BrowseLayoutEntry } from "../shared/asset-types";
+import {
+  cardCaptionShowsAnything,
+  createCaptionBandResolver,
+  type CaptionBandAsset,
+  type CardCaptionFields,
+} from "./asset-caption-band";
 import { FONT_SIZE_SCALES } from "./font-size-preferences";
 import {
   ASSET_GRID_GAP_PX,
@@ -15,7 +21,6 @@ import {
   distributeMasonryItems,
 } from "./asset-grid-layout";
 import {
-  MASONRY_CAPTION_BAND_PX,
   estimateMasonryCardBodyPx,
   layoutMasonryAssetRects,
   masonryColumnWidthPx,
@@ -24,7 +29,7 @@ import {
   stackItemHeights,
 } from "./canvas-asset-layout";
 import { isCanvasReflowRestorationPending } from "./canvas-reflow-restore";
-import { scaleCaptionBandPx } from "./justified-caption-band";
+import { canvasHasPreviewScrollHold } from "./browse-scroll-debug";
 import { estimateMasonryPreviewHeightPx } from "./masonry-preview-frame";
 import { columnWindow, useCanvasLocalViewport } from "./viewport-window";
 import { useFontSize } from "./FontSizeProvider";
@@ -55,8 +60,10 @@ type MasonryColumnsProps = {
   layout: BrowseLayoutEntry[];
   virtualLayout?: VirtualBrowseLayout | null;
   cardSize: number;
-  showCaption: boolean;
-  captionBandPx?: number;
+  /** Caption toggles; every card resolves its own band from them (Serpent-b1b0f2). */
+  captionFields: CardCaptionFields;
+  /** A content-search snippet occupies the secondary caption line. */
+  snippetLine?: boolean;
   suspendScrollRestoration?: boolean;
   renderCard: (
     asset: AssetSummary,
@@ -68,11 +75,29 @@ type MasonryColumnsProps = {
   ) => ReactNode;
 };
 
+type MasonryColumnsBodyProps = Omit<
+  MasonryColumnsProps,
+  "captionFields" | "snippetLine" | "virtualLayout"
+> & {
+  showCaption: boolean;
+  captionBandForAsset: (asset: CaptionBandAsset) => number;
+};
+
 export function MasonryColumns(props: MasonryColumnsProps) {
   const { preferences } = useFontSize();
-  const captionBandPx = scaleCaptionBandPx(
-    props.captionBandPx ?? MASONRY_CAPTION_BAND_PX,
-    FONT_SIZE_SCALES[preferences.preference],
+  const fontScale = FONT_SIZE_SCALES[preferences.preference];
+  const captionFields = props.captionFields;
+  const snippetLine = props.snippetLine;
+  const showCaption = cardCaptionShowsAnything(captionFields);
+  const captionBandForAsset = useMemo(
+    () =>
+      createCaptionBandResolver({
+        mode: "masonry",
+        fields: captionFields,
+        fontScale,
+        snippetLine,
+      }),
+    [captionFields, fontScale, snippetLine],
   );
   if (props.virtualLayout) {
     return (
@@ -80,13 +105,24 @@ export function MasonryColumns(props: MasonryColumnsProps) {
         assets={props.assets}
         layout={props.virtualLayout}
         cardSize={props.cardSize}
-        showCaption={props.showCaption}
-        captionBandPx={captionBandPx}
+        showCaption={showCaption}
+        captionBandForAsset={captionBandForAsset}
         renderCard={props.renderCard}
       />
     );
   }
-  return <RegularMasonryColumns {...props} captionBandPx={captionBandPx} />;
+  return (
+    <RegularMasonryColumns
+      assets={props.assets}
+      layout={props.layout}
+      cardSize={props.cardSize}
+      showCaption={showCaption}
+      captionBandForAsset={captionBandForAsset}
+      suspendScrollRestoration={props.suspendScrollRestoration}
+      renderCard={props.renderCard}
+      renderLayoutPreview={props.renderLayoutPreview}
+    />
+  );
 }
 
 function RegularMasonryColumns({
@@ -94,12 +130,11 @@ function RegularMasonryColumns({
   layout,
   cardSize,
   showCaption,
-  captionBandPx,
+  captionBandForAsset,
   suspendScrollRestoration = false,
   renderCard,
   renderLayoutPreview,
-}: MasonryColumnsProps) {
-  const resolvedCaptionBandPx = captionBandPx ?? MASONRY_CAPTION_BAND_PX;
+}: MasonryColumnsBodyProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [availableWidth, setAvailableWidth] = useState(0);
   const availableWidthRef = useRef(0);
@@ -131,6 +166,12 @@ function RegularMasonryColumns({
         const root = canvas();
         const snapshot = scrollSnapshotRef.current;
         if (!root || snapshot === null) {
+          restoreFrameRef.current = null;
+          return;
+        }
+        if (canvasHasPreviewScrollHold(root)) {
+          scrollSnapshotRef.current = null;
+          rawRestoreTargetRef.current = null;
           restoreFrameRef.current = null;
           return;
         }
@@ -225,6 +266,10 @@ function RegularMasonryColumns({
         width: asset.width,
         height: asset.height,
         previewArtifactId: asset.thumbnailArtifactId,
+        // Caption bands need the media type: without it the entry looks like an
+        // unresolved placeholder and would reserve a resolution line the card
+        // never renders.
+        mediaType: asset.mediaType,
       })),
     [assets],
   );
@@ -251,10 +296,10 @@ function RegularMasonryColumns({
         asset,
         columnWidth,
         showCaption,
-        resolvedCaptionBandPx,
+        captionBandForAsset,
       ),
     ),
-    [columnCount, columnWidth, layoutEntries, resolvedCaptionBandPx, showCaption],
+    [captionBandForAsset, columnCount, columnWidth, layoutEntries, showCaption],
   );
   const layoutRects = useMemo(
     () => layoutMasonryAssetRects(
@@ -262,9 +307,9 @@ function RegularMasonryColumns({
       availableWidth,
       cardSize,
       showCaption,
-      resolvedCaptionBandPx,
+      captionBandForAsset,
     ),
-    [availableWidth, cardSize, layoutEntries, resolvedCaptionBandPx, showCaption],
+    [availableWidth, captionBandForAsset, cardSize, layoutEntries, showCaption],
   );
   const columnMetrics = useMemo(
     () => distributed.map((column) => ({
@@ -273,12 +318,12 @@ function RegularMasonryColumns({
           asset,
           columnWidth,
           showCaption,
-          resolvedCaptionBandPx,
+          captionBandForAsset,
         )),
       previews: column.items.map((asset) =>
         estimateMasonryPreviewHeightPx(asset.width, asset.height, columnWidth)),
     })),
-    [columnWidth, distributed, resolvedCaptionBandPx, showCaption],
+    [captionBandForAsset, columnWidth, distributed, showCaption],
   );
 
   useLayoutEffect(() => {

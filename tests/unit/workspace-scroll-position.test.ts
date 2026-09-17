@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   captureWorkspaceNavViewport,
+  pendingWorkspaceViewportAction,
   restoreWorkspaceNavViewport,
   resolveWorkspaceScrollTop,
 } from "../../src/renderer/workspace-scroll-position";
@@ -58,6 +59,69 @@ function createScrollElement() {
     },
   } as unknown as HTMLElement & { emit: (type: string) => void };
 }
+
+describe("pendingWorkspaceViewportAction", () => {
+  const scrolledAwayFromTop = {
+    previewActive: false,
+    navigationPending: false,
+    restoreLoopActive: false,
+    intendedTop: 0,
+    targetTop: 0,
+    currentTop: 2400,
+    extent: 8000,
+  };
+
+  it("discards a leftover top restore after the user has already scrolled", () => {
+    expect(pendingWorkspaceViewportAction(scrolledAwayFromTop)).toBe("clear");
+  });
+
+  it("applies a top restore while folder navigation is still in flight", () => {
+    expect(
+      pendingWorkspaceViewportAction({
+        ...scrolledAwayFromTop,
+        navigationPending: true,
+      }),
+    ).toBe("apply");
+  });
+
+  it("clears leftover pending while the viewer owns the canvas", () => {
+    expect(
+      pendingWorkspaceViewportAction({
+        ...scrolledAwayFromTop,
+        previewActive: true,
+        navigationPending: true,
+      }),
+    ).toBe("clear");
+  });
+
+  it("clears once the canvas already matches a holdable target", () => {
+    expect(
+      pendingWorkspaceViewportAction({
+        previewActive: false,
+        navigationPending: false,
+        restoreLoopActive: false,
+        intendedTop: 0,
+        targetTop: 0,
+        currentTop: 0,
+        extent: 8000,
+      }),
+    ).toBe("clear");
+  });
+
+  it("keeps retrying when the live extent cannot hold the intended offset", () => {
+    expect(
+      pendingWorkspaceViewportAction({
+        previewActive: false,
+        navigationPending: true,
+        restoreLoopActive: true,
+        intendedTop: 2400,
+        targetTop: 0,
+        currentTop: 0,
+        extent: 10,
+      }),
+    ).toBe("apply");
+  });
+});
 
 describe("workspace scroll position", () => {
   it("captures an exact offset and its relative progress", () => {

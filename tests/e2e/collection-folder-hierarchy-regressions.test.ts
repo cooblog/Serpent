@@ -61,11 +61,28 @@ async function createCollection(
   name: string,
   parentName?: string,
 ) {
-  if (parentName) await collectionRow(window, parentName).click();
-  await window.getByRole("button", { name: "添加合集" }).click();
+  if (parentName) {
+    await collectionRow(window, parentName).click({ button: "right" });
+    await window
+      .getByRole("menuitem", { name: "新建子合集", exact: true })
+      .click();
+  } else {
+    await window.getByRole("button", { name: "添加合集" }).click();
+  }
   const input = window.getByPlaceholder("新建合集");
   await input.fill(name);
   await input.press("Enter");
+  if (parentName) {
+    await collectionRow(window, parentName).evaluate((element) => {
+      const disclosure =
+        element.parentElement?.querySelector<HTMLButtonElement>(
+          ".nav-disclosure",
+        );
+      if (disclosure?.getAttribute("aria-expanded") === "false") {
+        disclosure.click();
+      }
+    });
+  }
   await expect(collectionRow(window, name)).toBeVisible();
 }
 
@@ -259,9 +276,142 @@ test("renames a parent collection and parent folder without losing children", as
     await createFolder(window, "文件夹B", "文件夹A");
     await renameFolder(window, "文件夹A", "文件夹A-重命名");
     await expect(folderRow(window, "文件夹B")).toBeVisible();
-    expect(
-      existsSync(path.join(libraryPath, "Assets", "文件夹A-重命名", "文件夹B")),
-    ).toBe(true);
+    await expect
+      .poll(() =>
+        existsSync(
+          path.join(libraryPath, "Assets", "文件夹A-重命名", "文件夹B"),
+        ),
+      )
+      .toBe(true);
+  } finally {
+    await application.close();
+    rmSync(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+test("creates collections at the root and moves nested collections back to it", async () => {
+  const temporaryRoot = mkdtempSync(
+    path.join(tmpdir(), "serpent-collection-root-"),
+  );
+  const libraryName = "Collection Root";
+  const libraryPath = path.join(temporaryRoot, libraryName);
+  const application = await launchApp(temporaryRoot, libraryPath);
+
+  try {
+    const window = await application.firstWindow();
+    await createLibrary(window, libraryName);
+    await createCollection(window, "合集A");
+    await createCollection(window, "合集B", "合集A");
+
+    // The section plus button stays rooted even while a child collection is
+    // selected. Child creation remains available from the row context menu.
+    await collectionRow(window, "合集B").click();
+    await window.getByRole("button", { name: "添加合集" }).click();
+    await window.getByPlaceholder("新建合集").fill("根合集C");
+    await window.getByPlaceholder("新建合集").press("Enter");
+    await expect(collectionRow(window, "根合集C")).toBeVisible();
+
+    const collectionParents = async () =>
+      window.evaluate(async () => {
+        const api = (
+          globalThis as typeof globalThis & {
+            serpent: {
+              library: {
+                listOpen(): Promise<{
+                  ok: boolean;
+                  value?: Array<{ libraryId: string }>;
+                }>;
+                listCollections(input: { libraryId: string }): Promise<{
+                  ok: boolean;
+                  value?: Array<{
+                    collectionId: string;
+                    name: string;
+                    parentId: string | null;
+                  }>;
+                }>;
+              };
+            };
+          }
+        ).serpent.library;
+        const open = await api.listOpen();
+        const libraryId = open.value?.[0]?.libraryId;
+        if (!open.ok || !libraryId) throw new Error("No open library");
+        const result = await api.listCollections({ libraryId });
+        if (!result.ok || !result.value) throw new Error("Collections unavailable");
+        return Object.fromEntries(
+          result.value.map((collection) => [
+            collection.name,
+            {
+              collectionId: collection.collectionId,
+              parentId: collection.parentId,
+            },
+          ]),
+        );
+      });
+
+    const beforeMove = await collectionParents();
+    expect(beforeMove["根合集C"]?.parentId).toBeNull();
+    expect(beforeMove["合集B"]?.parentId).toBe(
+      beforeMove["合集A"]?.collectionId,
+    );
+
+    // The collection section uses the shared sort control and keeps its
+    // preference independent from the folder section.
+    await window.getByRole("button", { name: "排序合集" }).click();
+    await expect(window.getByRole("option", { name: "按时间" })).toHaveCount(0);
+    await window.getByRole("option", { name: "按字母" }).click();
+    await window.getByRole("button", { name: "排序合集" }).click();
+    await expect(
+      window.getByRole("option", { name: "按文件数量" }),
+    ).toBeVisible();
+    await window.getByRole("option", { name: "按字母" }).click();
+
+    // Use the same blank-list target as the folder root-drop journey. The
+    // collection root handler only needs the drag snapshot; it does not
+    // consume an arbitrary path or file payload.
+    const childRow = collectionRow(window, "合集B");
+    const collectionList = window.locator(".nav-collection-list");
+    await childRow.evaluate((element) => {
+      const dropTarget = element.closest(".collection-drop-target");
+      if (!dropTarget) throw new Error("Collection drop target unavailable");
+      dropTarget.dispatchEvent(
+        new DragEvent("dragstart", {
+          bubbles: true,
+          dataTransfer: new DataTransfer(),
+        }),
+      );
+    });
+    await window.waitForTimeout(100);
+    await collectionList.evaluate((element) => {
+      const dataTransfer = new DataTransfer();
+      element.dispatchEvent(
+        new DragEvent("dragenter", {
+          bubbles: true,
+          dataTransfer,
+        }),
+      );
+      element.dispatchEvent(
+        new DragEvent("dragover", {
+          bubbles: true,
+          dataTransfer,
+        }),
+      );
+    });
+    await expect(collectionList).toHaveClass(/is-root-drop-target/u);
+    await collectionList.evaluate((element) => {
+      element.dispatchEvent(
+        new DragEvent("drop", {
+          bubbles: true,
+          dataTransfer: new DataTransfer(),
+        }),
+      );
+    });
+
+    await expect
+      .poll(async () => (await collectionParents())["合集B"], {
+        message: "nested collection is reparented to the library root",
+      })
+      .toMatchObject({ parentId: null });
   } finally {
     await application.close();
     rmSync(temporaryRoot, { recursive: true, force: true });

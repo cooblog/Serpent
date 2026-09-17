@@ -110,6 +110,23 @@ describe('StartupBurstGateRegistry', () => {
     await expect(second).resolves.toBeUndefined();
   });
 
+  it('releases startup work after the first browse-session page is delivered', async () => {
+    const registry = new StartupBurstGateRegistry();
+    const token = registry.open('library', 1);
+    registry.beginCommand('library', 1);
+    const wait = registry.waitForDrain(token);
+
+    registry.finishOpenResponse(token);
+    registry.finishCommand({
+      libraryId: 'library',
+      generation: 1,
+      commandType: 'browse.session.open',
+      servedSuccessfully: true,
+    });
+
+    await expect(wait).resolves.toBeUndefined();
+  });
+
   it('requires a successful browse response and waits for the library command count', async () => {
     const registry = new StartupBurstGateRegistry();
     const token = registry.open('library', 1);

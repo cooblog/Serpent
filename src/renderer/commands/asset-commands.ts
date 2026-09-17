@@ -250,7 +250,9 @@ export const assetCommandDefinitions: readonly AssetCommandDefinition[] = [
       mac: { label: '⌘⌫', key: 'Backspace', metaKey: true },
       windows: { label: 'Delete', key: 'Delete' },
     },
-    visible: (ctx) => !ctx.assetDeleted,
+    // 2026-09-15 用户决定：链接资产不再有「移入回收站」（它会逐个文件送进系统
+    // 回收站）。链接资产只保留「强制从硬盘删除」。
+    visible: (ctx) => !ctx.assetDeleted && ctx.locationKind === 'managed',
     disabledReason: (ctx) =>
       ctx.assetDeleted
         ? t(ctx, 'command.reason.unavailable')
@@ -259,7 +261,12 @@ export const assetCommandDefinitions: readonly AssetCommandDefinition[] = [
   },
   {
     id: 'asset.delete-from-disk',
-    title: (ctx) => t(ctx, 'command.asset.deleteFromDisk'),
+    title: (ctx) => t(
+      ctx,
+      ctx.locationKind === 'linked'
+        ? 'command.asset.forceDeleteFromDisk'
+        : 'command.asset.deleteFromDisk',
+    ),
     group: 'delete',
     shortcut: {
       mac: {
@@ -270,11 +277,17 @@ export const assetCommandDefinitions: readonly AssetCommandDefinition[] = [
       },
       windows: { label: 'Shift+Delete', key: 'Delete', shiftKey: true },
     },
-    visible: (ctx) => !ctx.assetDeleted && ctx.locationKind === 'managed',
-    disabledReason: (ctx) =>
-      ctx.assetAvailable
+    visible: (ctx) =>
+      !ctx.assetDeleted
+      && (ctx.locationKind === 'managed' || ctx.locationKind === 'linked'),
+    disabledReason: (ctx) => {
+      if (ctx.assetDeleted) return t(ctx, 'command.reason.unavailable');
+      // 链接资产的源文件缺失/离线时仍然允许删除：这只删库内记录，不依赖源文件存在。
+      if (ctx.locationKind === 'linked') return null;
+      return ctx.assetAvailable
         ? null
-        : t(ctx, 'command.reason.managedUnavailableTrash'),
+        : t(ctx, 'command.reason.managedUnavailableTrash');
+    },
     run: (ctx) =>
       withPrimaryAsset(ctx, (id) => ctx.actions.deleteFromDisk([id])),
   },

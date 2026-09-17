@@ -10,7 +10,12 @@ export type BlockingProgressOverlayProps = {
   readonly max?: number;
   readonly indeterminate?: boolean;
   readonly cancelLabel?: string;
+  readonly cancelTip?: string;
   readonly onCancel?: () => void;
+  readonly stopLabel?: string;
+  readonly stopTip?: string;
+  readonly onStop?: () => void;
+  readonly actionsDisabled?: boolean;
   /** Library identity transitions hide the old navigation model completely. */
   readonly solidBackdrop?: boolean;
   readonly kind?: "import" | "library-loading" | "delete" | "export";
@@ -27,12 +32,45 @@ export function BlockingProgressOverlay({
   max,
   indeterminate = false,
   cancelLabel,
+  cancelTip,
   onCancel,
+  stopLabel,
+  stopTip,
+  onStop,
+  actionsDisabled = false,
   solidBackdrop = false,
   kind = "import",
 }: BlockingProgressOverlayProps): ReactNode {
   const determinate = !indeterminate && (max ?? 0) > 0;
   const cancelable = Boolean(onCancel && cancelLabel);
+  const stoppable = Boolean(onStop && stopLabel);
+  const footer =
+    cancelable || stoppable ? (
+      <>
+        {stoppable ? (
+          <button
+            className="secondary-button"
+            data-hover-tip={stopTip}
+            disabled={actionsDisabled}
+            onClick={onStop}
+            type="button"
+          >
+            {stopLabel}
+          </button>
+        ) : null}
+        {cancelable ? (
+          <button
+            className="secondary-button"
+            data-hover-tip={cancelTip}
+            disabled={actionsDisabled}
+            onClick={onCancel}
+            type="button"
+          >
+            {cancelLabel}
+          </button>
+        ) : null}
+      </>
+    ) : undefined;
 
   return (
     <div
@@ -53,13 +91,7 @@ export function BlockingProgressOverlay({
         contentClassName="blocking-progress-content"
         description={detail}
         dialogId="blocking-progress-dialog"
-        footer={
-          cancelable ? (
-            <button className="secondary-button" onClick={onCancel} type="button">
-              {cancelLabel}
-            </button>
-          ) : undefined
-        }
+        footer={footer}
         onRequestClose={cancelable ? onCancel : undefined}
         title={title}
       >

@@ -1479,7 +1479,16 @@ async function createMainWindow(): Promise<void> {
   // A blank window in a packaged build must leave the same evidence as one
   // started from Vite; idle windows produce no log entries.
   attachRendererDiagnostics(window);
-  window.on("ready-to-show", () => window.show());
+  window.on("ready-to-show", () => {
+    // E2E can keep its renderer fully loaded and automatable without putting
+    // a test window over the user's desktop session.
+    if (
+      process.env.SERPENT_E2E !== "1"
+      || process.env.SERPENT_E2E_HIDE_WINDOW !== "1"
+    ) {
+      window.show();
+    }
+  });
   // Cleanup while webContents/HWND still exist (`closed` is too late).
   window.on("close", () => {
     clearViewerVideoShortcutCapture(mainContentsId);
@@ -2544,6 +2553,13 @@ async function commandFor(
         folderId: request.folderId,
         newName: request.newName,
       };
+    case "appearance.set.request":
+      return {
+        type: "appearance.set",
+        libraryId: request.libraryId,
+        target: request.target,
+        appearance: request.appearance,
+      };
     case "folder.list.request":
       return { type: "folder.list", libraryId: request.libraryId, showIgnored: request.showIgnored };
     case "folder.browse-entries.request":
@@ -2934,6 +2950,7 @@ async function commandFor(
         libraryId: request.libraryId,
         collectionId: request.collectionId,
         name: request.name,
+        parentId: request.parentId,
         description: request.description,
         coverAssetId: request.coverAssetId,
         position: request.position,
@@ -3044,6 +3061,7 @@ async function commandFor(
       return {
         type: "browse.session.open",
         libraryId: request.libraryId,
+        ...(request.navigationId === undefined ? {} : { navigationId: request.navigationId }),
         query: request.query,
         filters: request.filters,
         scope: request.scope,
@@ -3380,7 +3398,11 @@ async function commandFor(
       };
     }
     case "library.import.cancel.request":
-      return { type: "library.import-cancel", importId: request.importId };
+      return {
+        type: "library.import-cancel",
+        importId: request.importId,
+        ...(request.mode === undefined ? {} : { mode: request.mode }),
+      };
     case "asset.delete-cancel.request":
       return { type: "asset.delete-cancel", operationId: request.operationId };
     case "library.import.copy.request": {
@@ -3443,8 +3465,19 @@ async function commandFor(
         confirm: request.confirm,
         ...(request.fields ? { fields: request.fields } : {}),
       };
+    case "media.job-summary.request":
+      return {
+        type: "media.job-summary",
+        libraryId: request.libraryId,
+      };
     case "media.list-jobs.request":
-      return { type: "media.list-jobs", libraryId: request.libraryId };
+      return {
+        type: "media.list-jobs",
+        libraryId: request.libraryId,
+        ...(request.summaryOnly === undefined ? {} : { summaryOnly: request.summaryOnly }),
+        ...(request.cursor === undefined ? {} : { cursor: request.cursor }),
+        ...(request.limit === undefined ? {} : { limit: request.limit }),
+      };
     case "plugin.list-jobs.request":
       return { type: "plugin.jobs.list", libraryId: request.libraryId };
     case "media.pause-jobs.request":
@@ -3827,8 +3860,41 @@ async function handleLibraryRequest(
     | undefined;
   let previousLibraryPaths: string[] = [];
   let openCancellation: ActiveLibraryOpenCancellation | undefined;
+  let navigationTrace: {
+    navigationId: string;
+    rendererStartedAtEpochMs?: number;
+    mainEnteredAt: number;
+    workerReturnedAt?: number;
+  } | undefined;
+  const navigationTraceEnabled =
+    process.env.SERPENT_NAVIGATION_TRACE === "1" || libraryRequestTraceEnabled();
+  const logNavigationStage = (
+    stage: string,
+    fields: Record<string, unknown> = {},
+  ): void => {
+    if (!navigationTraceEnabled || !navigationTrace) return;
+    logger?.info("performance.navigation", "Browse navigation performance stage.", {
+      navigationId: navigationTrace.navigationId,
+      stage,
+      ...fields,
+    });
+  };
   try {
     const request = parseRendererRequest(input);
+    if (request.type === "browse.session.open.request" && request.navigationId) {
+      navigationTrace = {
+        navigationId: request.navigationId,
+        ...(request.navigationStartedAtEpochMs === undefined
+          ? {}
+          : { rendererStartedAtEpochMs: request.navigationStartedAtEpochMs }),
+        mainEnteredAt: performance.now(),
+      };
+      logNavigationStage("main-enter", {
+        ...(navigationTrace.rendererStartedAtEpochMs === undefined
+          ? {}
+          : { rendererToMainMs: Math.max(0, Date.now() - navigationTrace.rendererStartedAtEpochMs) }),
+      });
+    }
 
     if (request.type === "library.open-cancel.request") {
       if (activeLibraryOpenCancellation) {
@@ -4924,6 +4990,7 @@ async function handleLibraryRequest(
     const viewerWorkerStartedAt = VIEWER_TIMING_LOG && viewerRequest !== undefined
       ? performance.now()
       : 0;
+    const navigationWorkerStartedAt = navigationTrace ? performance.now() : 0;
     const workerResult = command.type === "sync.probe"
       ? await runSyncProbeWithRetry(command)
       : await (async () => {
@@ -4945,6 +5012,15 @@ async function handleLibraryRequest(
         }
         return result;
       })();
+    if (navigationTrace) {
+      navigationTrace.workerReturnedAt = performance.now();
+      logNavigationStage("worker-returned", {
+        workerRoundTripMs: Math.max(0, navigationTrace.workerReturnedAt - navigationWorkerStartedAt),
+        mainElapsedMs: Math.max(0, navigationTrace.workerReturnedAt - navigationTrace.mainEnteredAt),
+        ok: workerResult.ok,
+        resultType: workerResult.ok ? workerResult.type : undefined,
+      });
+    }
     if (viewerWorkerStartedAt > 0) {
       logger?.info("viewer.preview-worker-timing", "Preview request resolved.", {
         libraryId: viewerRequest?.libraryId,
@@ -5781,6 +5857,17 @@ async function handleLibraryRequest(
       rendererWorkerResult,
       relinkPreviewContext?.previewId,
     );
+    if (navigationTrace) {
+      const responseReadyAt = performance.now();
+      logNavigationStage("main-response-ready", {
+        mainPostProcessMs: navigationTrace.workerReturnedAt === undefined
+          ? 0
+          : Math.max(0, responseReadyAt - navigationTrace.workerReturnedAt),
+        mainTotalMs: Math.max(0, responseReadyAt - navigationTrace.mainEnteredAt),
+        ok: result.ok,
+        resultType: result.ok ? result.type : undefined,
+      });
+    }
     if (!result.ok) {
       if (operation) {
         publishLifecycle({
@@ -5836,6 +5923,11 @@ async function handleLibraryRequest(
       clearNativeAssetDragCache(result.libraryId);
       publishLifecycle({ type: "library.closed", libraryId: result.libraryId });
     }
+    logNavigationStage("main-return", {
+      mainToIpcReturnMs: navigationTrace?.workerReturnedAt === undefined
+        ? undefined
+        : Math.max(0, performance.now() - navigationTrace.workerReturnedAt),
+    });
     return result;
   } catch (error) {
     if (relinkPreviewContext) {
@@ -6042,6 +6134,110 @@ function criticalRendererRequest(request: RendererRequest): boolean {
     || (request.type === 'linked-folder.delete-subtree.request' && request.deleteFromDisk);
 }
 
+type CriticalRendererOperation =
+  | 'folder'
+  | 'linked-folder'
+  | 'linked-asset'
+  | 'asset-permanent'
+  | 'trash-purge'
+  | 'asset';
+
+/**
+ * Linked assets are deleted permanently from their source folder (the file never
+ * enters the application trash, and the previous implementation's trip through
+ * the OS recycle bin is gone), so the confirmation must name that operation
+ * instead of the generic "delete these assets" copy.  The renderer supplies
+ * `locationKind` as a copy hint only; Main still has no database access.
+ */
+function criticalRendererOperation(request: RendererRequest): CriticalRendererOperation {
+  switch (request.type) {
+    case 'folder.delete-from-disk.request':
+      return 'folder';
+    case 'linked-folder.delete-subtree.request':
+      return 'linked-folder';
+    case 'asset.delete-permanent.request':
+      return 'asset-permanent';
+    case 'trash.purge.request':
+      return 'trash-purge';
+    case 'asset.delete-from-disk.request':
+      return request.locationKind === 'linked' ? 'linked-asset' : 'asset';
+    default:
+      return 'asset';
+  }
+}
+
+function criticalRendererCopy(
+  operation: CriticalRendererOperation,
+  count: number,
+  english: boolean,
+): { heading: string; message: string; detail: string } {
+  const confirmationPolicy = english
+    ? 'This confirmation is required every time; it cannot be remembered or bypassed by MCP permissions.'
+    : '每次操作都必须确认；不能记住此决定，也不能通过 MCP 权限绕过。';
+  switch (operation) {
+    case 'folder':
+      return {
+        heading: english ? 'Delete this folder from disk?' : '从磁盘删除这个文件夹？',
+        message: english
+          ? 'The selected folder and its managed assets will be permanently deleted.'
+          : '选定文件夹及其中的托管资产将被永久删除。',
+        detail: english
+          ? `This cannot be undone and the files will not go to the application trash. ${confirmationPolicy}`
+          : `此操作无法撤销，文件不会进入应用回收站。${confirmationPolicy}`,
+      };
+    case 'linked-folder':
+      return {
+        heading: english ? 'Delete linked-folder files from disk?' : '从磁盘删除链接文件夹内容？',
+        message: english
+          ? 'The selected linked-folder source files will be permanently deleted.'
+          : '选定链接文件夹中的源文件将被永久删除。',
+        detail: english
+          ? `This cannot be undone and the files will not go to the application trash. ${confirmationPolicy}`
+          : `此操作无法撤销，文件不会进入应用回收站。${confirmationPolicy}`,
+      };
+    case 'linked-asset':
+      return {
+        heading: english ? 'Delete these linked assets from disk?' : '从磁盘删除这些链接资产的源文件？',
+        message: english
+          ? `The source files of ${count} selected linked asset(s) will be permanently deleted, and their library link records with them.`
+          : `选定 ${count} 个链接资产的源文件将被永久删除，库内的链接记录也会一并移除。`,
+        detail: english
+          ? `This cannot be undone; the source files are deleted from the linked folder and do not go to the recycle bin. ${confirmationPolicy}`
+          : `此操作无法撤销：链接文件夹中的源文件会被直接删除，不会进入系统回收站。${confirmationPolicy}`,
+      };
+    case 'asset-permanent':
+      return {
+        heading: english ? 'Permanently delete these trash assets?' : '永久删除这些回收站资产？',
+        message: english
+          ? `${count} selected trash asset(s) will be permanently deleted.`
+          : `选定的 ${count} 项回收站资产将被永久删除。`,
+        detail: english
+          ? `This cannot be undone and the files will not go to the application trash. ${confirmationPolicy}`
+          : `此操作无法撤销，文件不会进入应用回收站。${confirmationPolicy}`,
+      };
+    case 'trash-purge':
+      return {
+        heading: english ? 'Empty the Serpent trash permanently?' : '永久清空 Serpent 回收站？',
+        message: english
+          ? 'All assets currently in the Serpent trash will be permanently deleted.'
+          : 'Serpent 回收站中的全部资产将被永久删除。',
+        detail: english
+          ? `This cannot be undone and the files will not go to the application trash. ${confirmationPolicy}`
+          : `此操作无法撤销，文件不会进入应用回收站。${confirmationPolicy}`,
+      };
+    case 'asset':
+      return {
+        heading: english ? 'Delete these assets from disk?' : '从磁盘删除这些资产？',
+        message: english
+          ? `${count} selected asset(s) will be permanently deleted.`
+          : `选定的 ${count} 项资产将被永久删除。`,
+        detail: english
+          ? `This cannot be undone and the files will not go to the application trash. ${confirmationPolicy}`
+          : `此操作无法撤销，文件不会进入应用回收站。${confirmationPolicy}`,
+      };
+  }
+}
+
 async function confirmCriticalRendererRequest(request: RendererRequest): Promise<boolean> {
   if (request.type === 'library.delete-from-disk.request') {
     return confirmCriticalLibraryDeletion(request.libraryId);
@@ -6049,44 +6245,20 @@ async function confirmCriticalRendererRequest(request: RendererRequest): Promise
   const manager = criticalConfirmationWindowManager;
   if (manager === undefined) return false;
   const english = appLocale === 'en';
-  const operation = request.type === 'folder.delete-from-disk.request'
-    ? 'folder'
-    : request.type === 'linked-folder.delete-subtree.request'
-      ? 'linked-folder'
-      : request.type === 'asset.delete-permanent.request'
-        ? 'asset-permanent'
-        : request.type === 'trash.purge.request'
-          ? 'trash-purge'
-          : 'asset';
   const count = request.type === 'asset.delete-from-disk.request'
     || request.type === 'asset.delete-permanent.request'
     ? request.assetIds.length
-    : undefined;
-  const heading = operation === 'folder'
-    ? (english ? 'Delete this folder from disk?' : '从磁盘删除这个文件夹？')
-    : operation === 'linked-folder'
-      ? (english ? 'Delete linked-folder files from disk?' : '从磁盘删除链接文件夹内容？')
-      : operation === 'asset-permanent'
-        ? (english ? 'Permanently delete these trash assets?' : '永久删除这些回收站资产？')
-        : operation === 'trash-purge'
-          ? (english ? 'Empty the Serpent trash permanently?' : '永久清空 Serpent 回收站？')
-          : (english ? 'Delete these assets from disk?' : '从磁盘删除这些资产？');
-  const message = operation === 'folder'
-    ? (english ? 'The selected folder and its managed assets will be permanently deleted.' : '选定文件夹及其中的托管资产将被永久删除。')
-    : operation === 'linked-folder'
-      ? (english ? 'The selected linked-folder source files will be permanently deleted.' : '选定链接文件夹中的源文件将被永久删除。')
-      : operation === 'asset-permanent'
-        ? (english ? `${count ?? 0} selected trash asset(s) will be permanently deleted.` : `选定的 ${count ?? 0} 项回收站资产将被永久删除。`)
-        : operation === 'trash-purge'
-          ? (english ? 'All assets currently in the Serpent trash will be permanently deleted.' : 'Serpent 回收站中的全部资产将被永久删除。')
-          : (english ? `${count ?? 0} selected asset(s) will be permanently deleted.` : `选定的 ${count ?? 0} 项资产将被永久删除。`);
+    : 0;
+  const { heading, message, detail } = criticalRendererCopy(
+    criticalRendererOperation(request),
+    count,
+    english,
+  );
   return manager.request({
     title: english ? 'Confirm critical operation' : '确认危险操作',
     heading,
     message,
-    detail: english
-      ? 'This cannot be undone and the files will not go to the application trash. This confirmation is required every time; it cannot be remembered or bypassed by MCP permissions.'
-      : '此操作无法撤销，文件不会进入应用回收站。每次操作都必须确认；不能记住此决定，也不能通过 MCP 权限绕过。',
+    detail,
     cancelLabel: english ? 'Cancel' : '取消',
     confirmLabel: english ? 'Delete permanently' : '永久删除',
   });

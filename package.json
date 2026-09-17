@@ -1,7 +1,7 @@
 {
   "name": "serpent",
   "productName": "Serpent",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "An open-source digital asset manager for creative professionals.",
   "author": "dolag233",
   "license": "MIT",
@@ -84,7 +84,6 @@
     "react-dom": "19.2.7",
     "sharp": "^0.35.3",
     "three": "^0.185.1",
-    "trash": "10.1.1",
     "yauzl": "3.4.0",
     "zod": "4.4.3"
   },

@@ -27,6 +27,52 @@ describe("createTrackedLibraryApi", () => {
     expect(api.listAssets).toHaveBeenCalledTimes(1);
   });
 
+  it("does not queue cancelLibraryImport behind an in-flight import write", async () => {
+    let releaseImport: (() => void) | undefined;
+    let resolveImportStarted: (() => void) | undefined;
+    const importStarted = new Promise<void>((resolve) => {
+      resolveImportStarted = resolve;
+    });
+    const order: string[] = [];
+    const api = {
+      importFiles: vi.fn(async () => {
+        resolveImportStarted?.();
+        await new Promise<void>((resolve) => {
+          releaseImport = resolve;
+        });
+        order.push("import");
+        return { ok: true, value: { importId: "import-1" } };
+      }),
+      cancelLibraryImport: vi.fn(async () => {
+        order.push("cancel");
+        return { ok: true, value: { importId: "import-1" } };
+      }),
+    } as unknown as SerpentLibraryApi;
+
+    let writeChain = Promise.resolve();
+    const runWrite = <T,>(operation: () => Promise<T>): Promise<T> => {
+      const run = writeChain.then(operation, operation);
+      writeChain = run.then(
+        () => undefined,
+        () => undefined,
+      );
+      return run;
+    };
+    const tracked = createTrackedLibraryApi(api, vi.fn(), vi.fn(), runWrite);
+
+    const importPromise = tracked.importFiles({
+      libraryId: "library",
+    });
+    await importStarted;
+    await tracked.cancelLibraryImport({ importId: "import-1", mode: "stop" });
+
+    expect(order).toEqual(["cancel"]);
+    expect(api.cancelLibraryImport).toHaveBeenCalledTimes(1);
+    releaseImport?.();
+    await importPromise;
+    expect(order).toEqual(["cancel", "import"]);
+  });
+
   it("can wrap the frozen preload bridge without violating Proxy invariants", async () => {
     const onWriteStart = vi.fn();
     const onWriteEnd = vi.fn();

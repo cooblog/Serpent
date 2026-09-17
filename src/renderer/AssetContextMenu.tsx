@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { SerpentLibraryApi } from "../shared/library-api";
 import type {
+  SmartCollectionSummary,
   TagSummary,
   CollectionSummary,
   LinkedFolderSummary,
@@ -14,6 +15,8 @@ type RendererWindow = Window & {
     plugins?: SerpentPluginManagerApi;
   };
 };
+import type { EntityAppearance, EntityAppearanceTarget } from "../shared/entity-appearance";
+import { EntityAppearancePicker } from "./EntityAppearancePicker";
 import {
   ContextMenu,
   ContextMenuBackdrop,
@@ -288,6 +291,7 @@ interface AssetContextMenuProps {
   collections: CollectionSummary[];
   linkedFolders: LinkedFolderSummary[];
   managedFolders: ManagedFolderSummary[];
+  smartCollections: SmartCollectionSummary[];
   activeCollectionId: string | null;
   assets: AssetSummary[];
   onRenameSmartCollection: (id: string, name: string) => void;
@@ -324,10 +328,9 @@ interface AssetContextMenuProps {
     linkedRelativePath?: string;
   }) => void;
   onRemoveLinkedFolder: (folderId: string, name: string) => void;
-  onTrashLinkedFolderSubtree: (
-    linkedFolderId: string,
-    relativePath: string,
-    name: string,
+  onSetEntityAppearance: (
+    target: EntityAppearanceTarget,
+    appearance: EntityAppearance | null,
   ) => void;
   onBatchAssignTag: (tagId: string, assetIds: string[]) => void;
   onBatchRemoveTag: (tagId: string, assetIds: string[]) => void;
@@ -395,6 +398,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
     collections,
     linkedFolders,
     managedFolders,
+    smartCollections,
     activeCollectionId,
     assets,
     onRenameSmartCollection,
@@ -418,7 +422,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
     onTrashManagedFolder,
     onDeleteFolderFromDisk,
     onRemoveLinkedFolder,
-    onTrashLinkedFolderSubtree,
+    onSetEntityAppearance,
     onBatchAssignTag,
     onBatchRemoveTag,
     onBatchAddToCollection,
@@ -840,7 +844,6 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   locationKind: "managed",
                 }),
               removeLinkedFolder: onRemoveLinkedFolder,
-              trashLinkedFolderSubtree: onTrashLinkedFolderSubtree,
               renameOrganization: onRenameOrganization,
               createSubcollection: onCreateSubcollection,
               editCollectionDetails: onEditCollectionDetails,
@@ -875,6 +878,23 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   onAction={() => runSidebarCommand("smart-collection.rename")}
                 />
               )}
+              <ContextMenuSubmenu
+                icon={<Icon name="palette" size={14} />}
+                label={t("command.smartCollection.appearance")}
+              >
+                <EntityAppearancePicker
+                  value={
+                    smartCollections.find((collection) => collection.collectionId === desc.id)
+                      ?.appearance ?? null
+                  }
+                  onChange={(appearance) =>
+                    onSetEntityAppearance(
+                      { kind: "smart-collection", id: desc.id },
+                      appearance,
+                    )
+                  }
+                />
+              </ContextMenuSubmenu>
               {updateQueryItem && (
                 <ContextMenuItem
                   icon={<Icon name="refresh" size={14} />}
@@ -932,7 +952,6 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   locationKind: "managed",
                 }),
               removeLinkedFolder: onRemoveLinkedFolder,
-              trashLinkedFolderSubtree: onTrashLinkedFolderSubtree,
               renameOrganization: onRenameOrganization,
               createSubcollection: onCreateSubcollection,
               editCollectionDetails: onEditCollectionDetails,
@@ -978,6 +997,23 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   onAction={() => runSidebarCommand("collection.rename")}
                 />
               )}
+              <ContextMenuSubmenu
+                icon={<Icon name="palette" size={14} />}
+                label={t("command.collection.appearance")}
+              >
+                <EntityAppearancePicker
+                  value={
+                    collections.find((collection) => collection.collectionId === desc.id)
+                      ?.appearance ?? null
+                  }
+                  onChange={(appearance) =>
+                    onSetEntityAppearance(
+                      { kind: "collection", id: desc.id },
+                      appearance,
+                    )
+                  }
+                />
+              </ContextMenuSubmenu>
               {editDetailsItem && (
                 <ContextMenuItem
                   icon={<Icon name="info" size={14} />}
@@ -1063,7 +1099,6 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   linkedRelativePath: desc.linkedRelativePath,
                 }),
               removeLinkedFolder: onRemoveLinkedFolder,
-              trashLinkedFolderSubtree: onTrashLinkedFolderSubtree,
               renameOrganization: onRenameOrganization,
               createSubcollection: onCreateSubcollection,
               editCollectionDetails: onEditCollectionDetails,
@@ -1181,6 +1216,36 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                       shortcut={renameItem.shortcutLabel ?? undefined}
                       onAction={() => runSidebarCommand("folder.rename")}
                     />
+                    {(!desc.isLibraryRoot &&
+                      (desc.locationKind === "managed" ||
+                        (desc.locationKind === "linked" && !desc.linkedRelativePath))) && (
+                      <ContextMenuSubmenu
+                        icon={<Icon name="palette" size={14} />}
+                        label={t("command.folder.appearance")}
+                      >
+                        <EntityAppearancePicker
+                          value={
+                            desc.locationKind === "linked"
+                              ? linkedFolders.find((folder) => folder.folderId === desc.folderId)
+                                  ?.appearance ?? null
+                              : managedFolders.find((folder) => folder.folderId === desc.folderId)
+                                  ?.appearance ?? null
+                          }
+                          onChange={(appearance) =>
+                            onSetEntityAppearance(
+                              {
+                                kind:
+                                  desc.locationKind === "linked"
+                                    ? "linked-folder"
+                                    : "managed-folder",
+                                id: desc.folderId,
+                              },
+                              appearance,
+                            )
+                          }
+                        />
+                      </ContextMenuSubmenu>
+                    )}
                     <PluginMenuItems
                       items={pluginItemsAtHostAnchor(pluginFolderMenuPlacement, "folder.rename", "after")}
                       onRun={(item) => runPluginCommand(item, { folderIds: [desc.folderId] })}
@@ -1278,6 +1343,18 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                       onAction={() => runSidebarCommand("folder.move-to-trash")}
                     />
                   )}
+                  {/* 2026-09-15 用户要求：链接文件夹的「移除链接文件夹」排在「强制从硬盘删除」之前
+                      ——移除只删链接记录（可再次导入），比永久删除更安全，因此放在前面。 */}
+                  {removeFromLibraryItem && (
+                    <ContextMenuItem
+                      icon={<Icon name="trash" size={14} />}
+                      label={removeFromLibraryItem.label}
+                      danger
+                      onAction={() =>
+                        runSidebarCommand("folder.remove-from-library")
+                      }
+                    />
+                  )}
                   {deleteFromDiskItem && (
                     <ContextMenuItem
                       icon={<Icon name="trash" size={14} />}
@@ -1290,16 +1367,6 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                       }
                       onAction={() =>
                         runSidebarCommand("folder.delete-from-disk")
-                      }
-                    />
-                  )}
-                  {removeFromLibraryItem && (
-                    <ContextMenuItem
-                      icon={<Icon name="trash" size={14} />}
-                      label={removeFromLibraryItem.label}
-                      danger
-                      onAction={() =>
-                        runSidebarCommand("folder.remove-from-library")
                       }
                     />
                   )}

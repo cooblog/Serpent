@@ -55,7 +55,14 @@ export class StartupBurstGateRegistry {
     if (!this.matchesGate(gate, input.generation)) return;
     if (
       input.servedSuccessfully
-      && (input.commandType === 'asset.search' || input.commandType === 'folder.browse-entries')
+      && (
+        input.commandType === 'asset.search'
+        || input.commandType === 'folder.browse-entries'
+        // The current renderer opens its first page as part of this command;
+        // unlike the legacy asset.search flow, there is no separate browse
+        // command to release startup work after the page has been delivered.
+        || input.commandType === 'browse.session.open'
+      )
     ) {
       gate.browseServed = true;
     }
