@@ -56,6 +56,14 @@ const MEDIA_BY_CONTENT_TYPE: Readonly<Record<string, RemoteMediaDefinition>> = {
     extensions: ['.webp'], minimumMagicBytes: 12, preferredExtension: '.webp',
     matchesMagic: (bytes) => asciiAt(bytes, 0, 'RIFF') && asciiAt(bytes, 8, 'WEBP'),
   },
+  'image/avif': {
+    extensions: ['.avif'], minimumMagicBytes: 12, preferredExtension: '.avif',
+    matchesMagic: (bytes) => {
+      if (!isIsoBaseMedia(bytes)) return false;
+      const brands = bytes.subarray(8, Math.min(bytes.length, 32)).toString('ascii');
+      return brands.includes('avif') || brands.includes('avis');
+    },
+  },
   'image/bmp': {
     extensions: ['.bmp'], minimumMagicBytes: 2, preferredExtension: '.bmp',
     matchesMagic: (bytes) => asciiAt(bytes, 0, 'BM'),

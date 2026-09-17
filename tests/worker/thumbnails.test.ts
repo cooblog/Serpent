@@ -97,6 +97,20 @@ async function createJpegBytes(width: number, height: number): Promise<Buffer> {
   }).jpeg().toBuffer();
 }
 
+async function createAvifBytes(width: number, height: number): Promise<Buffer> {
+  const sharp = require('sharp') as (input: unknown) => {
+    avif(): { toBuffer(): Promise<Buffer> };
+  };
+  return sharp({
+    create: {
+      width,
+      height,
+      channels: 3,
+      background: { r: 80, g: 40, b: 200 },
+    },
+  }).avif().toBuffer();
+}
+
 function importNoConflict(service: LibraryService, libraryId: string, sourcePath: string): void {
   sharedImportNoConflict(service, libraryId, sourcePath);
 }
@@ -220,7 +234,7 @@ describe('schema v9 migration', () => {
 describe('detectMediaType', () => {
   it('detects product image types, including OIIO and RAW derivatives', () => {
     for (const filename of [
-      'photo.png', 'photo.jpeg', 'photo.JFIF', 'photo.gif', 'photo.webp', 'photo.bmp',
+      'photo.png', 'photo.jpeg', 'photo.JFIF', 'photo.gif', 'photo.webp', 'photo.avif', 'photo.bmp',
       'photo.tiff', 'photo.tga', 'photo.exr', 'photo.ico', 'layer.psd',
       'camera.dng', 'camera.cr2', 'camera.cr3', 'camera.nef', 'camera.arw',
       'camera.raf', 'camera.orf', 'camera.rw2',
@@ -272,6 +286,42 @@ describe('generateThumbnail (sharp)', () => {
       asset.assetId,
       asset.currentRevisionId,
     )).toMatchObject({ mimeType: 'image/jpeg' });
+
+    service.closeAll();
+  });
+
+  it('imports, thumbnails, and serves AVIF as a native image (Serpent-c93c75)', async () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'Avif', selectedParentPath: root });
+    const sourcePath = path.join(root, 'poster.avif');
+    writeFileSync(sourcePath, await createAvifBytes(24, 16));
+    importNoConflict(service, created.libraryId, sourcePath);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+
+    await expect(service.generateThumbnail({
+      libraryId: created.libraryId,
+      assetId: asset.assetId,
+    })).resolves.toMatchObject({ artifactId: expect.any(String) });
+    expect(service.listAssets({
+      libraryId: created.libraryId,
+      recursive: true,
+    })[0]).toMatchObject({
+      mediaType: 'image',
+      width: 24,
+      height: 16,
+    });
+    expect(service.getPreviewArtifact(created.libraryId, asset.assetId)).toMatchObject({
+      mediaType: 'image',
+      status: 'ready',
+      playbackMode: 'source',
+      sourceMimeType: 'image/avif',
+    });
+    expect(service.getCurrentMediaSource(
+      created.libraryId,
+      asset.assetId,
+      asset.currentRevisionId,
+    )).toMatchObject({ mimeType: 'image/avif' });
 
     service.closeAll();
   });

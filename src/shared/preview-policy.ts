@@ -16,6 +16,7 @@ const SOURCE_DIRECT_EXTENSIONS = new Set([
   ...JPEG_IMAGE_EXTENSIONS,
   ".png",
   ".webp",
+  ".avif",
   ".gif",
 ]);
 

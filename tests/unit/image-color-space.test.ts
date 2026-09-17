@@ -37,6 +37,7 @@ describe('image color-space metadata', () => {
   it('allows OIIO overrides for ICC-capable raster extensions', () => {
     expect(canOverrideImageColorSpace('preview.png')).toBe(true);
     expect(canOverrideImageColorSpace('preview.JFIF')).toBe(true);
+    expect(canOverrideImageColorSpace('preview.avif')).toBe(true);
     expect(canOverrideImageColorSpace('preview.psd')).toBe(true);
     expect(canOverrideImageColorSpace('preview.svg')).toBe(false);
   });

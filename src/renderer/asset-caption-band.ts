@@ -2,7 +2,7 @@
  * Per-card caption band sizing (Serpent-b1b0f2).
  *
  * A card must only reserve the caption lines it really renders. A file whose
- * pixel size was never decoded (unsupported avif/raw, documents, audio) shows
+ * pixel size was never decoded (undecoded raw, documents, audio) shows
  * no resolution line, so reserving one always left an empty strip under such a
  * card - and in tiled rows it made the whole row taller.
  *

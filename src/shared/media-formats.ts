@@ -10,7 +10,7 @@
 export const JPEG_IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.jfif'] as const;
 
 export const SHARP_IMAGE_EXTENSIONS = [
-  '.png', ...JPEG_IMAGE_EXTENSIONS, '.gif', '.tif', '.tiff', '.webp', '.svg',
+  '.png', ...JPEG_IMAGE_EXTENSIONS, '.gif', '.tif', '.tiff', '.webp', '.avif', '.svg',
 ] as const;
 
 /** Formats decoded by the bundled OIIO runtime rather than by Chromium/sharp. */
@@ -170,6 +170,7 @@ export function directImageMimeForExtension(
     case '.jfif': return 'image/jpeg';
     case '.gif': return 'image/gif';
     case '.webp': return 'image/webp';
+    case '.avif': return 'image/avif';
     // SVG stays vector in the viewer; the grid still uses its generated
     // thumbnail for predictable card sizing and performance.
     case '.svg': return 'image/svg+xml';
@@ -187,6 +188,7 @@ export function imageMimeForExtension(extensionOrFilename: string): string | nul
     case '.tif':
     case '.tiff': return 'image/tiff';
     case '.webp': return 'image/webp';
+    case '.avif': return 'image/avif';
     case '.bmp': return 'image/bmp';
     case '.ico': return 'image/x-icon';
     case '.svg': return 'image/svg+xml';

@@ -30,8 +30,12 @@ export const AUDIO_WAVEFORM_COVER_HEIGHT = 480;
 export const AUDIO_WAVEFORM_VIEWER_WIDTH = 1280;
 export const AUDIO_WAVEFORM_VIEWER_HEIGHT = 220;
 
-/** Generator tag; bump when cover/viewer geometry or stage color changes so thumbs requeue. */
-export const AUDIO_WAVEFORM_COVER_GENERATOR_TAG = "waveform-cover6";
+/**
+ * Generator tag; bump when cover strategy, viewer geometry, or stage color
+ * changes so thumbs requeue. Album-art grid covers and waveform fallback
+ * share this token so stale-repair can invalidate both.
+ */
+export const AUDIO_WAVEFORM_COVER_GENERATOR_TAG = "audio-cover7";
 
 /**
  * Light browse canvas (`--canvas` in light theme). Covers must not match this
@@ -159,6 +163,28 @@ export const AUDIO_MIME_BY_EXTENSION: Record<
 export function isAudioFileName(filenameOrMime: string): boolean {
   const lower = filenameOrMime.toLowerCase();
   return AUDIO_EXTENSIONS.some((ext) => lower.endsWith(ext));
+}
+
+type FfprobeStreamLike = {
+  codec_type?: unknown;
+  disposition?: { attached_pic?: unknown };
+};
+
+/**
+ * True when ffprobe JSON reports an attached picture (ID3 APIC, MP4 covr,
+ * FLAC PICTURE, and similar album-art streams).
+ */
+export function ffprobeHasAttachedPicture(probeJson: unknown): boolean {
+  if (probeJson === null || typeof probeJson !== 'object') return false;
+  const streams = (probeJson as { streams?: unknown }).streams;
+  if (!Array.isArray(streams)) return false;
+  return streams.some((stream) => {
+    if (stream === null || typeof stream !== 'object') return false;
+    const typed = stream as FfprobeStreamLike;
+    if (typed.codec_type !== 'video') return false;
+    const flag = typed.disposition?.attached_pic;
+    return flag === 1 || flag === '1' || flag === true;
+  });
 }
 
 export function audioMimeForExtension(extension: string): string | null {

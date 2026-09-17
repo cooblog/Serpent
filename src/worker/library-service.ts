@@ -705,6 +705,7 @@ import {
   AUDIO_WAVEFORM_VIEWER_HEIGHT,
   AUDIO_WAVEFORM_VIEWER_WIDTH,
   audioMimeForExtension,
+  ffprobeHasAttachedPicture,
   isAudioFileName,
 } from '../shared/audio-media';
 import {
@@ -24778,8 +24779,9 @@ export class LibraryService {
   // ── Audio artifacts (ffprobe + waveform thumbnail) ─────────────────
 
   /**
-   * Audio path (Serpent-0x5): extract metadata and render a waveform PNG stored
-   * as the standard `thumbnail` artifact so grid/Inspector reuse existing cover UI.
+   * Audio path (Serpent-0x5 / Serpent-690060): extract metadata, then store a
+   * grid `thumbnail` from embedded album art when present, otherwise a
+   * waveform PNG. Viewer strip stays a wide waveform (`video_poster`).
    * Playback uses the native source via `serpent://source` — no proxy needed.
    */
   private async generateAudioArtifacts(
@@ -24794,37 +24796,62 @@ export class LibraryService {
     const artifactsDir = this.artifactsDir(openLibrary);
     mkdirSync(artifactsDir, { recursive: true });
 
+    let hasAttachedPicture = false;
     try {
-      await this.probeVideoAsset(
+      const probe = await this.probeVideoAsset(
         input, openLibrary, assetPath, revisionId, ffprobePath, execution,
       );
+      hasAttachedPicture = probe.hasAttachedPicture;
     } catch (error) {
       const resourceError = asMediaResourceExhaustedError(error, 'ffmpeg-audio');
       if (resourceError) throw resourceError;
       this.diagnose('audio-probe', error, { libraryId: input.libraryId, assetId: input.assetId });
     }
 
-    let waveformArtifactId: string | null = null;
-    try {
-      waveformArtifactId = await this.generateAudioWaveformPng(
-        input,
-        openLibrary,
-        assetPath,
-        revisionId,
-        ffmpegPath,
-        artifactsDir,
-        execution,
-        {
-          kind: 'thumbnail',
-          width: AUDIO_WAVEFORM_COVER_WIDTH,
-          height: AUDIO_WAVEFORM_COVER_HEIGHT,
-          flattenBackground: { ...AUDIO_WAVEFORM_COVER_BACKGROUND },
-        },
-      );
-    } catch (error) {
-      const resourceError = asMediaResourceExhaustedError(error, 'ffmpeg-audio-waveform');
-      if (resourceError) throw resourceError;
-      this.diagnose('audio-waveform', error, { libraryId: input.libraryId, assetId: input.assetId });
+    let thumbnailArtifactId: string | null = null;
+    if (hasAttachedPicture) {
+      try {
+        thumbnailArtifactId = await this.generateAudioAlbumCoverThumbnail(
+          input,
+          openLibrary,
+          assetPath,
+          revisionId,
+          ffmpegPath,
+          artifactsDir,
+          execution,
+        );
+      } catch (error) {
+        const resourceError = asMediaResourceExhaustedError(error, 'ffmpeg-audio-cover');
+        if (resourceError) throw resourceError;
+        this.diagnose('audio-album-cover', error, {
+          libraryId: input.libraryId,
+          assetId: input.assetId,
+        });
+      }
+    }
+
+    if (!thumbnailArtifactId) {
+      try {
+        thumbnailArtifactId = await this.generateAudioWaveformPng(
+          input,
+          openLibrary,
+          assetPath,
+          revisionId,
+          ffmpegPath,
+          artifactsDir,
+          execution,
+          {
+            kind: 'thumbnail',
+            width: AUDIO_WAVEFORM_COVER_WIDTH,
+            height: AUDIO_WAVEFORM_COVER_HEIGHT,
+            flattenBackground: { ...AUDIO_WAVEFORM_COVER_BACKGROUND },
+          },
+        );
+      } catch (error) {
+        const resourceError = asMediaResourceExhaustedError(error, 'ffmpeg-audio-waveform');
+        if (resourceError) throw resourceError;
+        this.diagnose('audio-waveform', error, { libraryId: input.libraryId, assetId: input.assetId });
+      }
     }
 
     try {
@@ -24854,13 +24881,135 @@ export class LibraryService {
       });
     }
 
-    if (!waveformArtifactId) {
+    if (!thumbnailArtifactId) {
       throw new LibraryServiceError('INTERNAL_ERROR', {
         reason: 'MEDIA_PROCESSING_FAILED',
       });
     }
 
-    return { artifactId: waveformArtifactId };
+    return { artifactId: thumbnailArtifactId };
+  }
+
+  /**
+   * Extract the attached picture stream and store it as the grid `thumbnail`
+   * (Serpent-690060). Uses the same 512px-inside encode as image cards so
+   * album art keeps its aspect instead of being flattened onto the 4:3
+   * waveform stage.
+   */
+  private async generateAudioAlbumCoverThumbnail(
+    input: { libraryId: string; assetId: string },
+    openLibrary: OpenLibrary,
+    assetPath: string,
+    revisionId: string,
+    ffmpegPath: string,
+    artifactsDir: string,
+    execution: MediaExecutionContext,
+  ): Promise<string> {
+    const artifactId = randomUUID();
+    let artifactRelPath = `${artifactId}.jpg`;
+    let artifactAbsPath = path.join(artifactsDir, artifactRelPath);
+    const tempAbsPath = path.join(artifactsDir, `${artifactId}.cover-tmp.png`);
+
+    try {
+      const result = await this.runFfmpeg(ffmpegPath, [
+        '-y',
+        '-i', assetPath,
+        '-an',
+        '-map', '0:v:0',
+        '-frames:v', '1',
+        '-update', '1',
+        tempAbsPath,
+      ], { signal: execution.signal });
+
+      if (result.exitCode !== 0) {
+        throw new Error(
+          `ffmpeg album-cover extract exited with code ${result.exitCode}: ${result.stderr.slice(-200)}`,
+        );
+      }
+
+      const { inputWidth, inputHeight, mimeType } = await runSharpDecoder(
+        execution.signal,
+        execution.lane,
+        async () => {
+          const sharp = this.options.sharpFn ?? requireSharp();
+          const pipeline = sharp(tempAbsPath, {
+            failOn: 'none',
+            sequentialRead: false,
+            limitInputPixels: false,
+          });
+          const metadata = await pipeline.metadata();
+          const swapsDimensions = metadata.orientation !== undefined
+            && metadata.orientation >= 5
+            && metadata.orientation <= 8;
+          const inputWidth = swapsDimensions ? (metadata.height ?? 0) : (metadata.width ?? 0);
+          const inputHeight = swapsDimensions ? (metadata.width ?? 0) : (metadata.height ?? 0);
+          if (inputWidth <= 0 || inputHeight <= 0) {
+            throw new Error('Attached picture has no usable pixel size.');
+          }
+          const hasAlpha =
+            (metadata as { hasAlpha?: boolean }).hasAlpha === true ||
+            (metadata as { channels?: number }).channels === 4;
+          artifactRelPath = hasAlpha ? `${artifactId}.webp` : `${artifactId}.jpg`;
+          artifactAbsPath = path.join(artifactsDir, artifactRelPath);
+          const sized = pipeline
+            .rotate()
+            .toColourspace('srgb')
+            .resize({
+              width: 512,
+              height: 512,
+              fit: 'inside',
+              withoutEnlargement: true,
+            });
+          try {
+            if (hasAlpha) {
+              await sized.webp({ quality: 80 }).toFile(artifactAbsPath);
+            } else {
+              await sized.jpeg({ quality: 72 }).toFile(artifactAbsPath);
+            }
+          } finally {
+            sized.destroy?.();
+            pipeline.destroy?.();
+          }
+          return {
+            inputWidth,
+            inputHeight,
+            mimeType: hasAlpha ? 'image/webp' : 'image/jpeg',
+          };
+        },
+        {
+          width: 512,
+          height: 512,
+        },
+      );
+
+      rmSync(tempAbsPath, { force: true });
+
+      const outputStat = statSync(artifactAbsPath);
+      openLibrary.connection
+        .prepare(
+          `INSERT INTO revision_artifacts
+             (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
+              width, height, generator_version, status, generated_at)
+           VALUES (?, ?, 'thumbnail', ?, ?, ?, ?, ?, ?, 'ready', ?)`,
+        )
+        .run(
+          artifactId,
+          revisionId,
+          mimeType,
+          outputStat.size,
+          artifactRelPath,
+          inputWidth || null,
+          inputHeight || null,
+          AUDIO_WAVEFORM_GENERATOR,
+          new Date().toISOString(),
+        );
+
+      return artifactId;
+    } catch (error) {
+      rmSync(tempAbsPath, { force: true });
+      rmSync(artifactAbsPath, { force: true });
+      throw error;
+    }
   }
 
   /**
@@ -26050,7 +26199,12 @@ export class LibraryService {
     revisionId: string,
     ffprobePath: string,
     execution: MediaExecutionContext,
-  ): Promise<{ durationSec: number; width: number | null; height: number | null }> {
+  ): Promise<{
+    durationSec: number;
+    width: number | null;
+    height: number | null;
+    hasAttachedPicture: boolean;
+  }> {
     const artifactId = randomUUID();
     const artifactsDir = this.artifactsDir(openLibrary);
     mkdirSync(artifactsDir, { recursive: true });
@@ -26071,6 +26225,7 @@ export class LibraryService {
       }
 
       const probeJson = JSON.parse(result.stdout.toString('utf-8'));
+      const hasAttachedPicture = ffprobeHasAttachedPicture(probeJson);
       const videoStream = probeJson.streams?.find(
         (s: { codec_type: string }) => s.codec_type === 'video',
       );
@@ -26144,7 +26299,7 @@ export class LibraryService {
           );
       })();
 
-      return { durationSec, width, height };
+      return { durationSec, width, height, hasAttachedPicture };
     } catch (error) {
       // Write failed artifact
       this.writeFailedArtifact(openLibrary, artifactId, revisionId, 'extracted_metadata',
