@@ -29,10 +29,6 @@ import {
   VIEWER_MAX_SCALE,
   VIEWER_MIN_SCALE,
 } from "./viewer-fit";
-import {
-  pbrTextureDisplayFilter,
-  type PbrTextureChannelPresentation,
-} from "./pbr-texture-channel";
 
 export type ZoomableImageHandle = {
   fitToWindow: () => void;
@@ -83,8 +79,6 @@ export const ZoomableImage = forwardRef<
     onRotate?: () => void;
     fitRequestToken?: number;
     displayTransform?: ViewerDisplayTransform;
-    /** Detected read-only PBR channel presentation for this image asset. */
-    pbrChannel?: PbrTextureChannelPresentation | null;
     /** Keep animated formats on their static placeholder until promotion. */
     isAnimated?: boolean;
     /**
@@ -112,7 +106,6 @@ export const ZoomableImage = forwardRef<
     onRotate,
     fitRequestToken,
     displayTransform = IDENTITY_VIEWER_DISPLAY_TRANSFORM,
-    pbrChannel = null,
     isAnimated = false,
     placeholderSrc,
     preloadOnly = false,
@@ -283,10 +276,6 @@ export const ZoomableImage = forwardRef<
   // the viewer's critical path. The ready thumbnail remains visible while
   // this single full image loads and is revealed only after naturalWidth > 0.
 
-  const pbrFilter = pbrChannel
-    ? pbrTextureDisplayFilter(pbrChannel)
-    : "none";
-
   useLayoutEffect(() => {
     const image = imageRef.current;
     if (image && image.naturalWidth > 0) {
@@ -352,7 +341,6 @@ export const ZoomableImage = forwardRef<
               alt={fullLayerDecoded ? "" : alt}
               aria-hidden={fullLayerDecoded ? true : undefined}
               className={`preview-image preview-image-placeholder${fullLayerDecoded ? " is-hidden" : ""}`}
-              data-pbr-channel={pbrChannel?.channel}
               decoding="async"
               draggable={false}
               onError={handleImageError}
@@ -368,7 +356,6 @@ export const ZoomableImage = forwardRef<
               style={{
                 width: displayW,
                 height: displayH,
-                filter: pbrFilter,
                 transform: `translate(${view.x}px, ${view.y}px) ${viewerDisplayTransformCss(displayTransform)}`,
                 transformOrigin: "center center",
               }}
@@ -377,7 +364,6 @@ export const ZoomableImage = forwardRef<
               alt={fullLayerDecoded ? alt : ""}
               aria-hidden={!fullLayerDecoded ? true : undefined}
               className={`preview-image preview-image-full${fullLayerDecoded ? " is-visible" : " is-hidden"}`}
-              data-pbr-channel={pbrChannel?.channel}
               decoding="async"
               draggable={false}
               onError={handleImageError}
@@ -395,7 +381,6 @@ export const ZoomableImage = forwardRef<
               style={{
                 width: displayW,
                 height: displayH,
-                filter: pbrFilter,
                 transform: `translate(${view.x}px, ${view.y}px) ${viewerDisplayTransformCss(displayTransform)}`,
                 transformOrigin: "center center",
               }}
@@ -405,7 +390,6 @@ export const ZoomableImage = forwardRef<
           <img
             alt={alt}
             className="preview-image"
-            data-pbr-channel={pbrChannel?.channel}
             draggable={false}
             onError={handleImageError}
             onLoad={(event) => {
@@ -420,7 +404,6 @@ export const ZoomableImage = forwardRef<
             style={{
               width: displayW,
               height: displayH,
-              filter: pbrFilter,
               transform: `translate(${view.x}px, ${view.y}px) ${viewerDisplayTransformCss(displayTransform)}`,
               transformOrigin: "center center",
             }}
