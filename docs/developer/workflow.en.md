@@ -97,7 +97,7 @@ For detailed step-by-step instructions, quality gate requirements, and environme
 2. Open a Pull Request on GitHub, **ensuring the Base branch is `dev`**;
 3. Clearly state the purpose of the change, affected scope, and local test evidence in the PR description;
 4. Maintainers will review the PR, request any necessary adjustments, and merge it into `dev`;
-5. Merged contributions will be acknowledged in [`CONTRIBUTORS.md`](../../CONTRIBUTORS.md) in the root directory.
+5. Merged contributions will be acknowledged in [`CONTRIBUTORS.md`](https://github.com/dolag233/Serpent/blob/dev/CONTRIBUTORS.md) in the root directory.
 
 ---
 

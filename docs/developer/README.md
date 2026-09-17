@@ -15,7 +15,7 @@
 - [新增媒体格式支持](media-format-support.md)——从共享注册表到导入、预览、过滤、协议和验收
 - [分支与开发工作流](workflow.md)——分支策略、开源贡献流程与维护者工作纪律
 - [贡献指南](contributing.md)——开源协作、Pull Request 与代码门禁要求
-- [贡献者名单](../../CONTRIBUTORS.md)——已被项目接受并合并的贡献列表
+- [贡献者名单](https://github.com/dolag233/Serpent/blob/dev/CONTRIBUTORS.md)——已被项目接受并合并的贡献列表
 
 其他软件文档（内部记录仅仓库 `dev` 分支，网站不发布）：
 

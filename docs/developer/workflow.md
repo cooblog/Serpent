@@ -97,7 +97,7 @@ git commit -m "feat(canvas): 增加卡片悬停进度跳转"
 2. 在 GitHub 页面创建 Pull Request，**Base 分支选择 `dev`**；
 3. 在 PR 描述中清晰说明修改目的、涉及范围、以及本地验证所运行的测试命令和结果；
 4. 维护者会在 PR 中进行审查并可能提出修改建议，完成必要的修改后会合并入 `dev`；
-5. 合并入项目的贡献会同步收录至根目录的 [`CONTRIBUTORS.md`](../../CONTRIBUTORS.md) 予以致谢。
+5. 合并入项目的贡献会同步收录至根目录的 [`CONTRIBUTORS.md`](https://github.com/dolag233/Serpent/blob/dev/CONTRIBUTORS.md) 予以致谢。
 
 ---
 

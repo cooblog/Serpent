@@ -15,7 +15,7 @@ For developers working on Serpent itself: architecture, building from source, te
 - [Adding media format support](media-format-support.md) — registry, import, preview, filters, protocols, and acceptance
 - [Branches and workflow](workflow.md) — branching strategy, open source contribution process, and maintainer workflow discipline
 - [Contributing guide](contributing.en.md) — open source collaboration, Pull Requests, and code gate requirements
-- [Contributors](../../CONTRIBUTORS.md) — contributions accepted and merged into the project
+- [Contributors](https://github.com/dolag233/Serpent/blob/dev/CONTRIBUTORS.md) — contributions accepted and merged into the project
 
 Other software docs (internal records live on the repo `dev` branch and are not published to the site):
 
