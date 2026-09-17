@@ -276,7 +276,9 @@ export class GeminiVendorAdapter implements VendorAdapter {
     const kind = httpStatusToErrorKind(response.status, bodyText);
     const message = `AI service returned HTTP ${response.status}`;
 
-    return new VendorAdapterError(kind, message);
+    return new VendorAdapterError(kind, message, {
+      details: { httpStatus: response.status },
+    });
   }
 
   // ------------------------------------------------------------------

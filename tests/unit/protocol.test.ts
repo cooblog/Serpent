@@ -2370,6 +2370,7 @@ describe('public errors', () => {
     'AI_NETWORK',
     'AI_TIMEOUT',
     'AI_INVALID_RESPONSE',
+    'AI_REQUEST_REJECTED',
   ] as const)('accepts safe actionable AI reason %s', (reason) => {
     expect(createPublicError('AI_ANALYSIS_FAILED', reason)).toMatchObject({
       code: 'AI_ANALYSIS_FAILED',

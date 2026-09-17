@@ -164,6 +164,7 @@ export const publicErrorReasonSchema = z.enum([
   'AI_NETWORK',
   'AI_TIMEOUT',
   'AI_INVALID_RESPONSE',
+  'AI_REQUEST_REJECTED',
   'AI_NOT_CONFIGURED',
   'AI_REFUSED',
   'THUMBNAIL_REQUIRED',

@@ -38,4 +38,15 @@ describe('AI job failure messages (Serpent-50c466 review F9)', () => {
     expect(summary).not.toContain('UNSUPPORTED_MEDIA_TYPE');
     expect(PUBLIC_ERROR_MESSAGES.UNSUPPORTED_MEDIA_TYPE.length).toBeGreaterThan(0);
   });
+
+  it('explains a rejected analysis request instead of unparseable output', () => {
+    const zh = messageForAiErrorCode('AI_REQUEST_REJECTED', 'zh-CN');
+    expect(zh).toContain('拒绝了这次分析请求');
+    expect(zh).toContain('AI 设置');
+    expect(zh).not.toContain('无法解析');
+
+    const en = messageForAiErrorCode('AI_REQUEST_REJECTED', 'en');
+    expect(en.toLowerCase()).toContain('rejected');
+    expect(en.toLowerCase()).not.toContain('unparseable');
+  });
 });
