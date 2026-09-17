@@ -15,8 +15,12 @@
 ### Windows
 
 - Git, PowerShell
-- Visual Studio Build Tools: "Desktop development with C++" workload + Windows SDK
-- Media component builds: `scripts/media-build/win32-x64.ps1`
+- Visual Studio Build Tools: "Desktop development with C++" workload + Windows SDK (required to compile native module `better-sqlite3`)
+- **Inno Setup 6** (required when building the Windows installer package `SerpentSetup.exe`):
+  - Recommended (no admin rights required): Fetch `Tools.InnoSetup` via NuGet, extract `ISCC.exe` into `%LOCALAPPDATA%\SerpentTools\inno\tools\`;
+  - Official installer: Install official Inno Setup 6 and set environment variable `SERPENT_INNO_TOOLS` to the directory containing `ISCC.exe` (or add it to system `PATH`);
+  - Not needed if only running dev mode (`npm start`) or creating portable builds (`npm run package`).
+- Media component builds (only when rebuilding underlying binaries): `scripts/media-build/win32-x64.ps1` (vcpkg)
 
 ## First build
 

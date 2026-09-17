@@ -87,17 +87,30 @@ npm run release:local -- --skip-verify --build-media-locally
 
 ### Windows installer (Inno Setup)
 
-The Windows installer `SerpentSetup.exe` is built with **Inno Setup** (same approach as VS Code; script `assets/inno/serpentsetup.iss`):
+The Windows installer `SerpentSetup.exe` is built with **Inno Setup 6** (script `assets/inno/serpentsetup.iss`, outputting to `out/make/inno/SerpentSetup.exe`):
+
+#### 1. Install Inno Setup compiler dependency (ISCC.exe)
+
+Running `npm run make:inno` requires `ISCC.exe`, which can be prepared in one of two ways:
+
+- **No admin rights required (recommended)**:
+  Download `Tools.InnoSetup` from NuGet, extract it, and place the directory containing `ISCC.exe` in `%LOCALAPPDATA%\SerpentTools\inno\tools` (the build script looks here by default).
+- **Official installer**:
+  Install official Inno Setup 6 and set environment variable `SERPENT_INNO_TOOLS` to the absolute path containing `ISCC.exe` (e.g., `C:\Program Files (x86)\Inno Setup 6`), or add that folder to system `PATH`.
+
+#### 2. Build commands
 
 ```bash
-# package first (Inno packs from out/Serpent-win32-x64), then compile:
-& "$env:LOCALAPPDATA\SerpentTools\inno\tools\ISCC.exe" assets\inno\serpentsetup.iss
+# 1. Package the application first (generates out/Serpent-win32-x64)
+npm run package
+
+# 2. Run the Inno installer build script
+npm run make:inno
 ```
 
-- Multilingual: language selection dialog on launch (defaults to the system language), English + Simplified Chinese
+- Multilingual: language selection dialog on launch (defaults to system language), English + Simplified Chinese
 - Wizard with install-path selection (default `C:\Program Files\Serpent`), Start Menu / desktop shortcuts
 - Per-machine install (UAC elevation), automatic uninstaller `unins000.exe` and Apps & Features entry
-- Getting Inno Setup: NuGet package `Tools.InnoSetup` (no admin needed, extract and use), see CLAUDE.md
 
 > History: Squirrel (no wizard / no path selection / uninstall leftovers) and WiX MSI (MSI language switching requires a custom bootstrapper, confirmed by the community) were both tried and rolled back — see the [Windows packaging development log](https://github.com/dolag233/Serpent/blob/dev/docs/internal/development/2026-08-08-windows-packaging-and-squirrel-installer-development-log.md).
 

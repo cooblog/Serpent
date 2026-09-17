@@ -5,12 +5,12 @@ Serpent manages file-backed digital assets across libraries while keeping organi
 ## Access surfaces
 
 **Desktop client**:
-The graphical first-party interface to Serpent. It has the same domain authority as the command-line client.
-_Avoid_: Primary client, canonical client
+The graphical first-party interface to Serpent. It accesses domain capabilities through the Automation Command Gateway and hosts the Console for interactive scripts.
+_Avoid_: Primary client, canonical client, standalone monolith
 
-**Command-line client (CLI)**:
-The textual first-party interface to Serpent, designed to be usable by both people and software agents. It exposes domain capabilities rather than raw database or unrestricted filesystem access.
-_Avoid_: Agent API, secondary client, debug console
+**Automation Command Gateway**:
+The standardized capability boundary shared by the Desktop client, internal scripts, MCP clients, and automated tests. It unifies command schemas, capabilities, side effects, error reporting, cancellation, and domain scheduling.
+_Avoid_: CLI layer, MCP layer, raw database bridge
 
 ## Identity and selection
 
@@ -72,9 +72,9 @@ _Avoid_: Synchronous plugin callback, arbitrary expression code
 The bounded authorization, resource-budget, audit, and cancellation lifecycle for one script run or one MCP connection. It may have no active library and does not end merely because its active library changes.
 _Avoid_: Library binding, MCP process, transport session
 
-**Active library context**:
-The one library targeted by subsequent library-scoped commands in an Automation Execution. It changes only through an explicit context transition and is independent of Desktop focus.
-_Avoid_: Current folder, focused library, permanent binding
+**Explicit library target**:
+The explicit `libraryId` that must be provided by each library-scoped MCP command. It applies only to the invoking call and does not establish a persistent session default.
+_Avoid_: Active library context, implicit focused library
 
 **Library authorization**:
 Local human consent for an Automation Execution to use a specific library with a stated capability set. Authorization permits a context transition but is not itself the active library context.
@@ -88,14 +88,6 @@ _Avoid_: Write-access flag, tool name, risk level
 A user-managed, persistent decision for whether one identified automation client must ask for or may always use one non-critical Automation Capability. It does not grant library access and never applies to critical operations.
 _Avoid_: Global trust, credential, all-powerful mode
 
-**Session permission grant**:
-An in-memory decision allowing one identified Automation Execution to reuse one non-critical Automation Capability until that execution ends or the decision is revoked.
-_Avoid_: Persistent permission, client credential, library authorization
-
-**One-shot operation approval**:
-A decision allowing one specific, currently validated operation to proceed once. When an Execution Plan exists, the approval is bound to that plan and becomes invalid when its target or preconditions change.
-_Avoid_: Session permission, permanent permission
-
-**Critical confirmation**:
-A mandatory per-operation local confirmation for an irreversible, low-frequency, or broad-impact action. It cannot be satisfied by a Permission Policy, Session Permission Grant, or an “allow all” setting.
-_Avoid_: Permission prompt, warning toast, suppressible confirmation
+**Dangerous operation challenge**:
+A short-lived, single-use token returned on the first invocation of a dangerous MCP command, binding the client, command, parameters, library, and preconditions. The agent must re-invoke with the token to confirm execution.
+_Avoid_: Suppressible modal, blanket trust, session-level bypass

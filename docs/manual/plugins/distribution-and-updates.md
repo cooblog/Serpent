@@ -117,7 +117,7 @@ Host 用 adm-zip **读取** ZIP，不在 Windows 上提供 `zip` 命令。条目
 - 允许 ZIP 内有且仅有一层包裹目录（`my-plugin/serpent-plugin.json`）；解压后会剥掉该前缀。
 - 禁止符号链接。
 
-Windows 上 `tar -a -c -f out.zip -C dist .` 会稳定写出 `./` 前缀；`Compress-Archive` 可能写出反斜杠。不要依赖这两条命令直接作为 Release 产物。打包方式见 [最佳实践 §8](best-practices.md#8-成品包与-zip-条目名)。参考实现：[Serpent-Plugin-ImageUpscaler](https://github.com/dolag233/Serpent-Plugin-ImageUpscaler)。
+Windows 上 `tar -a -c -f out.zip -C dist .` 会稳定写出 `./` 前缀；`Compress-Archive` 可能写出反斜杠。不要依赖这两条命令直接作为 Release 产物。打包方式见 [最佳实践 §8](best-practices.md#8-成品包与-zip-条目名)。参考实现：纯 JS/通用包参考 [Serpent-Plugin-MediaConverter](https://github.com/dolag233/Serpent-Plugin-MediaConverter) 或 [Serpent-Plugin-Renamer](https://github.com/dolag233/Serpent-Plugin-Renamer)；平台原生二进制分流包参考 [Serpent-Plugin-ImageUpscaler](https://github.com/dolag233/Serpent-Plugin-ImageUpscaler)。
 
 ## 4. GitHub Release 结构与 asset 命名
 
@@ -162,11 +162,103 @@ com.example.palette-tools-2.0.1-any.zip
 
 不默认执行：对源码归档跑 package manager。
 
-## 5. 更新显示与自动更新
+## 5. 成为官方插件与官方认证插件
+
+Serpent 内置的“插件社区”面向所有用户提供可发现、可一键安装的扩展中心。目录真相源托管在官方 GitHub 仓库 [Serpent-Plugin-Pool](https://github.com/dolag233/Serpent-Plugin-Pool)。
+
+### 5.1 插件分类与认证层级
+
+- **官方插件（Official Plugins）**：由 Serpent 核心团队直接开发、维护与发布的插件，在社区目录中标记有官方徽章。
+- **官方认证插件（Verified Community Plugins）**：由第三方开源作者或社区团队开发，经过 Serpent 官方安全审查、包结构规范验证和功能可用性检验后，正式收录入官方目录的插件。
+- **未认证插件 / 高级安装**：由用户直接通过本地 ZIP、本地目录或粘贴任意 GitHub URL 安装的插件。Serpent 允许用户自由安装，但在安装时会显示未认证警告。
+
+### 5.2 认证插件准入标准
+
+希望将插件收录进官方插件社区的开发者，其插件必须满足以下准入要求：
+
+1. **完全开源**：插件源码必须公开发布于 GitHub 仓库，并使用宽松的开源许可证（如 MIT、Apache-2.0、BSD-3-Clause 等）。
+2. **制品不可变性与规范命名**：必须使用 GitHub Release 分发成品包，Asset 文件名必须严格遵循 `{pluginId}-{version}-{platformToken}.zip` 规范（见 §4.2），且包内包含编译后的成品代码（严禁要求用户环境执行 `npm install` 或动态构建）。
+3. **最小权限原则**：Manifest（`serpent-plugin.json`）中仅声明插件实现功能所必须的权限，不得申请无关权限。
+4. **透明披露与沙箱安全**：
+   - 优先推荐 `restricted` 受限模式；
+   - 若使用 `unrestricted` 非受限模式，必须在 Manifest 及 README 中如实声明所有本地进程调用、网络请求目的、数据存储位置及原生模块依赖，严禁静默执行未经用户许可的外部行为；
+   - 严禁包含任何恶意挖矿、私自收集并上传用户资产或元数据等侵犯隐私的代码。
+5. **多语言文档与展示**：必须提供清晰的说明文档，推荐提供 `README.md`（英文）与 `README.zh-CN.md`（中文优先）；说明中应包含功能简介、配置参数说明及快捷操作。
+
+### 5.3 申请收录流程（向 Serpent-Plugin-Pool 提交 PR）
+
+收录为官方认证插件采用 GitHub Pull Request 的标准流程：
+
+```mermaid
+flowchart TD
+    A[在插件仓库发布 GitHub Release] --> B[计算各平台 ZIP 的 SHA-256 哈希]
+    B --> C[Fork Serpent-Plugin-Pool 目录仓库]
+    C --> D[编辑 catalog.v1.json 添加条目]
+    D --> E[提交 Pull Request]
+    E --> F[官方团队运行自动化校验与人工审查]
+    F -->|通过审核| G[合并 PR，插件在全网客户端社区可见]
+    F -->|需要修改| H[在 PR 中反馈并补充调整]
+```
+
+1. **发布 Release**：在你的插件 GitHub 仓库创建新 Release（例如 `v1.0.0`），上传所有支持平台的规范 ZIP 包。
+2. **计算校验哈希**：计算每个上传的平台 ZIP 文件的 SHA-256 哈希值。
+3. **编辑目录清单**：Fork 官方目录仓库 [dolag233/Serpent-Plugin-Pool](https://github.com/dolag233/Serpent-Plugin-Pool)，在 `catalog.v1.json` 的 `plugins` 列表中新增或更新你的插件条目：
+   ```jsonc
+   {
+     "id": "com.example.my-plugin",
+     "name": "My Plugin",
+     "version": "1.0.0",
+     "description": "Short description of my plugin.",
+     "locales": {
+       "zh-CN": {
+         "name": "我的插件",
+         "description": "我的插件简短中文说明。"
+       }
+     },
+     "author": "Author Name",
+     "repository": "https://github.com/author/my-plugin",
+     "releaseTag": "v1.0.0",
+     "runtime": {
+       "mode": "restricted"
+     },
+     "assets": {
+       "darwin-arm64": {
+         "fileName": "com.example.my-plugin-1.0.0-darwin-arm64.zip",
+         "sha256": "abcdef123456...<64位完整哈希>"
+       },
+       "win32-x64": {
+         "fileName": "com.example.my-plugin-1.0.0-win32-x64.zip",
+         "sha256": "123456abcdef...<64位完整哈希>"
+       }
+     }
+   }
+   ```
+4. **发起 Pull Request**：向 `Serpent-Plugin-Pool` 的 `main` 分支发起 PR。在 PR 描述中简要说明插件用途，并附上功能测试证据。
+5. **审查与合并**：
+   - 官方自动化流程会校验 ZIP 下载地址可用性、SHA-256 校验和以及 Manifest 静态 schema 合法性；
+   - 核心维护者对代码及权限进行安全性审查；
+   - 审核通过并合并后，客户端打开「插件社区」即可即时检索并安装该插件。
+
+### 5.4 版本更新与维护
+
+- 社区目录采用**不可变哈希钉死**机制，客户端不会自动静默拉取插件作者 GitHub 上的最新 Release；
+- 当你的插件发布新版本时，需重复上述流程，向 `Serpent-Plugin-Pool` 发起修改 `catalog.v1.json` 中 `version`、`releaseTag` 与对应 `sha256` 的 PR；
+- PR 合并后，已安装该插件的用户在「设置 → 插件」中会收到“有可用更新”提示，点击即可完成更新。
+
+### 5.5 下架与违规撤回政策（Revocation）
+
+为保护所有最终用户的资产与设备安全，若已收录的认证插件出现以下情况，Serpent 团队保留立即下架的权利：
+- 发现存在未披露的安全漏洞、高危网络外联行为或恶意代码；
+- 插件依赖的外部服务失效且作者长期未维护修复；
+- 收到知识产权或开源许可侵权投诉并经核实。
+
+下架后，该插件将不再出现在社区目录中，严重安全事件会通过安全通报提醒用户停用或卸载。
+
+## 6. 更新显示与自动更新
 
 仅对 **来源为 GitHub** 且能解析到规范 Release asset 的安装生效。本地文件夹 / 本地 ZIP 不自动检查远端（用户可重新选择文件覆盖安装）。
 
-### 5.1 显示更新
+### 6.1 显示更新
 
 设置 → 插件列表中，对 GitHub 安装的包：
 
@@ -174,7 +266,7 @@ com.example.palette-tools-2.0.1-any.zip
 - 若有：显示「有可用更新：{newVersion}」与「更新」按钮  
 - 更新前复用既有 **来源/权限/运行时模式变更** 确认；包哈希变化时资源库插件需按信任规则处理
 
-### 5.2 自动更新（可选勾选）
+### 6.2 自动更新（可选勾选）
 
 - 默认：**关闭**  
 - 勾选前必须展示风险说明（阻塞确认），文案要点：
@@ -194,11 +286,11 @@ com.example.palette-tools-2.0.1-any.zip
 
 - 设备态保存：`updatePolicy: follow-latest | pinned` 可扩展为显式 `autoUpdate: boolean`（pinned 时强制关闭自动更新）
 
-### 5.3 与 Safe Mode
+### 6.3 与 Safe Mode
 
 Safe Mode 只停用无限制插件；自动更新检查可继续，但**不得**在 Safe Mode 下激活新装的无限制包。
 
-## 6. 作者发布检查清单
+## 7. 作者发布检查清单
 
 1. `npm ci && npm run build`（或等价）产出成品目录  
 2. 按平台打 ZIP（原生依赖必须打进对应平台包，勿假设用户有编译链）  
@@ -209,7 +301,7 @@ Safe Mode 只停用无限制插件；自动更新检查可继续，但**不得**
 7. README 写明支持的平台 token 列表  
 8. Unix 可执行文件不要假设解压后仍有执行位；运行时按需 `chmod`  
 
-## 7. 实现分期
+## 8. 实现分期
 
 | 阶段 | 工单 | 内容 |
 | --- | --- | --- |

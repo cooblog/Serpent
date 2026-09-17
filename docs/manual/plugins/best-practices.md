@@ -2,14 +2,15 @@
 
 本文是 [插件开发指南](development.md) 的操作补充：不重复字段表，只写容易在真实插件里踩到的边界。契约以当前仓库的 Manifest schema 和 Host 实现为准。
 
-完整走通过「无限制运行时 + 原生二进制 + 后台 Job + 内容写回 + GitHub 平台包」这条路径的参考实现：
+官方提供的三类典型参考实现：
 
-- 仓库：[Serpent-Plugin-ImageUpscaler](https://github.com/dolag233/Serpent-Plugin-ImageUpscaler)
-- 插件 ID：`com.dolag.serpent.image-upscaler`
-- 用户安装：设置 → 插件 → 打开插件社区（目录仓 [Serpent-Plugin-Pool](https://github.com/dolag233/Serpent-Plugin-Pool)）
-- 开发安装：GitHub Release 平台 ZIP 或高级安装里的本地成品目录，不要对源码目录执行 `npm install`
+- **批量重命名插件**：[Serpent-Plugin-Renamer](https://github.com/dolag233/Serpent-Plugin-Renamer)（非受限模式 `unrestricted`，基于 Host 对话框与多列列表控件实现输入防抖、实时改名规则计算与文件名批量重命名）
+- **通用媒体任务插件**：[Serpent-Plugin-MediaConverter](https://github.com/dolag233/Serpent-Plugin-MediaConverter)（媒体转码与压缩，维护后台 Job 队列长任务生命周期与进度状态，采用 `any` 通用包分发）
+- **原生二进制集成插件**：[Serpent-Plugin-ImageUpscaler](https://github.com/dolag233/Serpent-Plugin-ImageUpscaler)（非受限模式 `unrestricted`，集成外部 AI 推理二进制可执行文件，按平台独立 ZIP 分流打包）
 
-下文用「Image Upscaler」指这份参考实现。它不是 SDK 模板，也不是唯一正确结构；适合对照「成品包长什么样、Job 怎么报进度、Windows ZIP 怎么打」。
+用户安装通道：设置 → 插件 → 打开插件社区（目录仓 [Serpent-Plugin-Pool](https://github.com/dolag233/Serpent-Plugin-Pool)）；开发者测试通道：GitHub Release 平台 ZIP 或高级安装里的本地成品目录，不要对源码目录执行 `npm install`。
+
+下文涉及复杂原生二进制分流时以「Image Upscaler」为例，涉及对话框与 UI 列表时以「Renamer」为例，涉及媒体计划与任务流时以「MediaConverter」为例。
 
 ## 1. 先定运行模式和实例范围
 

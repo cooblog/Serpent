@@ -41,7 +41,7 @@ import { VideoPlayerControls } from "../../src/renderer/VideoPlayerControls";
 describe("VideoPlayerControls autoplay after viewer navigation", () => {
   let root: Root | undefined;
   let container: HTMLDivElement | undefined;
-  let playSpy: ReturnType<typeof vi.fn>;
+  let playSpy: ReturnType<typeof vi.fn<() => Promise<void>>>;
 
   beforeEach(() => {
     playSpy = vi.fn(() => Promise.resolve());

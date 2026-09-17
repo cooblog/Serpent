@@ -85,17 +85,30 @@ npm run release:local -- --skip-verify --build-media-locally
 
 ### Windows 安装器（Inno Setup）
 
-Windows 安装器 `SerpentSetup.exe` 用 **Inno Setup** 构建（VS Code 同款方案，脚本 `assets/inno/serpentsetup.iss`）：
+Windows 安装器 `SerpentSetup.exe` 用 **Inno Setup 6** 构建（脚本 `assets/inno/serpentsetup.iss`，输出至 `out/make/inno/SerpentSetup.exe`）：
+
+#### 1. 安装 Inno Setup 编译器依赖（ISCC.exe）
+
+运行构建脚本 `npm run make:inno` 时需要 `ISCC.exe`，可通过以下两种方式之一准备：
+
+- **免管理员方式（推荐）**：
+  从 NuGet 下载 `Tools.InnoSetup`，将其解压后将包含 `ISCC.exe` 的目录放置在 `%LOCALAPPDATA%\SerpentTools\inno\tools`（脚本会默认查找此路径）。
+- **官方安装方式**：
+  安装官方 Inno Setup 6，并将环境变量 `SERPENT_INNO_TOOLS` 设置为 `ISCC.exe` 所在的绝对目录（例如 `C:\Program Files (x86)\Inno Setup 6`），或直接将该目录加入系统 `PATH`。
+
+#### 2. 构建命令
 
 ```bash
-# 先 package（Inno 从 out/Serpent-win32-x64 打包），再编译安装器：
-& "$env:LOCALAPPDATA\SerpentTools\inno\tools\ISCC.exe" assets\inno\serpentsetup.iss
+# 1. 先打包应用（生成 out/Serpent-win32-x64）
+npm run package
+
+# 2. 执行 Inno 安装器构建脚本
+npm run make:inno
 ```
 
 - 多语言：安装启动时显示语言选择（默认跟随系统语言），中英双语
 - 安装向导：安装路径选择（默认 `C:\Program Files\Serpent`）、开始菜单/桌面快捷方式
 - per-machine 安装（UAC 提权）、自动生成卸载器 `unins000.exe` 与应用和功能条目
-- Inno Setup 工具获取：NuGet 包 `Tools.InnoSetup`（免管理员，解压即用），见 CLAUDE.md
 
 > 历史：早期尝试过 Squirrel（无向导/无路径选择/卸载残留）与 WiX MSI（MSI 语言切换需自定义 bootstrapper，社区确认不可内置）均已回退，见 [Windows 打包开发日志](https://github.com/dolag233/Serpent/blob/dev/docs/internal/development/2026-08-08-windows-packaging-and-squirrel-installer-development-log.md)。
 
