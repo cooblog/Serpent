@@ -272,7 +272,7 @@ test("renames a folder inline from the context menu and keeps its assets visible
       .getByRole("button", { name: "导入文件", exact: true })
       .first()
       .click();
-    const assetCard = window.locator('[data-asset-id][title="portrait.png"]');
+    const assetCard = window.locator('[data-asset-id][data-asset-name="portrait.png"]');
     await expect(assetCard).toBeVisible({ timeout: 15_000 });
 
     const input = await openFolderRenameInline(window, "原画");

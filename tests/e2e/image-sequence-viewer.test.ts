@@ -128,7 +128,7 @@ test("auto-detects, manually rebuilds, persists, plays, rotates and mirrors an i
 
     const selectionModifier = process.platform === "darwin" ? "Meta" : "Control";
     const frameCards = framePaths.map((framePath) =>
-      window.locator(`.asset-card[title="${path.basename(framePath)}"]`),
+      window.locator(`.asset-card[data-asset-name="${path.basename(framePath)}"]`),
     );
     await frameCards[0]!.click();
     await frameCards[1]!.click({ modifiers: [selectionModifier] });

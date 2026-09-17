@@ -13115,8 +13115,8 @@ function AppInner() {
                       aria-pressed={selectedIdSet.has(asset.assetId)}
                       className={`asset-card${selectedIdSet.has(asset.assetId) ? " is-selected" : ""}${asset.availability === "missing" ? " is-missing" : ""}${corruptAsset ? " is-corrupt" : ""}${asset.deletedAt ? " is-trashed" : ""}${renamingThisAsset ? " is-renaming" : ""}`}
                       data-asset-id={asset.assetId}
+                      data-asset-name={asset.displayName}
                       data-media-type={asset.mediaType}
-                      title={asset.displayName}
                       draggable={!showTrash && !renamingThisAsset}
                       key={renderOptions?.stableSlot
                         ? undefined

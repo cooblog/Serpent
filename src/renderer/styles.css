@@ -10514,7 +10514,7 @@ select.ai-config-input.ai-config-languages {
   box-shadow: var(--shadow-card), 0 0 0 2px var(--accent);
 }
 .asset-card[draggable="true"] {
-  cursor: grab;
+  cursor: pointer;
 }
 .asset-card.is-missing {
   opacity: 0.85;
@@ -10792,6 +10792,36 @@ select.ai-config-input.ai-config-languages {
 
 .asset-card-media-live {
   z-index: 1;
+}
+
+/* Hover scrub: frosted capsule on the frame. Dark theme uses a brighter
+   white frost so the bar stays readable; light keeps the approved 50% fill. */
+.asset-card-hover-progress {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 14px;
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 35%);
+  pointer-events: none;
+  z-index: 3;
+}
+
+.asset-card-hover-progress-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: rgb(255 255 255 / 70%);
+}
+
+[data-theme="light"] .asset-card-hover-progress {
+  background: rgb(255 255 255 / 25%);
+}
+
+[data-theme="light"] .asset-card-hover-progress-fill {
+  background: rgb(255 255 255 / 50%);
 }
 
 /* Serpent hover 音频: hover 播放只需出声，不显示播放控件。 */

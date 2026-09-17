@@ -399,7 +399,7 @@ test("library switcher, breadcrumbs, and workspace history", async () => {
 
     // Larger text must keep the caption's bottom breathing room instead of
     // leaving the 8px default padding visually compressed or clipped.
-    const importedCard = window.locator('.asset-card[title="nav-a.png"]');
+    const importedCard = window.locator('.asset-card[data-asset-name="nav-a.png"]');
     const captionMetrics = await importedCard.locator(".asset-caption").evaluate(
       (element) => {
         const style = getComputedStyle(element);

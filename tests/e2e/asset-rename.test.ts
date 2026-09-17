@@ -59,13 +59,13 @@ async function createLibraryAndImport(window: Page, libraryName: string) {
  * Right-clicks the card whose caption contains fileName and picks 重命名…,
  * returning the inline rename input on the card (REQ-MENU-008).
  *
- * The card is located by [data-asset-id] + title attribute (which keeps the
- * full filename) rather than hasText: once rename mode opens, the caption text
+ * The card is located by [data-asset-id] + data-asset-name (full filename)
+ * rather than hasText: once rename mode opens, the caption text
  * becomes just the base name (the extension moves to a sibling span), so a
  * hasText filter on "name.ext" would drop the card mid-rename.
  */
 async function openInlineRename(window: Page, fileName: string) {
-  const card = window.locator(`[data-asset-id][title="${fileName}"]`);
+  const card = window.locator(`[data-asset-id][data-asset-name="${fileName}"]`);
   await expect(card).toBeVisible();
   await card.click({ button: "right" });
   const menu = window.getByRole("menu");
@@ -98,7 +98,7 @@ test("renames an asset file from the context menu and renames the real file on d
     await input.press("Enter");
 
     const renamedCard = window.locator(
-      '[data-asset-id][title="hero-renamed.png"]',
+      '[data-asset-id][data-asset-name="hero-renamed.png"]',
     );
     await expect(renamedCard).toBeVisible({ timeout: 10_000 });
     await expect(
@@ -130,7 +130,7 @@ test("places the F2 asset-rename caret immediately before the extension", async 
     await createLibrary(window, libraryName);
     await importFilesThroughBridge(window);
 
-    const card = window.locator('[data-asset-id][title="hero.png"]');
+    const card = window.locator('[data-asset-id][data-asset-name="hero.png"]');
     await expect(card).toBeVisible({ timeout: 10_000 });
     await card.click();
     await window.keyboard.press("F2");
@@ -174,10 +174,10 @@ test("keeps the inline rename open with a conflict error and allows retry after 
     // target so the right-click below opens the single-asset menu with 重命名….
     await window.locator(".workspace-canvas").click({ position: { x: 8, y: 8 } });
     await expect(
-      window.locator('[data-asset-id][title="alpha.png"]'),
+      window.locator('[data-asset-id][data-asset-name="alpha.png"]'),
     ).toBeVisible({ timeout: 15_000 });
     await expect(
-      window.locator('[data-asset-id][title="beta.png"]'),
+      window.locator('[data-asset-id][data-asset-name="beta.png"]'),
     ).toBeVisible({ timeout: 15_000 });
 
     const { card, input } = await openInlineRename(window, "alpha.png");
@@ -193,7 +193,7 @@ test("keeps the inline rename open with a conflict error and allows retry after 
     await input.fill("alpha-renamed.png");
     await input.press("Enter");
     await expect(
-      window.locator('[data-asset-id][title="alpha-renamed.png"]'),
+      window.locator('[data-asset-id][data-asset-name="alpha-renamed.png"]'),
     ).toBeVisible({ timeout: 10_000 });
     expect(
       existsSync(path.join(libraryPath, "Assets", "alpha-renamed.png")),
@@ -234,7 +234,7 @@ test("shows an inline invalid-name error for illegal characters and closes on Es
       timeout: 5_000,
     });
     await expect(
-      window.locator('[data-asset-id][title="hero.png"]'),
+      window.locator('[data-asset-id][data-asset-name="hero.png"]'),
     ).toBeVisible();
     expect(existsSync(path.join(libraryPath, "Assets", "hero.png"))).toBe(true);
 
