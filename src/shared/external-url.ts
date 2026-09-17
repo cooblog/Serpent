@@ -131,7 +131,8 @@ export interface SerpentShellApi {
   }): Promise<ShowEditContextMenuResult>;
   /**
    * Windows frameless caption actions (Serpent-znex).
-   * minimize / maximize-toggle / close / get-state / steal-focus.
+   * minimize / maximize-toggle / fullscreen-toggle / close / get-state /
+   * steal-focus.
    */
   windowControl(action: WindowControlAction): Promise<WindowControlResult>;
   /** Windows maximize/restore state pushes (Serpent-znex). */

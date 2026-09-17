@@ -5,11 +5,14 @@ import { z } from "zod";
  *
  * Renderer draws min / max-restore / close; Main owns BrowserWindow actions.
  * Requests are typed actions; maximize state is returned and pushed as events.
+ * `fullscreen-toggle` is window fullscreen (F11 / ⌃⌘F), not viewer element
+ * fullscreen.
  */
 
 export const WINDOW_CONTROL_ACTIONS = [
   "minimize",
   "maximize-toggle",
+  "fullscreen-toggle",
   "close",
   "get-state",
   "steal-focus",

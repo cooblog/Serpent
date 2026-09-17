@@ -7,6 +7,7 @@
  * keys (same class of bug as video D/F/X/C under a CJK IME).
  *
  * Hidden items:
+ * - always: F11 window fullscreen (Serpent-692279)
  * - always: F2 / Delete / Shift+Delete (browse rename / trash / disk-delete)
  * - while the video viewer is armed: D / F / X / C
  *
@@ -74,6 +75,13 @@ function rebuildWindowsAcceleratorMenu(): void {
   }
 
   const submenu: Electron.MenuItemConstructorOptions[] = [
+    {
+      id: "window.toggle-fullscreen",
+      label: "Toggle Full Screen",
+      role: "togglefullscreen",
+      accelerator: "F11",
+      acceleratorWorksWhenHidden: true,
+    },
     ...BROWSE_ACCELERATOR_ITEMS.map((item) => ({
       id: item.id,
       label: item.label,

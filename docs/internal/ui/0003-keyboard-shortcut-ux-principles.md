@@ -38,6 +38,7 @@ Serpent 的默认快捷键不是「能绑就绑」，而是**可发现、可记�
 | 粘贴 OS 文件 | `Ctrl+V` | `⌘V` | 与图片 paste、文本粘贴分焦点守卫 |
 | 在资源管理器中显示 | `Ctrl+Shift+S` | `⌘⇧S` | 产品指定（REQ-COMMAND-004） |
 | 缩放（画布/查看器） | `Ctrl+=/-/0` | `⌘+=/-/0` | Electron 菜单不得注册页面 zoom 抢走 |
+| 应用窗口全屏 | `F11` | `⌃⌘F` | 对齐浏览器 / VS Code / Electron `togglefullscreen`。macOS 不用 F11（系统「显示桌面」）。这是窗口全屏，不是查看器元素全屏。 |
 
 实现清单以 [`platform-shortcut-table.ts`](../../../src/shared/platform-shortcut-table.ts) 为 QA 对照表；新增键必须同步注册表 + 命令 `shortcut` + 分发 hook + 单测。
 

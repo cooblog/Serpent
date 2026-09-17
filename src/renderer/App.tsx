@@ -11796,6 +11796,9 @@ function AppInner() {
         setAppSettingsOpen(true);
       },
       openBackgroundJobs: () => openMediaJobs(),
+      toggleFullscreen: () => {
+        void shellApi?.windowControl("fullscreen-toggle");
+      },
       openAppLog,
       openAbout,
       openGitHub: () => {

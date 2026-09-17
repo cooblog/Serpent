@@ -26,6 +26,9 @@ describe("window-controls protocol (Serpent-znex)", () => {
     expect(parseWindowControlRequest({ action: "steal-focus" })).toEqual({
       action: "steal-focus",
     });
+    expect(parseWindowControlRequest({ action: "fullscreen-toggle" })).toEqual({
+      action: "fullscreen-toggle",
+    });
     expect(parseWindowControlRequest({ action: "explode" })).toBeNull();
     expect(parseWindowControlRequest({})).toBeNull();
   });
