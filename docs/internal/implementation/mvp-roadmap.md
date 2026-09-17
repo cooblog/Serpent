@@ -149,9 +149,13 @@ Beads 跟踪：`Serpent-61je`，子项 `Serpent-61je.1`–`Serpent-61je.4`。
 
 > 2026-08-08 产品决定：0030-G 扩展格式（PLY/DAE/3DS 等，`Serpent-1bdg`）不再计划支持，工单已关闭。
 
-### 研究项：Blend、Maya、3ds Max、Cinema 4D 等 DCC 格式
+### 不做：`.blend`（2026-09-18 产品撤回）
 
-`.blend`、`.ma`/`.mb`、`.max`、`.c4d` 等格式解析通常依赖专有运行时、版本耦合或外部软件，实施难度和分发风险显著高于 FBX/OBJ。先做可行性研究，比较原生解析、官方/开源导出器、后台转换为 glTF/FBX 和插件方案；在研究结论前不承诺支持，也不把它们作为 MVP 或首个 3D 版本的发布条件。
+`.blend` 不作为模型格式支持。原因：没有与 ufbx 同级的公开网格解析器覆盖 Blender 3–4.x；DNA 解析器不求值修改器与节点材质；Assimp 已停更 blend 导入；捆绑 Blender 体积大且 GPL 与 MIT Desktop 分发不合。可入库，按 `other` 显示通用图标。用户需要预览时从 Blender 导出 glTF/FBX。Maya / 3ds Max / Cinema 4D 仍为研究项，不承诺。依据：[不安装 Blender 的调研](../research/2026-09-18-blend-preview-without-blender.md)。
+
+### 研究项：Maya、3ds Max、Cinema 4D 等 DCC 格式
+
+`.ma`/`.mb`、`.max`、`.c4d` 等格式解析通常依赖专有运行时、版本耦合或外部软件，实施难度和分发风险显著高于 FBX/OBJ。先做可行性研究，比较原生解析、官方/开源导出器、后台转换为 glTF/FBX 和插件方案；在研究结论前不承诺支持，也不把它们作为 MVP 或首个 3D 版本的发布条件。
 
 ### 共通前置工作
 

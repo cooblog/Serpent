@@ -42,8 +42,8 @@ export const CHROMIUM_DIRECT_PLAY_VIDEO_EXTENSIONS = ['.mp4', '.webm', '.m4v'] a
 
 /**
  * T1 3D formats (slice 0030, decision #3): FBX / OBJ(MTL) / glTF / GLB / STL.
- * Registration means Serpent owns a preview path for these; actual rendering
- * (viewer + offscreen thumbnails) lands in later slices (C / E).
+ * `.blend` is not in this set: there is no reliable public mesh parser for
+ * Blender 3–4.x, and bundling Blender is out of scope (size + GPL).
  */
 export const MODEL_EXTENSIONS = [
   '.fbx', '.obj', '.gltf', '.glb', '.stl',

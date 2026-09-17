@@ -37,6 +37,8 @@ Chromium native rendering is an optimization, not sufficient proof of product su
 4. For animation, multi-frame, RAW, HDR, or 3D, define viewer semantics first: playback, first frame, frame controls, color space, missing materials, and so on.
 5. Update this developer documentation and the human acceptance checklist. “The backend library can theoretically read it” is not evidence of support.
 
+`.blend` is not in the product format table: there is no reliable public mesh parser for Blender 3–4.x, and Serpent does not bundle Blender. Files can still be imported and show as an unknown type. Export glTF or FBX from Blender when a 3D preview is needed. FBX / OBJ / glTF / GLB / STL still use the WebGL viewer.
+
 ## 4. Test matrix
 
 Prepare fixtures in temporary directories; never commit personal absolute paths or real user data. Cover:

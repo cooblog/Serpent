@@ -90,6 +90,7 @@ describe('media format registry', () => {
       expect(modelMimeForExtension(extension)).toMatch(/^model\//);
     }
     expect(isSupportedModelExtension('scene.3ds')).toBe(false);
+    expect(isSupportedModelExtension('project.blend')).toBe(false);
     expect(isSupportedModelExtension('texture.png')).toBe(false);
     expect(isSupportedModelExtension('model')).toBe(false);
     // Multi-dot names resolve by final extension only, like images/videos.

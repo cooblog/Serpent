@@ -5,12 +5,8 @@
  * be derived by OIIO, so every supported image receives the same card and
  * Inspector thumbnail treatment.
  *
- * `model` counts as thumbnail-capable; its thumbnails are produced by the
- * offscreen GPU renderer (slice E, `src/main/offscreen-thumbnail-renderer.ts`),
- * never by the Worker's sharp/OIIO/FFmpeg queue. The queue enqueues model
- * thumbnail jobs like any other asset; the offscreen render result is stored
- * as the standard `thumbnail` artifact (generator_version `offscreen-webgl-1`)
- * so the existing thumbnailStatus → card pipeline works unchanged.
+ * `model` counts as thumbnail-capable. FBX/OBJ/glTF/GLB/STL cards are produced
+ * by the offscreen GPU renderer (slice E).
  */
 
 import { FBX_CONVERT_ERROR_CODES } from './fbx-conversion';

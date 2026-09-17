@@ -23,7 +23,8 @@
 
 ### 不包含（v1）
 
-- 3ds Max / Maya / .blend 等 DCC 工程文件（Eagle 也明确不支持；最多后续做「可入库、通用图标」）。
+- 3ds Max / Maya 等 DCC 工程文件（Eagle 也明确不支持；最多后续做「可入库、通用图标」）。
+- `.blend`：无可靠公开网格解析器覆盖 Blender 3–4.x（DNA 解析不求值修改器/节点材质；Assimp 已停更 blend 导入）。不捆绑 Blender（体积与 GPL 相对 MIT 分发）。可入库为 `other`，通用图标；用户可导出 glTF/FBX 后按 T1 预览。见 [2026-09-18 调研](../research/2026-09-18-blend-preview-without-blender.md)。
 - 材质逐通道检视、SSAO、网格地面、正交视图（增强项）。
 - 云端/跨设备相关（不适用，Serpent 本地库）。
 
@@ -33,7 +34,7 @@
 |---|---|---|
 | **T1（v1 必做）** | FBX、OBJ/MTL、glTF/GLB、STL | 用户点名（FBX/OBJ）+ 行业共识核心集（§2.1 矩阵）；glTF 是 PBR 事实标准、渲染效果最好；STL 解析最简单、3D 打印常见 |
 | T2（P1 顺延） | PLY、DAE、3DS | three.js 均有 loader，工作量小；Eagle/Pixcall 均支持 |
-| T3（P2 起） | USD/USDZ、3MF、BLEND、CAD（STEP/IGES/IFC） | USDZ 是 Apple 生态主推但 loader 复杂；CAD 只有 Pixcall/Connecter 覆盖，非共识项 |
+| T3（P2 起） | USD/USDZ、3MF、CAD（STEP/IGES/IFC） | USDZ 是 Apple 生态主推但 loader 复杂；CAD 只有 Pixcall/Connecter 覆盖，非共识项。BLEND 已从路线图撤回，见 §2 不包含 |
 
 ## 4. 视窗功能规格（v1）
 

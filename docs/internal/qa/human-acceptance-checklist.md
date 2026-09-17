@@ -44,6 +44,13 @@
 
 > 2026-08-27 P0：从硬盘删除后再导入同一份 Serpent ZIP，导入库 ID 不变；删除时的 `serpent://` 读取拦住若泄漏，全部卡片会变成裂开图标。见 LIB-ZIP-001（已通过）。
 
+### 2026-09-17 Blender 工程预览图
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| FMT-BLEND-001 / `Serpent-60ff4e` | 含预览图的 `.blend` 在卡片上显示该预览 | 已撤回 | — | — | [调研](../research/2026-09-18-blend-preview-without-blender.md) / [撤回日志](../development/2026-09-18-blend-support-withdrawn-development-log.md) | 2026-09-18：产品撤回 `.blend` 支持。无可靠公开网格解析器覆盖 Blender 3–4.x；不捆绑 Blender（体积与 GPL）。格式按 `other` 入库。 |
+| FMT-BLEND-002 / `Serpent-60ff4e` | 双击 `.blend` 进入可旋转 3D，类似 FBX | 已撤回 | — | — | 同上 | 同上。曾尝试本机 Blender 导出 GLB；产品不接受依赖本机安装。 |
+
 ### 2026-09-17 AVIF 与音频专辑封面
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
