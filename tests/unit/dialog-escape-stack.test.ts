@@ -85,7 +85,7 @@ describe("dialog-escape-stack", () => {
     ).toEqual({ kind: "abort-ai-connection-failure" });
   });
 
-  it("cancels a blocking import overlay from Escape, and swallows Escape while it is not cancelable", () => {
+  it("cancels a blocking import overlay from Escape, and hides an uncancelable overlay", () => {
     expect(
       resolveDialogEscapeAction({
         ...empty,
@@ -100,7 +100,7 @@ describe("dialog-escape-stack", () => {
         blockingImportOpen: true,
         blockingImportCancelable: false,
       }),
-    ).toEqual({ kind: "hold-blocking-import" });
+    ).toEqual({ kind: "dismiss-blocking-import" });
     expect(
       isDialogEscapeLayerActive({
         ...empty,

@@ -318,6 +318,19 @@ export function isSqliteEngineUnavailableError(error: unknown): boolean {
   return false;
 }
 
+/**
+ * Sharp (and some other decoders) report a vanished source as a message
+ * without errno. That is not a library write failure; treating it as
+ * LIBRARY_NOT_WRITABLE made GitHub #45 logs look like the disk was read-only
+ * while the files were simply missing or still placeholders on a sync volume.
+ */
+export function isDecoderMissingInputError(error: unknown): boolean {
+  for (const { message } of walkErrorCodes(error)) {
+    if (message !== undefined && /input file is missing/i.test(message)) return true;
+  }
+  return false;
+}
+
 export function classifyUnknownFailure(
   error: unknown,
 ): { code: PublicErrorCode; reason?: PublicErrorReason } | undefined {
@@ -326,6 +339,9 @@ export function classifyUnknownFailure(
   }
   if (isSqliteEngineUnavailableError(error)) {
     return { code: 'LIBRARY_ENGINE_UNAVAILABLE' };
+  }
+  if (isDecoderMissingInputError(error)) {
+    return { code: 'ASSET_NOT_FOUND', reason: 'SOURCE_NOT_FOUND' };
   }
 
   for (const { code, message } of walkErrorCodes(error)) {

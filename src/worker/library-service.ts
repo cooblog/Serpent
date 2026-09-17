@@ -592,7 +592,7 @@ class OiioInvocationError extends Error {
   }
 }
 import type { PublicErrorCode } from '../shared/protocol/errors';
-import { classifyUnknownFailure, isSqliteEngineUnavailableError, publicReasonFromError, type PublicErrorReason } from '../shared/protocol/errors';
+import { classifyUnknownFailure, isDecoderMissingInputError, isSqliteEngineUnavailableError, publicReasonFromError, type PublicErrorReason } from '../shared/protocol/errors';
 import type {
   NameConflictDecision,
   SuspectedDuplicateDecision,
@@ -6524,6 +6524,8 @@ export class LibraryService {
   private readonly databaseBackupInFlight = new Map<string, Promise<boolean>>();
   private readonly databaseBackupTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly pendingImports = new Map<string, PendingImport>();
+  /** Monotonic `import.progress.sequence` per importId. */
+  private readonly importProgressSequences = new Map<string, number>();
   /**
    * A resolve can finish the durable commit before a late cancel/abandon RPC
    * arrives. Retain those ids briefly so the already-successful operation is
@@ -9465,6 +9467,10 @@ export class LibraryService {
   /** Serpent-2cc492: open-state probe for the worker-runtime startup gate. */
   hasOpenLibrary(libraryId: string): boolean {
     return this.openById.has(libraryId);
+  }
+
+  reconcileLinkedWatchersForLibrary(libraryId: string): void {
+    this.reconcileLinkedWatchers(this.requireOpenLibrary(libraryId));
   }
 
   private requireOpenLibrary(libraryId: string): OpenLibrary {
@@ -17734,6 +17740,11 @@ export class LibraryService {
     displayName?: string;
     /** Serpent-316493: managed folder to hang the linked root under. */
     parentFolderId?: string | null;
+    /**
+     * Worker RPC passes false so watcher setup runs after the command returns.
+     * In-process tests keep the default and still see watchers immediately.
+     */
+    reconcileWatchers?: boolean;
   }): LinkedFolderSummary {
     const openLibrary = this.requireOpenLibrary(input.libraryId);
     let sourceRoot: string;
@@ -17945,8 +17956,9 @@ export class LibraryService {
           );
         }
       })();
-      this.persistLinkedFolderImageDimensions(openLibrary, folderId);
-      this.reconcileLinkedWatchers(openLibrary);
+      // GitHub #45: emit complete as soon as catalog rows are committed so
+      // the renderer can drop “正在导入”. Header probes still run next for
+      // masonry, but a late copy event cannot resurrect the overlay.
       emitLinkedProgress(
         'complete',
         entries.length,
@@ -17955,6 +17967,13 @@ export class LibraryService {
         totalBytes,
         true,
       );
+      // Header probes stay on the visible-window / dimension-backfill lanes.
+      // Watcher reconcile is optional here so the Worker RPC can return as soon
+      // as the catalog is committed (GitHub #45): overlay and later commands
+      // do not wait on fs.watch setup.
+      if (input.reconcileWatchers !== false) {
+        this.reconcileLinkedWatchers(openLibrary);
+      }
 
       return {
         folderId,
@@ -22035,8 +22054,8 @@ export class LibraryService {
    * Returns a product media category, not a Chromium capability. Images whose
    * source cannot be safely mounted in Chromium (RAW, EXR, PSD, etc.) still
    * classify as `image` because the Worker owns an OIIO-derived preview path.
-   * `model` covers the T1 3D set (fbx/obj/gltf/glb/stl); its preview and
-   * thumbnails are renderer-side (slices C/E), never Worker raster jobs.
+   * `model` covers the T1 3D set. FBX/OBJ/glTF/GLB/STL preview and thumbnails
+   * are renderer-side (slices C/E). `.blend` classifies as `other`.
    */
   static detectMediaType(filenameOrMime: string): 'image' | 'video' | 'audio' | 'text' | 'model' | 'document' | 'other' {
     const lower = filenameOrMime.toLowerCase();
@@ -22094,10 +22113,8 @@ export class LibraryService {
 
   /**
    * Keep the fast visible-thumbnail wave on media that can complete in the
-   * Worker. Models are rendered through Main's single-flight offscreen GPU
-   * window and may legitimately take as long as the content requires. They
-   * remain eligible for the normal startup /
-   * mutation queue; only the interactive viewport wave excludes them.
+   * Worker. GPU models are rendered through Main's single-flight offscreen
+   * window and stay off this wave.
    */
   filterVisibleThumbnailAssetIds(
     libraryId: string,
@@ -22116,21 +22133,19 @@ export class LibraryService {
         asset_id: string;
         relative_file_path: string;
       }>;
-    const modelIds = new Set(
+    const gpuModelIds = new Set(
       rows
         .filter((row) => LibraryService.detectMediaType(row.relative_file_path) === 'model')
         .map((row) => row.asset_id),
     );
-    return selectedIds.filter((assetId) => !modelIds.has(assetId));
+    return selectedIds.filter((assetId) => !gpuModelIds.has(assetId));
   }
 
   // ── Thumbnail Generation Dispatch ─────────────────────────────────
 
   /**
    * Generate thumbnails/artifacts for an asset, dispatching by media type.
-   * Returns null for `model`: no raster generator exists in the Worker (the
-   * offscreen GPU thumbnail renderer of slice E owns model cards), and a no-op
-   * keeps the asset out of the failed path entirely.
+   * Models return null here: their cards render offscreen in Main (slice E).
    */
   async generateThumbnail(input: {
     libraryId: string;
@@ -22171,12 +22186,8 @@ export class LibraryService {
       throw new LibraryServiceError('UNSUPPORTED_MEDIA_TYPE');
     }
 
-    // Model assets have no sharp/OIIO/FFmpeg generator in the Worker; their
-    // thumbnails render offscreen in Main (slice E, Serpent-hnmg) and the
-    // queue routes model jobs to `options.modelThumbnailRenderer` before this
-    // function is reached. The explicit command path stays a benign no-op:
-    // nothing is written, thumbnailStatus stays null → the card shows the
-    // generic 3D icon (never `failed`).
+    // Models render offscreen in Main (slice E). The explicit command path
+    // stays a benign no-op so the card keeps the generic icon.
     if (mediaType === 'model') {
       return null;
     }
@@ -22355,7 +22366,12 @@ export class LibraryService {
         reason: 'MEDIA_PROCESSING_FAILED',
       });
     }
-    return this.writeModelThumbnailArtifact(openLibrary, input, outcome);
+    return this.writeModelThumbnailArtifact(
+      openLibrary,
+      input,
+      outcome,
+      MODEL_THUMBNAIL_GENERATOR_VERSION,
+    );
   }
 
   /**
@@ -22430,6 +22446,7 @@ export class LibraryService {
     openLibrary: OpenLibrary,
     input: { libraryId: string; assetId: string; revisionId: string },
     frame: { pngBytes: Uint8Array; width: number; height: number },
+    generatorVersion: string = MODEL_THUMBNAIL_GENERATOR_VERSION,
   ): { artifactId: string } {
     const bytes = frame.pngBytes;
     if (
@@ -22478,7 +22495,7 @@ export class LibraryService {
           artifactRelPath,
           frame.width,
           frame.height,
-          MODEL_THUMBNAIL_GENERATOR_VERSION,
+          generatorVersion,
           now,
         );
     })();
@@ -22494,6 +22511,7 @@ export class LibraryService {
     openLibrary: OpenLibrary,
     revisionId: string,
     errorCode: string,
+    generatorVersion: string = MODEL_THUMBNAIL_GENERATOR_VERSION,
   ): void {
     const artifactId = randomUUID();
     openLibrary.connection
@@ -22507,7 +22525,7 @@ export class LibraryService {
         artifactId,
         revisionId,
         `${artifactId}.png`,
-        MODEL_THUMBNAIL_GENERATOR_VERSION,
+        generatorVersion,
         errorCode,
         new Date().toISOString(),
       );
@@ -23488,6 +23506,7 @@ export class LibraryService {
       }
 
       // Write failed status
+      const missingInput = isMissingPathError(error) || isDecoderMissingInputError(error);
       openLibrary.connection
         .prepare(
           `INSERT INTO revision_artifacts
@@ -23500,17 +23519,24 @@ export class LibraryService {
           revisionId,
           artifactRelPath,
           `sharp@${SHARP_VERSION}`,
-          typeof error === 'object' && error !== null && 'code' in error
-            ? String(error.code)
-            : 'THUMBNAIL_GENERATION_FAILED',
+          missingInput
+            ? 'SOURCE_NOT_FOUND'
+            : typeof error === 'object' && error !== null && 'code' in error
+              ? String(error.code)
+              : 'THUMBNAIL_GENERATION_FAILED',
           new Date().toISOString(),
         );
-      const headerSize = await readImageDimensions(assetPath);
-      if (headerSize) {
-        this.persistExtractedImageDimensions(openLibrary, revisionId, headerSize);
+      // GitHub #45: a second header open on a sync-volume placeholder can
+      // block the Worker for minutes after Sharp already reported the file
+      // missing. Dimensions come back when the source is readable again.
+      if (!missingInput) {
+        const headerSize = await readImageDimensions(assetPath);
+        if (headerSize) {
+          this.persistExtractedImageDimensions(openLibrary, revisionId, headerSize);
+        }
       }
 
-      throw serviceError(error, 'LIBRARY_NOT_WRITABLE');
+      throw serviceError(error, missingInput ? 'ASSET_NOT_FOUND' : 'LIBRARY_NOT_WRITABLE');
     }
   }
 
@@ -23602,40 +23628,6 @@ export class LibraryService {
         assetId: input.input.assetId,
       });
       return false;
-    }
-  }
-
-  private persistLinkedFolderImageDimensions(
-    openLibrary: OpenLibrary,
-    linkedFolderId: string,
-    limit = 64,
-  ): void {
-    const rows = openLibrary.connection
-      .prepare(
-        `SELECT relative_file_path, location_kind, linked_folder_id, current_revision_id
-           FROM assets
-          WHERE linked_folder_id = ?
-            AND location_kind = 'linked'
-            AND deleted_at IS NULL
-            AND current_revision_id IS NOT NULL
-            AND NOT EXISTS (
-              SELECT 1 FROM revision_artifacts ra
-               WHERE ra.revision_id = current_revision_id
-                 AND ra.kind = 'extracted_metadata'
-                 AND ra.invalidated_at IS NULL
-                 AND ra.width IS NOT NULL
-            )
-          LIMIT ?`,
-      )
-      .all(linkedFolderId, Math.max(0, Math.min(256, Math.trunc(limit)))) as Array<{
-        relative_file_path: string;
-        location_kind: 'managed' | 'linked';
-        linked_folder_id: string | null;
-        current_revision_id: string | null;
-      }>;
-    for (const row of rows) {
-      if (!row.current_revision_id) continue;
-      this.persistSourceImageDimensions(openLibrary, row.current_revision_id, row);
     }
   }
 
@@ -46095,9 +46087,29 @@ export class LibraryService {
 
   // ── Library Export / Import ────────────────────────────────────────
 
+  private nextImportProgressSequence(
+    importId: string,
+    phase: ImportProgressEvent['phase'],
+  ): number {
+    const sequence = (this.importProgressSequences.get(importId) ?? 0) + 1;
+    if (phase === 'complete' || phase === 'cancelled' || phase === 'failed') {
+      this.importProgressSequences.delete(importId);
+    } else {
+      this.importProgressSequences.set(importId, sequence);
+    }
+    return sequence;
+  }
+
   private emitProgress(event: ExportProgressEvent | ImportProgressEvent | DeleteProgressEvent): void {
+    const stamped =
+      event.type === 'import.progress'
+        ? {
+            ...event,
+            sequence: this.nextImportProgressSequence(event.importId, event.phase),
+          }
+        : event;
     try {
-      this.options.onProgress?.(event);
+      this.options.onProgress?.(stamped);
     } catch {
       // Progress is best effort and must never throw back into an operation.
     }

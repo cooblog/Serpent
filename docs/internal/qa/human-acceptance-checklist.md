@@ -51,6 +51,12 @@
 | FMT-BLEND-001 / `Serpent-60ff4e` | 含预览图的 `.blend` 在卡片上显示该预览 | 已撤回 | — | — | [调研](../research/2026-09-18-blend-preview-without-blender.md) / [撤回日志](../development/2026-09-18-blend-support-withdrawn-development-log.md) | 2026-09-18：产品撤回 `.blend` 支持。无可靠公开网格解析器覆盖 Blender 3–4.x；不捆绑 Blender（体积与 GPL）。格式按 `other` 入库。 |
 | FMT-BLEND-002 / `Serpent-60ff4e` | 双击 `.blend` 进入可旋转 3D，类似 FBX | 已撤回 | — | — | 同上 | 同上。曾尝试本机 Blender 导出 GLB；产品不接受依赖本机安装。 |
 
+### 2026-09-17 导入完成后遮罩应消失
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| IMPORT-UI-008 / `Serpent-d8ac96` | 导入结束后全屏「正在导入」消失，其它操作可继续 | 待人类验收 | ① **完全退出**后再打开含这次改动的构建。② 向资源库导入一批本地文件或一个文件夹，等到卡片已经出现。③ 看全屏「正在导入」是否关掉。④ 再点文件夹、评分、撤销等。⑤ 用「导入链接文件夹」链一个本地目录，等到侧栏出现该目录后再看遮罩。⑥ 若方便：链接导入进行中按 Esc 或点「隐藏」，界面应能用，导入在后台继续。 | 文件已经进库后遮罩应消失，不要一直挡着界面。撤销/切文件夹在导入结束后可点。不可取消的链接导入可以用 Esc/隐藏收起遮罩。同步盘上若有暂时读不到的文件，缩略图失败不要提示整库只读。 | [开发日志](../development/2026-09-17-import-overlay-stuck-after-complete-development-log.md) / `import-progress-session.ts` / `import-progress-copy.ts` / `interactive-scheduler.ts` / `library-service.ts` | 2026-09-17：GitHub #45。遮罩改由导入 RPC 会话拥有。审查后续：已结束的 importId 不能改写下一次导入；文件夹粘贴走同一 RPC 门；Worker 链接导入返回后再挂 watcher。定向单测 overlay 3 files / 21 passed；Electron worker `asset-import-progress`+`linked-folders` 41 passed；`test:library-availability` 9 files / 226 passed / 1 skipped。packaged / Computer Use / 同步盘真机未执行。 |
+
 ### 2026-09-17 AVIF 与音频专辑封面
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |

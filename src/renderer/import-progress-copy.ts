@@ -5,50 +5,22 @@ import {
   type LibraryTransferKind,
 } from "./library-transfer-progress";
 
-const TERMINAL_IMPORT_PROGRESS_PHASES = new Set<ImportProgressEvent["phase"]>([
-  "complete",
-  "cancelled",
-  "failed",
-]);
-
-export function isActiveImportProgress(
-  progress: ImportProgressEvent | null,
-): progress is ImportProgressEvent {
-  return Boolean(progress && !TERMINAL_IMPORT_PROGRESS_PHASES.has(progress.phase));
-}
+export {
+  isActiveImportProgress,
+  isBlockingImportOverlayVisible,
+  isTerminalImportProgressPhase,
+  shouldApplyImportProgressEvent,
+} from "./import-progress-session";
+export type {
+  ImportOverlaySession,
+  ImportProgressApplySession,
+} from "./import-progress-session";
 
 export function isImportAwaitingUserDecision(input: {
   hasConflicts: boolean;
   hasSequenceOffer: boolean;
 }): boolean {
   return input.hasConflicts || input.hasSequenceOffer;
-}
-
-/**
- * While a blocking import decision is open, ignore non-terminal progress so a
- * late copy 100% event cannot resurrect the overlay on top of the dialog.
- */
-export function shouldApplyImportProgressEvent(
-  progress: ImportProgressEvent,
-  awaitingUserDecision: boolean,
-): boolean {
-  if (!awaitingUserDecision) return true;
-  return TERMINAL_IMPORT_PROGRESS_PHASES.has(progress.phase);
-}
-
-/**
- * Whether import work is far enough along for a progress overlay. The renderer
- * still waits ~3 seconds (`LIBRARY_LOADING_DISPLAY_DELAY_MS`) before showing it,
- * matching library-open wait feedback. File-picker time does not count: this
- * stays false until the worker emits a progress event.
- */
-export function isBlockingImportOverlayVisible(
-  _uiState: string,
-  progress: ImportProgressEvent | null,
-  awaitingUserDecision = false,
-): boolean {
-  if (awaitingUserDecision) return false;
-  return isActiveImportProgress(progress);
 }
 
 export type ImportOverlayTitle = ReturnType<typeof libraryTransferHeadlineKey> | {

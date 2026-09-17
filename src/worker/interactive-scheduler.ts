@@ -616,9 +616,19 @@ export class InteractiveScheduler {
       entry.request.lane === 'background-secondary'
       && MAINTENANCE_STATUS_READ_LABELS.has(entry.request.label ?? ''),
     );
-    const hasSingleMaintenanceWithOnlyStatusReads = activeBackgroundEntries.length > 0
-      && activeBackgroundEntries.filter((entry) => entry.request.lane === 'maintenance').length === 1
-      && activeBackgroundEntries.length === 1 + activeMaintenanceStatusReads.length;
+    const activeMaintenanceCount = activeBackgroundEntries
+      .filter((entry) => entry.request.lane === 'maintenance').length;
+    const activeBackgroundPrimary = activeBackgroundEntries
+      .filter((entry) => entry.request.lane === 'background-primary').length;
+    // Status snapshots used to require “maintenance plus only status reads”.
+    // GitHub #45: thumbnail waves are allowed to share the Worker with
+    // maintenance (`onlyMaintenanceActive` below). That extra primary owner
+    // disqualified the exception, so history.status / media.list-jobs waited
+    // behind a multi-minute missing-file reconciliation.
+    const hasMaintenanceWithOptionalPrimaryAndStatusReads = activeMaintenanceCount === 1
+      && activeBackgroundPrimary <= 1
+      && activeBackgroundEntries.length
+        === 1 + activeBackgroundPrimary + activeMaintenanceStatusReads.length;
     // Serpent-52eed4（实测 2026-09-14）：开库对账是 30 秒级的 maintenance owner，
     // 而缩略图泵与可见卡 artifact 路径解析是 background-primary。「同时只允许一个
     // 后台任务」让用户切文件夹后等 34.6 秒才看到 15 张缩略图（schedulerWaitMs
@@ -660,7 +670,7 @@ export class InteractiveScheduler {
                 || (
                   lane === 'background-secondary'
                   && MAINTENANCE_STATUS_READ_LABELS.has(this.#queue[index]!.request.label ?? '')
-                  && hasSingleMaintenanceWithOnlyStatusReads
+                  && hasMaintenanceWithOptionalPrimaryAndStatusReads
                   && activeMaintenanceStatusReads.length < MAX_MAINTENANCE_STATUS_READS
                 )
               );

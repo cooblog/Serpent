@@ -38,7 +38,7 @@ export type DialogEscapeSnapshot = {
   sourceFailureImportId?: string | null;
   /** Confirm is in-flight; Escape must not abandon the token (Serpent-85e60c). */
   importDecisionSubmitting?: boolean;
-  /** Full-window import overlay: Escape cancels when the Worker importId exists. */
+  /** Full-window import overlay: Escape cancels when cancelable, otherwise hides it. */
   blockingImportOpen?: boolean;
   blockingImportCancelable?: boolean;
   /** Full-window delete overlay is not cancelable; Escape must not dismiss layers underneath. */
@@ -74,7 +74,7 @@ export type DialogEscapeAction =
   | { kind: "abandon-import"; importId: string }
   | { kind: "hold-import-decision" }
   | { kind: "cancel-blocking-import" }
-  | { kind: "hold-blocking-import" }
+  | { kind: "dismiss-blocking-import" }
   | { kind: "hold-blocking-delete" }
   | { kind: "cancel-blocking-delete" };
 
@@ -111,7 +111,7 @@ export function resolveDialogEscapeAction(
   if (snapshot.blockingImportOpen) {
     return snapshot.blockingImportCancelable
       ? { kind: "cancel-blocking-import" }
-      : { kind: "hold-blocking-import" };
+      : { kind: "dismiss-blocking-import" };
   }
   if (snapshot.blockingDeleteOpen) {
     return snapshot.blockingDeleteCancelable

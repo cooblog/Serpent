@@ -54,8 +54,8 @@ export interface ProxyFallbackDecision {
 
 const DIRECT_PLAY_CANDIDATES = new Set<DirectPlayContainer>(['mp4', 'mov', 'webm']);
 
-function normalized(value: string): string {
-  return value.trim().toLowerCase();
+function normalized(value: unknown): string {
+  return typeof value === 'string' ? value.trim().toLowerCase() : '';
 }
 
 function normalizeMedia(media: DirectPlayMediaDescriptor): DirectPlayMediaDescriptor {

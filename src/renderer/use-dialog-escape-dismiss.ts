@@ -45,6 +45,7 @@ export type UseDialogEscapeDismissParams = {
   /** Serpent-kdnm: Escape on connection-failure dialog aborts remaining AI jobs. */
   onAbortAiConnectionFailure?: () => void;
   onCancelBlockingImport?: () => void;
+  onDismissBlockingImport?: () => void;
   onCancelBlockingDelete?: () => void;
 };
 
@@ -83,6 +84,7 @@ export function useDialogEscapeDismiss({
   onDismissFatalAlert,
   onAbortAiConnectionFailure,
   onCancelBlockingImport,
+  onDismissBlockingImport,
   onCancelBlockingDelete,
 }: UseDialogEscapeDismissParams): void {
   const t = useT();
@@ -109,9 +111,11 @@ export function useDialogEscapeDismiss({
         case "abort-ai-connection-failure":
           onAbortAiConnectionFailure?.();
           return;
-        case "hold-blocking-import":
         case "hold-import-decision":
         case "hold-blocking-delete":
+          return;
+        case "dismiss-blocking-import":
+          onDismissBlockingImport?.();
           return;
         case "cancel-blocking-delete":
           onCancelBlockingDelete?.();
@@ -236,6 +240,7 @@ export function useDialogEscapeDismiss({
     onDismissFatalAlert,
     onAbortAiConnectionFailure,
     onCancelBlockingImport,
+    onDismissBlockingImport,
     onCancelBlockingDelete,
     locale,
     t,

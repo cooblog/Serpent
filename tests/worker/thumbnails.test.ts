@@ -290,6 +290,26 @@ describe('generateThumbnail (sharp)', () => {
     service.closeAll();
   });
 
+  it('fails a missing source as ASSET_NOT_FOUND instead of LIBRARY_NOT_WRITABLE', async () => {
+    const root = temporaryRoot();
+    const service = new LibraryService();
+    const created = service.createLibrary({ displayName: 'MissingThumb', selectedParentPath: root });
+    const sourcePath = path.join(root, 'gone.jpg');
+    writeFileSync(sourcePath, await createJpegBytes(24, 16));
+    importNoConflict(service, created.libraryId, sourcePath);
+    const asset = service.listAssets({ libraryId: created.libraryId, recursive: true })[0]!;
+    unlinkSync(service.resolveAssetPath(created.libraryId, asset.assetId));
+
+    await expect(service.generateThumbnail({
+      libraryId: created.libraryId,
+      assetId: asset.assetId,
+    })).rejects.toMatchObject({ code: 'ASSET_NOT_FOUND' });
+    expect(service.getCurrentArtifact(created.libraryId, asset.assetId, 'thumbnail'))
+      .toMatchObject({ status: 'failed', errorCode: 'SOURCE_NOT_FOUND' });
+
+    service.closeAll();
+  });
+
   it('imports, thumbnails, and serves AVIF as a native image (Serpent-c93c75)', async () => {
     const root = temporaryRoot();
     const service = new LibraryService();

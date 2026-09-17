@@ -80,6 +80,7 @@ describe("ImportProgressOverlay", () => {
           transferKind: "import",
           transferName: "",
           onCancel: vi.fn(),
+          onDismiss: vi.fn(),
           progress: {
             type: "import.progress",
             importId: "linked-1",
@@ -98,5 +99,7 @@ describe("ImportProgressOverlay", () => {
     expect(html).not.toContain("复制中");
     expect(html).not.toContain("取消导入");
     expect(html).not.toContain("停止导入");
+    expect(html).toContain("隐藏");
+    expect(html).toContain("导入会在后台继续");
   });
 });

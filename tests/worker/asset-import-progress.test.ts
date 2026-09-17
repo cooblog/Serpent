@@ -155,6 +155,11 @@ describe('linked folder import progress', () => {
     expect(events.at(-1)?.phase).toBe('complete');
     expect(events.at(-1)?.filesProcessed).toBe(3);
     expect(events.every((event) => event.cancelable === false && event.copiesFiles === false && event.importId.length > 0)).toBe(true);
+    const sequences = events
+      .map((event) => event.sequence)
+      .filter((value): value is number => typeof value === 'number');
+    expect(sequences).toHaveLength(events.length);
+    expect(sequences).toEqual([...sequences].sort((left, right) => left - right));
 
     service.closeAll();
   });

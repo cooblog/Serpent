@@ -319,6 +319,11 @@ export const importProgressEventSchema = z.strictObject({
    * counted progress either way.
    */
   copiesFiles: z.boolean().optional(),
+  /**
+   * Monotonic per `importId`. The renderer drops a non-terminal event whose
+   * sequence is not greater than the last applied event for that import.
+   */
+  sequence: z.number().int().positive().optional(),
   filesProcessed: z.number().int().nonnegative(),
   totalFiles: z.number().int().nonnegative(),
   bytesProcessed: z.number().int().nonnegative(),

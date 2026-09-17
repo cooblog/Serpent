@@ -19,6 +19,7 @@ export type ImportProgressOverlayProps = {
   readonly progress: ImportProgressEvent | null;
   readonly onCancel: () => void;
   readonly onStop?: () => void;
+  readonly onDismiss?: () => void;
   readonly actionsDisabled?: boolean;
 };
 
@@ -28,6 +29,7 @@ export function ImportProgressOverlay({
   progress,
   onCancel,
   onStop,
+  onDismiss,
   actionsDisabled = false,
 }: ImportProgressOverlayProps): ReactNode {
   const t = useT();
@@ -44,19 +46,24 @@ export function ImportProgressOverlay({
     ? t("progress.cancelOpen")
     : t("progress.cancelImport");
   const stopLabel = libraryOpen ? undefined : t("progress.stopImport");
+  const dismissable = !cancelable && !libraryOpen && Boolean(onDismiss);
 
   return (
     <BlockingProgressOverlay
       actionsDisabled={actionsDisabled}
-      cancelLabel={cancelable ? cancelLabel : undefined}
+      cancelLabel={cancelable ? cancelLabel : dismissable ? t("progress.hideImport") : undefined}
       cancelTip={
-        cancelable && !libraryOpen ? t("progress.cancelImportHint") : undefined
+        cancelable && !libraryOpen
+          ? t("progress.cancelImportHint")
+          : dismissable
+            ? t("progress.hideImportHint")
+            : undefined
       }
       detail={detailText}
       indeterminate={!determinate}
       kind="import"
       max={determinate ? progress?.totalFiles : undefined}
-      onCancel={cancelable ? onCancel : undefined}
+      onCancel={cancelable ? onCancel : dismissable ? onDismiss : undefined}
       onStop={cancelable && !libraryOpen ? onStop : undefined}
       stopLabel={cancelable && !libraryOpen ? stopLabel : undefined}
       stopTip={

@@ -24,6 +24,8 @@ export type UseFolderOrganizeActionsParams = {
   setError: (message: string | null) => void;
   setUiState: (state: "ready" | "loading") => void;
   reloadCurrentContent: () => Promise<void>;
+  /** Overlay session is the Worker paste command, not follow-up reveal. */
+  runImportRpc?: <T>(work: () => Promise<T>) => Promise<T>;
   /**
    * When paste returns a conflict plan, hand it to the existing import UI.
    * Returns true if the caller will finish the import (conflicts dialog).
@@ -47,6 +49,7 @@ export function useFolderOrganizeActions({
   setError,
   setUiState,
   reloadCurrentContent,
+  runImportRpc,
   onPasteConflict,
   onPasteSourceFailure,
   onPasteCompleted,
@@ -59,10 +62,11 @@ export function useFolderOrganizeActions({
       if (!api || !libraryId) return;
       setUiState("loading");
       try {
-        const result = await api.pasteIntoFolder({
+        const run = runImportRpc ?? (async (work) => work());
+        const result = await run(() => api.pasteIntoFolder({
           libraryId,
           folderId,
-        });
+        }));
         if (!result.ok) throw new LibraryOperationError(result.error);
         if (isImageSequenceImportOffer(result.value)) {
           onPasteSequenceOffer?.(result.value);
@@ -98,6 +102,7 @@ export function useFolderOrganizeActions({
       onPasteSourceFailure,
       onPasteSequenceOffer,
       reloadCurrentContent,
+      runImportRpc,
       setError,
       setNotice,
       setUiState,

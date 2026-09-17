@@ -1815,6 +1815,8 @@ export const zhCN = {
     cancelImportHint: "这次导入全部撤销，已经处理的文件也会从资源库去掉。",
     stopImport: "停止导入",
     stopImportHint: "已处理的文件留在资源库，尚未处理的不再导入。",
+    hideImport: "隐藏",
+    hideImportHint: "导入会在后台继续。",
     cancelDiskDelete: "取消删除",
     cancelOpen: "取消打开",
     loadingMore: "继续加载资产…"

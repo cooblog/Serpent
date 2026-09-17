@@ -1831,6 +1831,8 @@ export const en = {
     cancelImportHint: "Discard this import. Files already added are removed from the library.",
     stopImport: "Stop import",
     stopImportHint: "Keep files already added. Remaining files are skipped.",
+    hideImport: "Hide",
+    hideImportHint: "Import continues in the background.",
     cancelDiskDelete: "Cancel delete",
     cancelOpen: "Cancel opening",
     loadingMore: "Loading more assets…"
