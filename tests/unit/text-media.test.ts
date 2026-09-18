@@ -4,6 +4,8 @@ import {
   countTextLines,
   expandFormatFilterTokens,
   FORMAT_TEXT_TOKEN,
+  FORMAT_UNKNOWN_TOKEN,
+  formatFilterHasUnknownToken,
   isTextFileName,
   textCardPreviewSnippet,
   textMimeForExtension,
@@ -49,4 +51,10 @@ test("expandFormatFilterTokens expands the unified text token", () => {
   expect(expanded).toContain("png");
   expect(expanded).not.toContain("text");
   expect(expandFormatFilterTokens(["PNG", ".JPG"])).toEqual(["png", "jpg"]);
+});
+
+test("expandFormatFilterTokens skips the unrecognized-type token", () => {
+  expect(expandFormatFilterTokens([FORMAT_UNKNOWN_TOKEN, "png"])).toEqual(["png"]);
+  expect(formatFilterHasUnknownToken("unknown, png")).toBe(true);
+  expect(formatFilterHasUnknownToken(["png"])).toBe(false);
 });

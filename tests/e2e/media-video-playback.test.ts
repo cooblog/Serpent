@@ -501,9 +501,21 @@ test("plays a direct MP4 and a generated WebM fallback through the asset viewer"
     // targeting the faded notice itself would be intercepted by the viewport.
     await proxyVideo.hover();
     await proxyNotice.getByRole("button", { name: "隐藏提示" }).click();
-    await expect(proxyViewer.getByRole("button", { name: "显示代理提示" })).toBeVisible();
-    await proxyViewer.getByRole("button", { name: "显示代理提示" }).click();
-    await expect(proxyNotice).toBeVisible();
+    await expect(
+      proxyViewer.getByText("原视频无法播放，当前播放的是代理视频"),
+    ).toHaveCount(0);
+    await expect(
+      proxyViewer.getByRole("button", { name: "显示代理提示" }),
+    ).toHaveCount(0);
+    await proxyVideo.evaluate((element) => {
+      element.dispatchEvent(new Event("canplay"));
+    });
+    await expect(
+      proxyViewer.getByText("原视频无法播放，当前播放的是代理视频"),
+    ).toHaveCount(0);
+    await expect(
+      proxyViewer.getByRole("button", { name: "显示代理提示" }),
+    ).toHaveCount(0);
 
     const proxyJobStatus = await window.evaluate(async () => {
       const api = (

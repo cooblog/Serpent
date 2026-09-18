@@ -75,6 +75,26 @@ describe("REQ-COMMAND-004 asset shortcuts", () => {
     ).toBe(true);
   });
 
+  it("wires show-in-library-folder Ctrl+B / ⌘B", () => {
+    const showInFolder = assetCommandDefinitions.find(
+      (d) => d.id === "asset.show-in-library-folder",
+    )!.shortcut!;
+    expect(
+      matchesShortcut(
+        showInFolder,
+        event({ key: "b", ctrlKey: true }),
+        "windows",
+      ),
+    ).toBe(true);
+    expect(
+      matchesShortcut(
+        showInFolder,
+        event({ key: "b", metaKey: true }),
+        "mac",
+      ),
+    ).toBe(true);
+  });
+
   it("separates Shift+Delete disk delete from plain Delete trash", () => {
     const trash = assetCommandDefinitions.find(
       (d) => d.id === "asset.move-to-trash",

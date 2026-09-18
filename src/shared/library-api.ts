@@ -396,11 +396,13 @@ export interface SerpentLibraryApi {
     libraryId: string;
     targetFolderId?: string;
     autoDetectImageSequences?: boolean;
+    detectImageSequences?: boolean;
   }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan | ImportSourceFailurePlan | ImageSequenceImportOffer>>;
   importFolder(input: {
     libraryId: string;
     targetFolderId?: string;
     autoDetectImageSequences?: boolean;
+    detectImageSequences?: boolean;
   }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan | ImportSourceFailurePlan>>;
   importEagleLibrary(input: {
     libraryId: string;
@@ -416,6 +418,7 @@ export interface SerpentLibraryApi {
     html?: string;
     uriList?: string;
     autoDetectImageSequences?: boolean;
+    detectImageSequences?: boolean;
   }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan | ImportSourceFailurePlan | ImageSequenceImportOffer>>;
   /** Resolve native dropped File handles to managed asset ids without exposing paths. */
   resolveManagedAssetDrop(input: {

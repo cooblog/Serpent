@@ -7,7 +7,7 @@ import {
 export type AssetBrowseScope = 'all' | 'root' | string;
 
 /** 单个资产的浏览 scope：managed 文件夹 id / 链接根或虚拟子目录 id / 根。 */
-function assetBrowseScope(asset: AssetSummary): AssetBrowseScope | null {
+export function browseScopeForAsset(asset: AssetSummary): AssetBrowseScope | null {
   if (asset.managedFolderId !== null) return asset.managedFolderId;
   if (asset.linkedFolderId) {
     const directory = linkedAssetDirectory(asset.relativeFilePath);
@@ -41,7 +41,7 @@ export function sharedBrowseScopeForAssets(
 ): AssetBrowseScope | null {
   if (assets.length === 0) return null;
   const scopes = new Set<AssetBrowseScope | null>();
-  for (const asset of assets) scopes.add(assetBrowseScope(asset));
+  for (const asset of assets) scopes.add(browseScopeForAsset(asset));
   if (scopes.size !== 1) return null;
   return scopes.values().next().value as AssetBrowseScope;
 }

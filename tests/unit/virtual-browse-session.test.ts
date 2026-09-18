@@ -15,6 +15,7 @@ import {
   patchVirtualLayoutGeometry,
   virtualIndexMatchesFirstPage,
   virtualLayoutEntryAt,
+  virtualLayoutPublishedId,
 } from "../../src/renderer/browse/virtual-browse-layout";
 
 function asset(assetId: string) {
@@ -58,6 +59,8 @@ describe("virtual browse geometry", () => {
     });
     expect(isGeometryPlaceholder(virtualLayoutEntryAt(layout, 1))).toBe(true);
     expect(virtualLayoutEntryAt(layout, 1).assetId).toBe(geometryPlaceholderId(1));
+    expect(virtualLayoutPublishedId(layout, 0)).toBe("first");
+    expect(virtualLayoutPublishedId(layout, 1)).toBe(geometryPlaceholderId(1));
   });
 
   it("virtualizes exactly the scopes whose COUNT exceeds the first painted page", () => {

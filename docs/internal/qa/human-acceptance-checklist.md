@@ -44,7 +44,30 @@
 
 > 2026-08-27 P0：从硬盘删除后再导入同一份 Serpent ZIP，导入库 ID 不变；删除时的 `serpent://` 读取拦住若泄漏，全部卡片会变成裂开图标。见 LIB-ZIP-001（已通过）。
 
+### 2026-09-18 所有资产停在 100 项与焦点 IPC
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| BROWSE-100 / `Serpent-5fddea` | 「所有资产」能滚过首页 100 项 | 人类验收通过 | ① **完全退出**后再打开含这次改动的构建。② 打开明显超过 100 项的资源库，进入「所有资产」。③ 先确认首屏大约 100 张卡片。④ 向下滚到中部、底部，再滚回来。⑤ 点选第 101 张及更后面的卡片。 | 滚动条按全部资产长度变化；中部和底部能出现后续卡片，而不是停在约 100 张。侧栏「所有资产」计数可以大于画布当前已加载数。 | [开发日志](../development/2026-09-18-browse-stale-session-100-and-focus-send-development-log.md) / `use-browse-pagination.ts` / `virtual-browse-canvas.tsx` | 2026-09-18 用户本人验收通过（用户原话「通过」）。 |
+| SHELL-FOCUS-001 / `Serpent-30c8f9` | Renderer 销毁后切窗口不再退出应用 | 待人类验收 | ① 用这次改动的开发构建打开应用。② 在开发态触发一次页面重载（保存源码或手动刷新），或打开资源库后立刻点别的窗口再点回来。③ 看应用是否还在、主进程是否还在跑。 | 焦点来回切换不应把整个应用打掉。开发态热更新后也应还能继续用，而不是主进程带着那条 WebFrameMain 错误退出。 | 同上 / `web-contents-send.ts` / `src/main/index.ts` | 自动化：`web-contents-send` 与 `window-router` 单测覆盖销毁后 send。Computer Use、packaged 未执行。 |
+
+### 2026-09-18 代理视频提示
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| VIEWER-PROXY-001 / `Serpent-0d6421` | 代理播放提示隐藏后不再出现 | 待人类验收 | ① **完全退出**后再打开含这次改动的构建。② 打开一段当前播放器会落到代理的视频（例如部分 MOV）。③ 看到「原视频无法播放，当前播放的是代理视频」。④ 点「隐藏提示」。⑤ 等视频循环或从头再播。⑥ 确认左上角没有「显示代理提示」。 | 隐藏后提示不再出现；循环/重播也不会再弹出；没有重新显示入口。换到另一条会走代理的视频时，提示可以再出现一次。 | [开发日志](../development/2026-09-18-proxy-playback-notice-dismiss-development-log.md) / `ProxyPlaybackNotice.tsx` / `AssetPreviewModal.tsx` | 自动化：定向单测 `proxy-playback-notice`。Electron 视频 E2E、Computer Use、packaged 未执行。 |
+
+### 2026-09-18 格式杂项、所在文件夹与序列帧检测
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| FILTER-028 / `Serpent-ee7c3d` | 格式筛选：杂项与未识别「其他」 | 人类验收通过 | ① **完全退出**后再打开含这次改动的构建。② 打开格式过滤。③ 看原来带 html/hdf/htm/文本的那一组标题是否为「杂项」。④ 勾选单独的「其他」。⑤ 准备一份 Serpent 不识别的扩展名文件（例如 `.hdf` 或自造后缀）导入后，只勾「其他」应能筛到。⑥ 只勾「杂项」应仍能筛 html/文本等。 | 「杂项」是原来那组格式；「其他」筛出软件不认识的类型。两组可同时勾选。 | [开发日志](../development/2026-09-18-format-folder-sequence-detect-development-log.md) / `format-filter-presets.ts` / `catalog-read.ts` | 2026-09-18 用户本人验收通过（用户原话「通过」）。 |
+| NAV-FOLDER-001 / `Serpent-6c0aac` | 从所有资产跳到所在文件夹并居中选中 | 人类验收通过 | ① **完全退出**后再打开含这次改动的构建。② 打开「所有资产」。③ 选中某张不在根目录的资产。④ 按 Ctrl+B（Mac 为 ⌘B），或右键「在所在文件夹中显示」。⑤ 看是否进入该资产所在文件夹，卡片居中且保持选中。⑥ 再在该文件夹内按一次同一快捷键，应仍选中并居中。 | 浏览范围切到库内所在文件夹（不是系统资源管理器）。目标卡片选中并尽量出现在画面中间。菜单文案为「在所在文件夹中显示」。回收站里没有这项。系统「在文件浏览器中显示」仍是 Ctrl+Shift+S。 | [开发日志](../development/2026-09-18-show-in-containing-folder-development-log.md) / `blocking-navigation-summary.ts` / `asset-commands.ts` / `pending-asset-reveal.ts` | 2026-09-18 第一轮不通过：Ctrl+B 出现「无法读取资产」。已改为普通切文件夹路径。**2026-09-18 用户本人验收通过**（用户原话「通过」）。 |
+| SEQ-DETECT-001 / `Serpent-036065` | 序列帧检测总开关与导入后确认 | 人类验收通过 | ① **完全退出**后再打开含这次改动的构建。② 设置 → 资产：应有「启用序列帧检测」和「导入时自动检测序列帧」。③ 打开总开关、关闭自动检测。④ 导入一组连续编号图片（至少 3 张、尺寸一致）。等进度结束后应弹出序列帧窗口。⑤ 可做成序列或保持单独文件。⑥ 再打开自动检测，导入另一组：进度结束后应直接变成序列帧，不再弹窗。⑦ 关闭总开关后再导入一组：既不弹窗也不自动做成序列。总开关关闭时，自动检测那一行不可改。 | 总开关关闭：完全不检测。只开总开关：导入完成后弹窗。两个都开：直接当序列帧处理。 | [开发日志](../development/2026-09-18-format-folder-sequence-detect-development-log.md) / `image-sequence-preferences.ts` / `post-import-image-sequences.ts` | 2026-09-18 用户本人验收通过（用户原话「通过」）。随后反馈两行开关太近，以及默认应为检测开、自动关，见 SEQ-DETECT-002。 |
+| SEQ-DETECT-002 / `Serpent-be0c52` | 序列帧设置行距与出厂默认 | 人类验收通过 | ① **完全退出**后再打开含这次改动的构建。② 设置 → 资产。③ 看「启用序列帧检测」和「导入时自动检测序列帧」两行之间是否分开。④ 若本机从未改过这项：检测应为开，自动检测应为关。 | 两行标题和说明之间有明显空隙，不会贴在一起。新环境默认：检测开、自动关。已经保存过的开关保持原值。 | [开发日志](../development/2026-09-18-sequence-settings-spacing-defaults-development-log.md) / `styles.css` / `image-sequence-preferences.ts` | 2026-09-18 用户本人验收通过（用户原话「通过。先这样吧」）。 |
+
 ### 2026-09-18 查看器中键拖移画面
+
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -424,7 +447,7 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | MEDIA-RES-001 / `Serpent-235f69` | 全格式媒体解码资源调度、OOM 分类与缩略图优先 | 待人类验收 | 在包含高分辨率图片、长视频和不支持格式的隔离库中导入；观察主窗口、后台任务和失败提示；重复打开/关闭资源库 | 缩略图优先出现且主窗口可交互；原生解码并发有上限；内存压力延迟重试而非同时启动更多进程；不支持格式与资源压力显示不同原因；关闭/重开后无旧任务失控；不得因源文件字节数或像素数预拒绝本地媒体 | [开发日志](../development/2026-08-25-media-task-memory-safety-development-log.md) / [D.6 日志](../development/2026-08-26-library-performance-architecture-stage-d6-visible-media-queue-development-log.md) / [本轮开发日志](../development/2026-09-03-timeout-policy-and-large-media-development-log.md) / `tests/unit/media-concurrency.test.ts` / `tests/unit/media-memory-budget.test.ts` / `tests/worker/video-exr.test.ts` / `tests/worker/media-task-performance.test.ts` | 本轮审查移除了本地媒体源尺寸/像素预拒绝；媒体内存估算只用于并发协调，操作系统真实资源压力仍会触发可读的延迟重试。定向自动化 156 项、资源库门禁 210 项通过；Computer Use 已验证隔离库中的 8192×8192 TGA 缩略图与查看器；真实用户库、Windows、SMB/NAS、packaged 和用户正式验收仍待执行 |
 | MEDIA-TIMEOUT-001 / Issue #28 | 本地超大媒体导入、缩略图与查看不因墙钟超时失败 | 待人类验收 | 导入一个超大本地 TGA 或其他高分辨率媒体；等待超过旧的请求/子进程截止时间，同时观察缩略图、预览、查看器和后台任务；切换到另一资产后再返回 | 本地 Worker 请求、OIIO/FFmpeg、预览重试、模型/文档离屏渲染均等待实际完成或用户/生命周期取消；不显示“处理超时”并误报源文件失败；真实解码失败仍显示具体原因；切换/关闭不会留下运行中的孤儿任务 | [本轮开发日志](../development/2026-09-03-timeout-policy-and-large-media-development-log.md) / `src/main/worker-client.ts` / `src/worker/library-service.ts` / `src/renderer/AssetPreviewModal.tsx` / `tests/unit/worker-client.test.ts` / `tests/worker/video-exr.test.ts` | 定向自动化、资源库门禁、文档/TIFF Electron 回归和本地 OIIO seam 已通过；Computer Use 已实际导入 192.0 MB、8192×8192 TGA 并打开查看器，未见超时失败；用户正式验收、Windows、packaged 仍待执行 |
-| VIEWER-PERF-003 / `Serpent-9imk.1` | 查看器 source-first 与单资产按需视频代理 | 待人类验收 | 先打开可直接播放的 MP4，再打开当前播放器不能解码的视频；观察是否立即显示原始播放、失败后是否只为当前资产生成代理；检查代理提示、隐藏/恢复和重启后状态 | 可播放源不提前生成 proxy；真实播放错误后才进入单资产 proxy；代理成功后提示准确且可恢复；主窗口/卡片不会因次级任务重载；完整退出重启后任务状态收敛 | [开发日志](../development/2026-08-25-media-task-memory-safety-development-log.md) / `tests/e2e/media-preview.test.ts` / `tests/e2e/media-video-playback.test.ts` / `tests/worker/video-exr.test.ts` | 当前 macOS 隔离 Electron：媒体预览 2 passed/1 skipped，播放 1 passed；真实不支持编码素材、人工视觉、Windows、packaged 未执行 |
+| VIEWER-PERF-003 / `Serpent-9imk.1` | 查看器 source-first 与单资产按需视频代理 | 待人类验收 | 先打开可直接播放的 MP4，再打开当前播放器不能解码的视频；观察是否立即显示原始播放、失败后是否只为当前资产生成代理；检查代理提示、隐藏后循环播放和重启后状态 | 可播放源不提前生成 proxy；真实播放错误后才进入单资产 proxy；代理成功后提示准确；隐藏后无重新显示入口，循环播放也不再弹出；主窗口/卡片不会因次级任务重载；完整退出重启后任务状态收敛 | [开发日志](../development/2026-08-25-media-task-memory-safety-development-log.md) / `tests/e2e/media-preview.test.ts` / `tests/e2e/media-video-playback.test.ts` / `tests/worker/video-exr.test.ts` | 当前 macOS 隔离 Electron：媒体预览 2 passed/1 skipped，播放 1 passed；真实不支持编码素材、人工视觉、Windows、packaged 未执行。2026-09-18：隐藏后的「显示代理提示」已删除；`canplay` 循环不再把提示拉回来。见 VIEWER-PROXY-001。 |
 
 ### 2026-08-15 大型资源库增量
 

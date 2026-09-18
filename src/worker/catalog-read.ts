@@ -3,7 +3,11 @@ import path from 'node:path';
 import type { AssetSummary, BrowseLayoutEntry, FilterClause, SearchScope, SortDefinition } from '../shared/asset-types';
 import { parseLinkedVirtualFolderId } from '../shared/linked-folder-tree';
 import { colorFilterSql, parseColorFilterIds } from '../shared/color-filter-presets';
-import { expandFormatFilterTokens } from '../shared/text-media';
+import { knownProductFormatExtensionsDotless } from '../shared/product-format-extensions';
+import {
+  expandFormatFilterTokens,
+  formatFilterHasUnknownToken,
+} from '../shared/text-media';
 import { IMAGE_EXTENSIONS, VIDEO_EXTENSIONS } from '../shared/media-formats';
 import { isSourceDirectPreview } from '../shared/preview-policy';
 import {
@@ -286,12 +290,22 @@ export function buildCatalogFilterWhere(
     switch (filter.field) {
       case 'format': {
         const formatValues = expandFormatFilterTokens(filter.values);
-        if (formatValues.length === 0) break;
-        const likes = formatValues.map(() => 'LOWER(a.relative_file_path) LIKE ?');
-        conditions.push(filter.exclude
-          ? `NOT (${likes.join(' OR ')})`
-          : `(${likes.join(' OR ')})`);
-        for (const value of formatValues) params.push(`%.${value.toLowerCase()}`);
+        const wantsUnknown = formatFilterHasUnknownToken(filter.values);
+        if (formatValues.length === 0 && !wantsUnknown) break;
+        const parts: string[] = [];
+        if (formatValues.length > 0) {
+          const likes = formatValues.map(() => 'LOWER(a.relative_file_path) LIKE ?');
+          parts.push(`(${likes.join(' OR ')})`);
+          for (const value of formatValues) params.push(`%.${value.toLowerCase()}`);
+        }
+        if (wantsUnknown) {
+          const known = knownProductFormatExtensionsDotless();
+          const knownLikes = known.map(() => 'LOWER(a.relative_file_path) LIKE ?');
+          parts.push(`NOT (${knownLikes.join(' OR ')})`);
+          for (const value of known) params.push(`%.${value}`);
+        }
+        const combined = parts.join(' OR ');
+        conditions.push(filter.exclude ? `NOT (${combined})` : `(${combined})`);
         break;
       }
       case 'tag': {

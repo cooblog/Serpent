@@ -7,6 +7,7 @@ import type {
 } from "../shared/protocol/responses";
 import { Icon } from "./Icons";
 import { shouldShowApplyToRest } from "./image-sequence-import-dialog";
+import { isPostImportSequenceOfferId } from "./post-import-image-sequences";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
 import { DialogShell } from "./ui/patterns";
@@ -76,6 +77,7 @@ function ImageSequenceImportDialogForm({
 
   if (!open || !offer || !sequence) return null;
 
+  const grouping = isPostImportSequenceOfferId(offer.offerId);
   const span = Math.max(1, sequence.lastFrame - sequence.firstFrame);
   const firstPct =
     ((firstFrame - sequence.firstFrame) / span) * 100;
@@ -121,7 +123,11 @@ function ImageSequenceImportDialogForm({
           </button>
         }
         style={{ padding: 0 }}
-        title={t("dialog.imageSequenceImport.title")}
+        title={t(
+          grouping
+            ? "dialog.imageSequenceImport.groupTitle"
+            : "dialog.imageSequenceImport.title",
+        )}
         description={
           <span className="field-help">
             {offer.sequences.length > 1 ? (
@@ -132,12 +138,17 @@ function ImageSequenceImportDialogForm({
                 })}{" "}
               </>
             ) : null}
-            {t("dialog.imageSequenceImport.summary", {
+            {t(
+              grouping
+                ? "dialog.imageSequenceImport.groupSummary"
+                : "dialog.imageSequenceImport.summary",
+              {
               name: sequence.displayName,
               count: sequence.frameCount,
               width: sequence.width ?? "—",
               height: sequence.height ?? "—",
-            })}
+              },
+            )}
           </span>
         }
       >
@@ -284,7 +295,11 @@ function ImageSequenceImportDialogForm({
             }
             type="button"
           >
-            {t("dialog.imageSequenceImport.importSelected")}
+            {t(
+              grouping
+                ? "dialog.imageSequenceImport.keepSeparate"
+                : "dialog.imageSequenceImport.importSelected",
+            )}
           </button>
           <button
             className="primary-button"
@@ -292,10 +307,16 @@ function ImageSequenceImportDialogForm({
             type="submit"
           >
             {submitting
-              ? t("dialog.imageSequenceImport.importing")
-              : t("dialog.imageSequenceImport.importSequence", {
-                  count: frameCount,
-                })}
+              ? t(
+                  grouping
+                    ? "dialog.imageSequenceImport.grouping"
+                    : "dialog.imageSequenceImport.importing",
+                )
+              : grouping
+                ? t("dialog.imageSequenceImport.makeSequence")
+                : t("dialog.imageSequenceImport.importSequence", {
+                    count: frameCount,
+                  })}
           </button>
           </div>
         </form>

@@ -13,18 +13,18 @@ import {
   type WindowMaximizedStateEvent,
 } from "../shared/window-controls";
 import { ensureRendererKeyboardFocus } from "./renderer-keyboard-focus";
+import { sendToLiveWebContents } from "./web-contents-send";
 
 type WindowControlLogger = {
   info: (scope: string, message: string, meta?: Record<string, unknown>) => void;
 };
 
 function sendMaximizedState(webContents: WebContents, maximized: boolean): void {
-  if (webContents.isDestroyed()) return;
   const event: WindowMaximizedStateEvent = {
     type: "shell.window.maximized",
     maximized,
   };
-  webContents.send(WINDOW_MAXIMIZED_CHANNEL, event);
+  sendToLiveWebContents(webContents, WINDOW_MAXIMIZED_CHANNEL, event);
 }
 
 function applyWindowControl(

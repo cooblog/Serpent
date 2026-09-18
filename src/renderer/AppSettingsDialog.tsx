@@ -44,7 +44,9 @@ export interface AppSettingsDialogProps {
   aiConfigPanel: ReactNode;
   onToggleShowAiBadges: () => void;
   autoDetectImageSequences: boolean;
+  imageSequenceDetectionEnabled: boolean;
   onToggleAutoDetectImageSequences: () => void;
+  onToggleImageSequenceDetection: () => void;
   onOpenAppLog?: () => void;
   onOpenExtensionReleases?: () => void;
   pluginApi?: SerpentPluginManagerApi;
@@ -76,7 +78,9 @@ export function AppSettingsDialog({
   aiConfigPanel,
   onToggleShowAiBadges,
   autoDetectImageSequences,
+  imageSequenceDetectionEnabled,
   onToggleAutoDetectImageSequences,
+  onToggleImageSequenceDetection,
   onOpenAppLog,
   onOpenExtensionReleases,
   pluginApi,
@@ -233,7 +237,9 @@ export function AppSettingsDialog({
             {!showingPluginSettings && activeCategory === "assets" ? (
               <AssetsSettingsPage
                 autoDetectImageSequences={autoDetectImageSequences}
+                imageSequenceDetectionEnabled={imageSequenceDetectionEnabled}
                 onToggleAutoDetectImageSequences={onToggleAutoDetectImageSequences}
+                onToggleImageSequenceDetection={onToggleImageSequenceDetection}
               />
             ) : null}
             {!showingPluginSettings && activeCategory === "appearance" ? <AppearanceSettingsPage /> : null}

@@ -9,6 +9,8 @@ import {
   isDiscardedBrowseWindowPage,
   isIgnorableBrowseWindowFailure,
   isBrowseRootNearTail,
+  isBrowseSessionPageUnusable,
+  browseWindowQueryMode,
   registerBrowseSearchPage,
   registerBrowseSmartCollectionPage,
   shouldRunBrowseSentinel,
@@ -316,5 +318,25 @@ describe("discarded browse-window pages (Serpent-87pd)", () => {
   it("does not treat a cancelled window as a load-more failure", () => {
     expect(isIgnorableBrowseWindowFailure("CANCELLED")).toBe(true);
     expect(isIgnorableBrowseWindowFailure("FOLDER_NOT_FOUND")).toBe(false);
+  });
+});
+
+describe("stale BrowseSession windows (All Assets 100-item freeze)", () => {
+  it("keeps later pages on the live query after the snapshot is unusable", () => {
+    expect(browseWindowQueryMode({ sessionId: "session-1" })).toBe("session");
+    expect(browseWindowQueryMode({ sessionId: "session-1", sessionUnusable: true })).toBe("live");
+    expect(browseWindowQueryMode({})).toBe("live");
+  });
+
+  it("treats a browse.session.stale payload as unusable rather than end-of-list", () => {
+    expect(isBrowseSessionPageUnusable({
+      ok: true,
+      value: { stale: true },
+    })).toBe(true);
+    expect(isBrowseSessionPageUnusable({
+      ok: true,
+      value: { items: [], total: 250, offset: 100 },
+    })).toBe(false);
+    expect(isBrowseSessionPageUnusable({ ok: false })).toBe(false);
   });
 });

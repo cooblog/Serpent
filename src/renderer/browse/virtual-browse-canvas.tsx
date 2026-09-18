@@ -35,6 +35,7 @@ import { canvasHasPreviewScrollHold, logBrowseScrollWrite } from "../browse-scro
 import {
   type VirtualBrowseLayout,
   virtualLayoutEntryAt,
+  virtualLayoutPublishedId,
 } from "./virtual-browse-layout";
 
 function virtualMasonryCardSlotStyle(input: {
@@ -897,7 +898,7 @@ export function VirtualMasonryColumns({
       columnCount,
       columnWidth,
       columns: geometry,
-      idAt: (index) => layout.assetIdsByIndex.get(index),
+      idAt: (index) => virtualLayoutPublishedId(layout, index),
     }),
     [columnCount, columnWidth, geometry, layout.assetIdsByIndex, layout.total],
   );
@@ -1050,7 +1051,7 @@ export function VirtualJustifiedAssetRows({
       total: layout.total,
       itemsPerRow,
       geometry,
-      idAt: (index) => layout.assetIdsByIndex.get(index),
+      idAt: (index) => virtualLayoutPublishedId(layout, index),
     }),
     [geometry, itemsPerRow, layout.assetIdsByIndex, layout.total],
   );

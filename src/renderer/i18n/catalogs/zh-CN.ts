@@ -394,7 +394,9 @@ export const zhCN = {
     formatGroupAudio: "音频",
     formatGroupModel: "3D 模型",
     formatGroupDocument: "文档",
-    formatGroupOther: "其他",
+    formatGroupMisc: "杂项",
+    formatUnrecognized: "其他",
+    formatGroupOther: "杂项",
     format3d: "3D 模型",
     excludeFormats: "排除这些格式",
     excludeTags: "排除这些标签",
@@ -492,6 +494,7 @@ export const zhCN = {
       revealInFolder: "在 Finder 中显示",
       revealInFolderWindows: "在文件浏览器中显示",
       revealInFolderWindowsShort: "在浏览器中显示",
+      showInLibraryFolder: "在所在文件夹中显示",
       copyFilePath: "复制文件路径",
       copy: "复制",
       paste: "粘贴",
@@ -891,7 +894,13 @@ export const zhCN = {
       applyToRest: "将当前设置应用到后面的序列",
       importSelected: "导入单独文件",
       importSequence: "导入序列帧",
-      importing: "正在导入…"
+      importing: "正在导入…",
+      groupTitle: "做成序列帧？",
+      groupSummary:
+        "导入的文件里有「{name}」（{count} 帧，{width}×{height}）。确认范围和帧率后做成序列帧。",
+      keepSeparate: "保持为单独文件",
+      makeSequence: "做成序列帧",
+      grouping: "正在处理…"
     },
     sourceFailure: {
       title: "无法导入部分文件",
@@ -1421,9 +1430,12 @@ export const zhCN = {
     folderCardsWhenRecursiveHint:
       "打开「递归显示子文件夹内容」时，画布开头仍显示当前文件夹下的子文件夹。关闭后只显示文件。",
     languageHint: "控制界面文案语言，立即生效。",
+    imageSequenceDetection: "启用序列帧检测",
+    imageSequenceDetectionHint:
+      "导入连续编号的图片时识别它们。关闭后不会当成序列帧，也不会弹出确认窗口。",
     imageSequenceAutoDetect: "导入时自动检测序列帧",
     imageSequenceAutoDetectHint:
-      "导入连续编号且尺寸一致的图片时，自动识别为序列帧。",
+      "把识别到的连续图片直接做成序列帧。关闭时，导入结束后会弹出窗口让你确认。",
     browserExtensionTitle: "浏览器扩展",
     browserExtensionIntro:
       "用 Chrome / Edge 扩展把网页图片或视频保存到当前资源库。媒体由浏览器侧下载（携带 Cookie 与页面 Referer）再上传到本机应用，可绕过多数防盗链限制。保持本应用运行并打开资源库即可。",
@@ -1642,7 +1654,6 @@ export const zhCN = {
     videoFailed: "视频播放失败（错误代码：{code}）。代理文件可能损坏，可重试生成。",
     proxyPlaybackNotice: "原视频无法播放，当前播放的是代理视频",
     hideProxyPlaybackNotice: "隐藏提示",
-    showProxyPlaybackNotice: "显示代理提示",
     audioFailed: "音频播放失败（错误代码：{code}）。可尝试用系统默认应用打开。",
     textLoading: "正在加载文本…",
     textLoadFailed: "无法加载该文本资产。",

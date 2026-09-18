@@ -838,6 +838,7 @@ const library: SerpentLibraryApi = Object.freeze({
     libraryId: string;
     targetFolderId?: string;
     autoDetectImageSequences?: boolean;
+    detectImageSequences?: boolean;
   }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan | ImportSourceFailurePlan | ImageSequenceImportOffer>> {
     return importRequest({ type: 'asset.import-files.request', ...input });
   },
@@ -846,6 +847,7 @@ const library: SerpentLibraryApi = Object.freeze({
     libraryId: string;
     targetFolderId?: string;
     autoDetectImageSequences?: boolean;
+    detectImageSequences?: boolean;
   }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan | ImportSourceFailurePlan>> {
     const result = await importRequest({ type: 'asset.import-folder.request', ...input });
     if (!result.ok) return { ok: false, error: result.error };
@@ -884,6 +886,7 @@ const library: SerpentLibraryApi = Object.freeze({
     html?: string;
     uriList?: string;
     autoDetectImageSequences?: boolean;
+    detectImageSequences?: boolean;
   }): Promise<LibraryApiResult<ImportCompletion | ImportConflictPlan | ImportSourceFailurePlan | ImageSequenceImportOffer>> {
     // Native File handles always win. Browser drags can include text/html
     // beside Files; the secondary metadata must never turn a local import into
@@ -925,6 +928,7 @@ const library: SerpentLibraryApi = Object.freeze({
         targetCollectionId: input.targetCollectionId,
         sourcePaths,
         autoDetectImageSequences: input.autoDetectImageSequences,
+        detectImageSequences: input.detectImageSequences,
       });
     } catch {
       // Main owns persistent diagnostics. Report only the semantic failure;

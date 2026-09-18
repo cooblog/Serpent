@@ -275,9 +275,16 @@ import {
   type AiUiPreferences,
 } from "./ai-ui-preferences";
 import {
+  imageSequenceImportFlags,
   loadImageSequencePreferences,
   saveImageSequencePreferences,
 } from "./image-sequence-preferences";
+import {
+  isPostImportSequenceOfferId,
+  postImportFrameGroupsForAction,
+  postImportSequencePlanFromAssets,
+  type PostImportSequencePlan,
+} from "./post-import-image-sequences";
 import {
   SmartCollectionSettingsDialog,
   type SmartCollectionSettingsTarget,
@@ -313,6 +320,7 @@ import { useAssetSelection } from "./useAssetSelection";
 import { buildMarqueeLayoutKey } from "./marquee-layout-key";
 import {
   readPublishedCanvasAssetLayout,
+  readPublishedCanvasAssetLayoutIndex,
 } from "./canvas-asset-layout";
 import { useSelectionKeyboard } from "./use-selection-keyboard";
 import { useBrowseCommandKeyboard } from "./use-browse-command-keyboard";
@@ -332,7 +340,9 @@ import {
 import { useExtensionActiveContext } from "./use-extension-active-context";
 import { useExtensionSaveReveal } from "./use-extension-save-reveal";
 import { usePendingAssetReveal } from "./use-pending-asset-reveal";
+import { missingNavigationSummaryIsFailure } from "./blocking-navigation-summary";
 import {
+  browseScopeForAsset,
   currentScopeShowsRevealAssets,
   pendingRevealFromAssets,
   sharedBrowseScopeForAssets,
@@ -441,7 +451,7 @@ import type {
 import type { LibraryNavigationSummary } from "../shared/library-navigation";
 import { LIBRARY_ROOT_FOLDER_ID, isLibraryRootFolderId } from "../shared/library-root-folder";
 import { hasMeaningfulSmartCollectionCondition } from "../shared/smart-collection-query";
-import { expandFormatFilterTokens } from "../shared/text-media";
+import { expandFormatFilterTokens, formatFilterHasUnknownToken, FORMAT_UNKNOWN_TOKEN } from "../shared/text-media";
 import type {
   SerpentLibraryApi,
   LibraryApiResult,
@@ -496,7 +506,7 @@ import {
   masonryAlignedFolderWidthPx,
 } from "./folder-card-width";
 import { BrowseLayoutPreview } from "./BrowseLayoutPreview";
-import { assetSummaryFromLayoutEntry } from "./browse-window-slots";
+import { assetSummaryFromLayoutEntry, browseRankFromPublishedId } from "./browse-window-slots";
 import { isGeometryPlaceholder } from "./browse/use-virtual-browse-session";
 import { deferNavigationHydration } from "./browse/defer-navigation-hydration";
 import {
@@ -953,6 +963,7 @@ function AppInner() {
   >(null);
   const [imageSequenceImportSubmitting, setImageSequenceImportSubmitting] =
     useState(false);
+  const postImportSequencePlanRef = useRef<PostImportSequencePlan | null>(null);
 
   useEffect(() => {
     const offerId = imageSequenceImportOffer?.offerId ?? null;
@@ -2339,6 +2350,9 @@ function AppInner() {
   const revealAfterImportRef = useRef<
     (completion: { assets: AssetSummary[] }) => Promise<void>
   >(async () => undefined);
+  const offerPostImportSequencesRef = useRef<
+    (assets: readonly AssetSummary[]) => void
+  >(() => undefined);
   const previewFocusReturnRef = useRef<string | null>(null);
   // REQ-VIEW-008: snapshot of the browse scroll position + the previewed
   // card's on-screen anchor, captured when the viewer opens so the close
@@ -2684,9 +2698,11 @@ function AppInner() {
     if (!api || !library) return;
     const canvas = workspaceCanvasRef.current;
     if (!canvas) return;
-    const rankById = new Map(
-      browseLayout.map((entry, index) => [entry.assetId, index] as const),
-    );
+    const rankById = virtualBrowseLayout
+      ? virtualBrowseLayout.indexByAssetId
+      : new Map(
+          browseLayout.map((entry, index) => [entry.assetId, index] as const),
+        );
     let frame: number | undefined;
     const schedule = () => {
       if (frame !== undefined) window.cancelAnimationFrame(frame);
@@ -2700,6 +2716,7 @@ function AppInner() {
           ".masonry-columns, .justified-rows",
         )) {
           const layout = readPublishedCanvasAssetLayout(grid);
+          const layoutIndex = readPublishedCanvasAssetLayoutIndex(grid);
           const gridRect = grid.getBoundingClientRect();
           if (layout) {
             const gridContentTop = gridRect.top - canvasRect.top + canvas.scrollTop;
@@ -2707,9 +2724,29 @@ function AppInner() {
             const viewBottom = viewTop + canvas.clientHeight;
             for (const item of layout) {
               if (item.y + item.height < viewTop || item.y > viewBottom) continue;
-              const rank = rankById.get(item.id);
-              if (rank !== undefined) visibleRanks.push(rank);
+              const rank = browseRankFromPublishedId(item.id, rankById);
+              if (rank !== undefined && rank >= 0 && rank < total) {
+                visibleRanks.push(rank);
+              }
             }
+          } else if (layoutIndex && layoutIndex.total > 0) {
+            const gridContentTop = gridRect.top - canvasRect.top + canvas.scrollTop;
+            const viewTop = canvas.scrollTop - gridContentTop;
+            const viewBottom = viewTop + canvas.clientHeight;
+            layoutIndex.forEachIntersecting(
+              {
+                left: 0,
+                top: viewTop,
+                right: Math.max(1, gridRect.width),
+                bottom: viewBottom,
+              },
+              (item) => {
+                const rank = browseRankFromPublishedId(item.id, rankById);
+                if (rank !== undefined && rank >= 0 && rank < total) {
+                  visibleRanks.push(rank);
+                }
+              },
+            );
           } else {
             for (const slot of grid.querySelectorAll<HTMLElement>("[data-layout-index]")) {
               const rect = slot.getBoundingClientRect();
@@ -4097,13 +4134,18 @@ function AppInner() {
         try {
           const navigationResult = await navigationPromise;
           if (!isCurrentLoad()) return;
-          if (!navigationResult) {
+          if (missingNavigationSummaryIsFailure({
+            refreshSidebar,
+            navigationResult,
+          })) {
             throw new Error(t("toast.readAssetsFailed"));
           }
-          if (!navigationResult.ok) {
-            throw new LibraryOperationError(navigationResult.error);
+          if (navigationResult) {
+            if (!navigationResult.ok) {
+              throw new LibraryOperationError(navigationResult.error);
+            }
+            blockingNavigation = navigationResult.value;
           }
-          blockingNavigation = navigationResult.value;
         } finally {
           if (navigationHydrationAbortRef.current === navigationHydrationAbort) {
             navigationHydrationAbortRef.current = null;
@@ -6986,12 +7028,14 @@ function AppInner() {
       durationRange,
     };
     const filters: FilterClause[] = [];
-    const formats = expandFormatFilterTokens(
-      filtersState.formatFilter
-        .split(",")
-        .map((value) => value.trim().replace(/^\./, ""))
-        .filter(Boolean),
-    );
+    const formatTokens = filtersState.formatFilter
+      .split(",")
+      .map((value) => value.trim().replace(/^\./, ""))
+      .filter(Boolean);
+    const formats = expandFormatFilterTokens(formatTokens);
+    const formatValues = formatFilterHasUnknownToken(formatTokens)
+      ? [...formats, FORMAT_UNKNOWN_TOKEN]
+      : formats;
     const selectedTags = (overrides.tagFilter ?? filtersState.tagFilter)
       .split(",")
       .map((value) => value.trim())
@@ -7013,10 +7057,10 @@ function AppInner() {
         values: colors,
         exclude: overrides.excludeColorFilter ?? excludeColorFilter,
       });
-    if (formats.length > 0)
+    if (formatValues.length > 0)
       filters.push({
         field: "format",
-        values: formats,
+        values: formatValues,
         exclude: filtersState.excludeFormatFilter,
       });
     if (selectedTags.length > 0) {
@@ -7691,11 +7735,15 @@ function AppInner() {
     busy,
     activeCollectionId,
     autoDetectImageSequences: imageSequencePrefs.autoDetectOnImport,
+    detectImageSequences: imageSequencePrefs.detectionEnabled,
     previewBlocksDrop: Boolean(previewAsset),
     managedImportTargetFolderIdRef,
     reloadCurrentContent,
     reloadCurrentContentRef,
-    onImportCompleted: (completion) => revealAfterImportRef.current(completion),
+    onImportCompleted: async (completion) => {
+      await revealAfterImportRef.current(completion);
+      offerPostImportSequencesRef.current(completion.assets);
+    },
     setUiState,
     setImportProgress,
     runImportRpc: runCurrentImportRpc,
@@ -8380,6 +8428,53 @@ function AppInner() {
   }
   revealAfterImportRef.current = revealAfterImport;
 
+  async function showAssetInContainingFolder(assetId: string) {
+    const asset =
+      visibleAssets.find((item) => item.assetId === assetId) ??
+      assets.find((item) => item.assetId === assetId);
+    if (!asset || asset.deletedAt) return;
+    const scope = browseScopeForAsset(asset);
+    if (!scope) return;
+    pendingRevealRef.current = {
+      assetIds: [asset.assetId],
+      focusAssetId: asset.assetId,
+    };
+    const alreadyThere =
+      !showTrash &&
+      activeCollectionId === null &&
+      activeSmartCollectionId === null &&
+      assetScope === scope;
+    if (alreadyThere) {
+      pendingRestoredFocusRef.current = asset.assetId;
+      setSelectedAssetIds([asset.assetId]);
+      setSelectedAssetId(asset.assetId);
+      setAssetSelectionAnchor(asset.assetId);
+      const card = Array.from(
+        workspaceCanvasRef.current?.querySelectorAll<HTMLElement>(
+          "[data-asset-id]",
+        ) ?? [],
+      ).find((candidate) => candidate.dataset.assetId === asset.assetId);
+      card?.scrollIntoView({ block: "center", inline: "center" });
+      return;
+    }
+    await chooseFolder(scope);
+  }
+
+  function offerPostImportImageSequences(importedAssets: readonly AssetSummary[]) {
+    if (!library) return;
+    if (!imageSequencePrefs.detectionEnabled) return;
+    if (imageSequencePrefs.autoDetectOnImport) return;
+    const plan = postImportSequencePlanFromAssets(
+      library.libraryId,
+      importedAssets,
+    );
+    if (!plan) return;
+    postImportSequencePlanRef.current = plan;
+    setImageSequenceImportError(null);
+    setImageSequenceImportOffer(plan.offer);
+  }
+  offerPostImportSequencesRef.current = offerPostImportImageSequences;
+
   // --- Existing operations ---
 
   async function importAssets(kind: "files" | "folder") {
@@ -8389,17 +8484,18 @@ function AppInner() {
     setError(null);
     setNotice(null);
     try {
+      const sequenceFlags = imageSequenceImportFlags(imageSequencePrefs);
       const result = await runCurrentImportRpc(() =>
         kind === "files"
           ? api.importFiles({
               libraryId: library.libraryId,
               targetFolderId: managedImportTargetFolderIdRef.current,
-              autoDetectImageSequences: imageSequencePrefs.autoDetectOnImport,
+              ...sequenceFlags,
             })
           : api.importFolder({
               libraryId: library.libraryId,
               targetFolderId: managedImportTargetFolderIdRef.current,
-              autoDetectImageSequences: imageSequencePrefs.autoDetectOnImport,
+              ...sequenceFlags,
             }),
       );
       if (!result.ok) {
@@ -8417,6 +8513,7 @@ function AppInner() {
       if (!completion) return;
       setNotice(importSummaryMessage(completion, locale));
       await revealAfterImport(completion);
+      offerPostImportImageSequences(completion.assets);
       playTaskCompletionSound(startedAt);
     } catch (caught) {
       playTaskCompletionSound(startedAt);
@@ -8503,6 +8600,47 @@ function AppInner() {
     applyToRest: boolean;
   }) {
     if (!api || !library || !imageSequenceImportOffer) return;
+    if (isPostImportSequenceOfferId(imageSequenceImportOffer.offerId)) {
+      const plan = postImportSequencePlanRef.current;
+      if (!plan) {
+        setImageSequenceImportOffer(null);
+        return;
+      }
+      setImageSequenceImportSubmitting(true);
+      setImageSequenceImportError(null);
+      try {
+        const { groups, nextSequenceIndex } = postImportFrameGroupsForAction({
+          action: input.action,
+          applyToRest: input.applyToRest,
+          firstFrame: input.firstFrame,
+          lastFrame: input.lastFrame,
+          sequenceIndex: input.sequenceIndex,
+          plan,
+        });
+        for (const assetIds of groups) {
+          const result = await api.createImageSequence({
+            libraryId: library.libraryId,
+            assetIds,
+            fps: input.fps,
+          });
+          if (!result.ok) throw new LibraryOperationError(result.error);
+        }
+        if (nextSequenceIndex !== null) {
+          setImageSequenceImportIndex(nextSequenceIndex);
+        } else {
+          postImportSequencePlanRef.current = null;
+          setImageSequenceImportOffer(null);
+        }
+        await reloadCurrentContent({ blockingNavigation: true });
+      } catch (caught) {
+        setImageSequenceImportError(
+          toMessage(caught, t("toast.importFailed"), locale),
+        );
+      } finally {
+        setImageSequenceImportSubmitting(false);
+      }
+      return;
+    }
     const startedAt = Date.now();
     setImageSequenceImportSubmitting(true);
     setImageSequenceImportError(null);
@@ -10680,6 +10818,9 @@ function AppInner() {
     onRevealInFolder: (assetId) => {
       void handleRevealInFolder(assetId);
     },
+    onShowInLibraryFolder: (assetId) => {
+      void showAssetInContainingFolder(assetId);
+    },
     onDiskDelete: (assetIds, folderIds) => {
       requestSelectionDiskDelete([...assetIds], folderIds);
     },
@@ -12176,6 +12317,7 @@ function AppInner() {
       offer={imageSequenceImportOffer}
       sequenceIndex={imageSequenceImportIndex}
       onCancel={() => {
+        postImportSequencePlanRef.current = null;
         setImageSequenceImportOffer(null);
         setImageSequenceImportError(null);
         setImportProgress(null);
@@ -14155,6 +14297,7 @@ function AppInner() {
         }
         aiUiPrefs={aiUiPrefs}
         autoDetectImageSequences={imageSequencePrefs.autoDetectOnImport}
+        imageSequenceDetectionEnabled={imageSequencePrefs.detectionEnabled}
         canvasPrefs={canvasPrefs}
         onActiveCategoryChange={setAppSettingsCategory}
         onClose={() => {
@@ -14186,6 +14329,12 @@ function AppInner() {
           setImageSequencePrefs((p) => ({
             ...p,
             autoDetectOnImport: !p.autoDetectOnImport,
+          }));
+        }}
+        onToggleImageSequenceDetection={() => {
+          setImageSequencePrefs((p) => ({
+            ...p,
+            detectionEnabled: !p.detectionEnabled,
           }));
         }}
         onOpenAppLog={openAppLog}
@@ -14837,6 +14986,9 @@ function AppInner() {
           void dissolveSelectedImageSequences(sequenceIds);
         }}
         onRevealInFolder={(assetId) => { void handleRevealInFolder(assetId); }}
+        onShowInLibraryFolder={(assetId) => {
+          void showAssetInContainingFolder(assetId);
+        }}
         onCopyFilePath={(assetId) => { void handleCopyFilePath(assetId); }}
         onCopyAssetFiles={(assetIds) => {
           void handleCopyAssetFiles(assetIds);

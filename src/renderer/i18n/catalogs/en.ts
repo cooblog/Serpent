@@ -407,7 +407,9 @@ export const en = {
     formatGroupAudio: "Audio",
     formatGroupModel: "3D model",
     formatGroupDocument: "Document",
-    formatGroupOther: "Other",
+    formatGroupMisc: "Miscellaneous",
+    formatUnrecognized: "Other",
+    formatGroupOther: "Miscellaneous",
     format3d: "3D MODEL",
     excludeFormats: "Exclude these formats",
     excludeTags: "Exclude these tags",
@@ -505,6 +507,7 @@ export const en = {
       revealInFolder: "Reveal in Finder",
       revealInFolderWindows: "Reveal in File Explorer",
       revealInFolderWindowsShort: "Reveal in Explorer",
+      showInLibraryFolder: "Show in Containing Folder",
       copyFilePath: "Copy file path",
       copy: "Copy",
       paste: "Paste",
@@ -906,7 +909,13 @@ export const en = {
       applyToRest: "Apply these settings to later sequences",
       importSelected: "Import individual file",
       importSequence: "Import image sequence",
-      importing: "Importing…"
+      importing: "Importing…",
+      groupTitle: "Make an image sequence?",
+      groupSummary:
+        "Imported files include “{name}” ({count} frames, {width}×{height}). Confirm the range and frame rate to group them.",
+      keepSeparate: "Keep as separate files",
+      makeSequence: "Make image sequence",
+      grouping: "Working…"
     },
     sourceFailure: {
       title: "Some files cannot be imported",
@@ -1439,9 +1448,12 @@ export const en = {
     folderCardsWhenRecursiveHint:
       "When a folder includes its subfolders, those folders still appear at the top of the canvas. Turn this off to show only files.",
     languageHint: "Controls the interface language. Changes apply immediately.",
+    imageSequenceDetection: "Detect image sequences",
+    imageSequenceDetectionHint:
+      "Recognize consecutively numbered images during import. Turn this off to keep them as separate files and skip the confirmation window.",
     imageSequenceAutoDetect: "Detect image sequences during import",
     imageSequenceAutoDetectHint:
-      "Automatically recognize consecutively numbered images with matching dimensions as a sequence.",
+      "Turn matching numbered images into a sequence right away. If this is off, a window appears after import so you can confirm.",
     browserExtensionTitle: "Browser extension",
     browserExtensionIntro:
       "Save web images and videos into the active library with the Chrome / Edge extension. Media is downloaded by the browser (with cookies and the page Referer) and uploaded to this machine, bypassing most hotlink protections. Keep Serpent running with a library open.",
@@ -1661,7 +1673,6 @@ export const en = {
     videoFailed: "Video playback failed (error code: {code}). The proxy may be damaged — retry generation.",
     proxyPlaybackNotice: "The original video could not play; the proxy video is playing.",
     hideProxyPlaybackNotice: "Hide notice",
-    showProxyPlaybackNotice: "Show proxy notice",
     audioFailed: "Audio playback failed (error code: {code}). Try opening with the system default app.",
     textLoading: "Loading text…",
     textLoadFailed: "Could not load this text asset.",

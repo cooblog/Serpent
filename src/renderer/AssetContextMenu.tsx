@@ -186,6 +186,7 @@ const HOST_MENU_ANCHORS: Record<PluginHostMenuGroup, readonly string[]> = {
     "asset.view",
     "asset.open-external",
     "asset.reveal-in-folder",
+    "asset.show-in-library-folder",
     "folder.open-in-file-manager",
   ],
   organize: [
@@ -361,6 +362,7 @@ interface AssetContextMenuProps {
   onDissolveImageSequence: (sequenceId: string) => void;
   onDissolveImageSequences: (sequenceIds: string[]) => void;
   onRevealInFolder: (assetId: string) => void;
+  onShowInLibraryFolder: (assetId: string) => void;
   onCopyFilePath: (assetId: string) => void;
   /** OS file clipboard copy (Finder/Explorer interoperable). */
   onCopyAssetFiles: (assetIds: string[]) => void;
@@ -441,6 +443,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
     onOpenExternal,
     onViewAsset,
     onRevealInFolder,
+    onShowInLibraryFolder,
     onCopyFilePath,
     onCopyAssetFiles,
     pasteTargetFolderId,
@@ -1879,6 +1882,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                 view: onViewAsset,
                 openExternal: onOpenExternal,
                 revealInFolder: onRevealInFolder,
+                showInLibraryFolder: onShowInLibraryFolder,
                 copyFiles: onCopyAssetFiles,
                 pasteIntoFolder: onPasteIntoFolder,
                 copyFilePath: onCopyFilePath,
@@ -1912,6 +1916,9 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
             const viewItem = resolvedById.get("asset.view");
             const revealInFolderItem = resolvedById.get(
               "asset.reveal-in-folder",
+            );
+            const showInLibraryFolderItem = resolvedById.get(
+              "asset.show-in-library-folder",
             );
             const removeFromCurrentCollectionItem = resolvedById.get(
               "asset.remove-from-current-collection",
@@ -2033,6 +2040,20 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                       }
                       onAction={() =>
                         runAssetCommand("asset.reveal-in-folder")
+                      }
+                    />
+                  )}
+                  {showInLibraryFolderItem && (
+                    <ContextMenuItem
+                      icon={<Icon name="folder-tree" size={14} />}
+                      label={showInLibraryFolderItem.label}
+                      shortcut={showInLibraryFolderItem.shortcutLabel ?? undefined}
+                      disabled={showInLibraryFolderItem.disabled}
+                      disabledReason={
+                        showInLibraryFolderItem.disabledReason ?? undefined
+                      }
+                      onAction={() =>
+                        runAssetCommand("asset.show-in-library-folder")
                       }
                     />
                   )}

@@ -57,7 +57,10 @@ import {
 } from "./viewer-display-transform";
 import { PluginViewerActionButtons } from "./plugin-viewer-actions";
 import { PluginViewerOverlays } from "./plugin-viewer-overlays";
-import { ProxyPlaybackNotice } from "./ProxyPlaybackNotice";
+import {
+  ProxyPlaybackNotice,
+  shouldShowProxyPlaybackNotice,
+} from "./ProxyPlaybackNotice";
 import { shouldCopyAssetOnShortcut } from "./viewer-copy-shortcut";
 import {
   ViewerSessionController,
@@ -237,8 +240,8 @@ const AssetPreviewModalContent = forwardRef<
   const [selectedExrPlane, setSelectedExrPlane] = useState(0);
   const [selectedColorSpace, setSelectedColorSpace] = useState<string | undefined>();
   const [directApproved, setDirectApproved] = useState(false);
-  const [proxyNoticeAvailable, setProxyNoticeAvailable] = useState(false);
   const [proxyNoticeVisible, setProxyNoticeVisible] = useState(false);
+  const proxyNoticeDismissedRef = useRef(false);
   // Serpent-e56a1f: 代理回退的可见状态。生成中/加载中显示普通状态提示
   // （非警告），只有生成失败才显示警告。
   const [proxyFallbackState, setProxyFallbackState] = useState<
@@ -413,7 +416,7 @@ const AssetPreviewModalContent = forwardRef<
     directApprovedRef.current = false;
     directGateIdentityRef.current = null;
     setDirectApproved(false);
-    setProxyNoticeAvailable(false);
+    proxyNoticeDismissedRef.current = false;
     setProxyNoticeVisible(false);
     setProxyFallbackState("idle");
     setManualRetryError(null);
@@ -1070,9 +1073,11 @@ const AssetPreviewModalContent = forwardRef<
                 }
                 if (
                   resolution?.mediaType === "video" &&
-                  resolution.playbackMode === "proxy"
+                  shouldShowProxyPlaybackNotice({
+                    playbackMode: resolution.playbackMode,
+                    dismissed: proxyNoticeDismissedRef.current,
+                  })
                 ) {
-                  setProxyNoticeAvailable(true);
                   setProxyNoticeVisible(true);
                 }
               }}
@@ -1258,11 +1263,12 @@ const AssetPreviewModalContent = forwardRef<
               </span>
             </div>
           ) : null}
-          {proxyNoticeAvailable ? (
+          {proxyNoticeVisible ? (
             <ProxyPlaybackNotice
-              visible={proxyNoticeVisible}
-              onHide={() => setProxyNoticeVisible(false)}
-              onShow={() => setProxyNoticeVisible(true)}
+              onHide={() => {
+                proxyNoticeDismissedRef.current = true;
+                setProxyNoticeVisible(false);
+              }}
             />
           ) : null}
           {viewerError && ready && (

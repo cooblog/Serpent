@@ -205,7 +205,7 @@ Scheduler 当前只决定命令何时开始，自动媒体 pump 还会与浏览�
 
 - 文件夹导航、可见窗口变化和 viewer 请求建立 foreground epoch；epoch 内停止新的普通后台 claim，并将自动解码与文件 I/O 降到保留预算。
 - 已开始工作只在明确安全点 cooperative-abort，避免把每次滚动变成失败、重试和重新入队风暴。
-- 交互安静 0.5–1 秒后渐进恢复后台并发；按前台 p95 延迟反馈升降，不按积压数量盲目加并发。
+- 交互安静至少 10 秒后才渐进恢复普通后台并发；10 秒内只保留当前视口/查看器等用户正在等待的工作。恢复后按前台 p95 延迟反馈逐级升降，不按积压数量盲目加并发。详细的视口 band、有限抢占、视频/Proxy/色卡算法与核心预算见 [`2026-09-18-background-media-throughput-and-viewport-priority.md`](2026-09-18-background-media-throughput-and-viewport-priority.md)。
 - 前台预算覆盖数据库读取、artifact locator、文件读取和必要解码，不只覆盖 Scheduler lane。
 - 后台必须有有限进展和最大饥饿保护；“每次切文件夹就暂停全部任务”只能作为诊断手段，不能成为产品算法。
 

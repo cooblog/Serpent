@@ -421,12 +421,14 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     libraryId: identifierSchema,
     targetFolderId: optionalIdentifierSchema,
     autoDetectImageSequences: z.boolean().optional(),
+    detectImageSequences: z.boolean().optional(),
   }),
   z.strictObject({
     type: z.literal('asset.import-folder.request'),
     libraryId: identifierSchema,
     targetFolderId: optionalIdentifierSchema,
     autoDetectImageSequences: z.boolean().optional(),
+    detectImageSequences: z.boolean().optional(),
   }),
   z.strictObject({
     type: z.literal('asset.import-eagle.request'),
@@ -456,6 +458,7 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
       })
       .optional(),
     autoDetectImageSequences: z.boolean().optional(),
+    detectImageSequences: z.boolean().optional(),
   }),
   // Created by preload after resolving native File handles. Paths never
   // originate from Renderer code; Main/Worker map them back to asset ids.

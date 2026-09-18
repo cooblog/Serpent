@@ -66,4 +66,22 @@ describe('WindowRouter', () => {
     expect(router.windowForSender(window.webContents)).toBeUndefined();
     expect(router.context(window.id)).toBeUndefined();
   });
+
+  it("does not throw when a live window's render frame is already gone", () => {
+    const router = new WindowRouter();
+    const send = vi.fn(() => {
+      throw new Error("Render frame was disposed before WebFrameMain could be accessed");
+    });
+    const window: RoutedWindow = {
+      id: 1,
+      webContents: { send },
+      isDestroyed: () => false,
+    };
+    router.register(window);
+    router.setContext(window.id, { libraryId: "library-a" });
+
+    expect(router.publishToWindow(window.id, "shell.window.focus", { focused: true })).toBe(false);
+    expect(router.publishToLibrary("library-a", "asset-change", { libraryId: "library-a" })).toBe(0);
+    expect(router.broadcast("shell.window.focus", { focused: false })).toBe(0);
+  });
 });

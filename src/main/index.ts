@@ -92,6 +92,7 @@ import {
   bindWindowMaximizedEvents,
   registerWindowControls,
 } from "./window-controls";
+import { sendToLiveWebContents } from "./web-contents-send";
 import {
   bindRendererKeyboardFocusLogger,
   ensureRendererKeyboardFocus,
@@ -1570,14 +1571,15 @@ async function createMainWindow(): Promise<void> {
   // macOS three-finger swipe (requires Trackpad → Swipe between pages).
   // Event is on BrowserWindow, not webContents.
   window.on("swipe", (_event, direction) => {
-    window.webContents.send(SHELL_SWIPE_CHANNEL, direction);
+    sendToLiveWebContents(window.webContents, SHELL_SWIPE_CHANNEL, direction);
   });
 
   const publishWindowFocus = () => {
+    if (window.isDestroyed()) return;
     if (window.isFocused()) {
       lastExtensionTargetWindowId = window.id;
     }
-    window.webContents.send(WINDOW_FOCUS_CHANNEL, {
+    sendToLiveWebContents(window.webContents, WINDOW_FOCUS_CHANNEL, {
       focused: window.isFocused(),
     });
   };
@@ -2688,7 +2690,8 @@ async function commandFor(
             sourcePaths,
             expandImageSequences:
               !app.isPackaged && process.env.SERPENT_E2E === "1",
-            ...(request.autoDetectImageSequences === false
+            ...(request.detectImageSequences === false ||
+            request.autoDetectImageSequences === false
               ? { createImageSequence: false }
               : {}),
             imageSequenceFps:
@@ -2707,7 +2710,8 @@ async function commandFor(
             targetFolderId: request.targetFolderId,
             sourceKind: "folder",
             sourcePaths,
-            ...(request.autoDetectImageSequences === false
+            ...(request.detectImageSequences === false ||
+            request.autoDetectImageSequences === false
               ? { createImageSequence: false }
               : {}),
           }
@@ -4564,46 +4568,10 @@ async function handleLibraryRequest(
       }
       const e2eAutoExpand =
         !app.isPackaged && process.env.SERPENT_E2E === "1";
+      const disableSequenceCreate =
+        request.detectImageSequences === false ||
+        request.autoDetectImageSequences === false;
       if (
-        sourceKind === "files" &&
-        request.autoDetectImageSequences !== false &&
-        !request.imageSequenceDecision &&
-        !e2eAutoExpand
-      ) {
-        if (!workerClient) throw new Error("Library Worker is unavailable.");
-        const probeResult = await workerClient.request({
-          type: "asset.import.probe-sequences",
-          libraryId: request.libraryId,
-          targetFolderId: request.targetFolderId,
-          targetCollectionId: request.targetCollectionId,
-          sourcePaths: request.sourcePaths,
-        });
-        if (!probeResult.ok) {
-          return {
-            ok: false,
-            error: probeResult.error,
-          } satisfies RendererResult;
-        }
-        if (
-          probeResult.type === "asset.import.sequence-offer" &&
-          probeResult.offer.sequences.length > 0
-        ) {
-          return {
-            ok: true,
-            type: "asset.import.sequence-offer",
-            offer: rememberImageSequenceOffer(probeResult.offer),
-          } satisfies RendererResult;
-        }
-        command = {
-          type: "asset.import.prepare",
-          libraryId: request.libraryId,
-          targetFolderId: request.targetFolderId,
-          sourceKind,
-          sourcePaths: request.sourcePaths,
-          expandImageSequences: false,
-          createImageSequence: false,
-        };
-      } else if (
         sourceKind === "files" &&
         request.imageSequenceDecision?.action === "import-sequence"
       ) {
@@ -4675,10 +4643,7 @@ async function handleLibraryRequest(
           sourceKind,
           sourcePaths: request.sourcePaths,
           expandImageSequences: e2eAutoExpand && sourceKind === "files",
-          ...(request.autoDetectImageSequences === false ||
-          (sourceKind === "files" && !e2eAutoExpand)
-            ? { createImageSequence: false }
-            : {}),
+          ...(disableSequenceCreate ? { createImageSequence: false } : {}),
           imageSequenceFps: e2eAutoExpand ? 30 : undefined,
         };
       }
@@ -4871,7 +4836,7 @@ async function handleLibraryRequest(
       command.sourceKind === "files" &&
       command.expandImageSequences !== true &&
       (request.type === "asset.import-files.request"
-        ? request.autoDetectImageSequences !== false
+        ? false
         : true) &&
       request.type !== "asset.import-drop.request" &&
       request.type !== "asset.import-sequence.confirm" &&

@@ -5838,8 +5838,8 @@ body.serpent-modal-open .app-shell {
 }
 
 /* Serpent-cljb: the fallback explanation is intentionally quiet. It stays
-   in the viewer rather than becoming a blocking error, and the restore
-   control remains available after the user hides it. */
+   in the viewer rather than becoming a blocking error. Hiding it is final
+   for the current asset; looping must not bring it back. */
 .preview-proxy-notice {
   position: absolute;
   z-index: 3;
@@ -5858,8 +5858,7 @@ body.serpent-modal-open .app-shell {
   transform: translateX(-50%);
 }
 
-.preview-proxy-notice button,
-.preview-proxy-notice-restore {
+.preview-proxy-notice button {
   padding: 2px 4px;
   border: 0;
   background: transparent;
@@ -5868,16 +5867,8 @@ body.serpent-modal-open .app-shell {
   cursor: pointer;
 }
 
-.preview-proxy-notice button:hover,
-.preview-proxy-notice-restore:hover {
+.preview-proxy-notice button:hover {
   color: var(--text);
-}
-
-.preview-proxy-notice-restore {
-  position: absolute;
-  z-index: 3;
-  top: 12px;
-  left: 12px;
 }
 
 /* Serpent-e56a1f: 代理生成中/加载中的状态提示（非警告样式）。 */
@@ -7400,6 +7391,10 @@ select.ai-config-input.ai-config-languages {
   height: 1px;
   margin: 15px 0;
   background: var(--divider);
+}
+
+.app-settings-card > .app-settings-toggle-row + .app-settings-toggle-row {
+  margin-top: var(--ui-space-5);
 }
 
 .app-settings-disclosure-header {

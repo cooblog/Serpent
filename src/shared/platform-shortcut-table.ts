@@ -70,6 +70,12 @@ export const PLATFORM_SHORTCUT_TABLE: readonly PlatformShortcutRow[] = [
     windows: { label: "Ctrl+Shift+S", key: "s", ctrlKey: true, shiftKey: true },
   },
   {
+    id: "asset.show-in-library-folder",
+    purpose: "Show the selected asset in its containing library folder",
+    mac: { label: "⌘B", key: "b", metaKey: true },
+    windows: { label: "Ctrl+B", key: "b", ctrlKey: true },
+  },
+  {
     id: "asset.delete-from-disk",
     purpose: "Delete selection from disk (skip app trash)",
     mac: { label: "⌥⌘Delete", key: "Delete", metaKey: true, altKey: true },

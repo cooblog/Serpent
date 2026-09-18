@@ -16,6 +16,7 @@ import {
 import {
   FORMAT_FILTER_GROUPS,
   FORMAT_TEXT_TOKEN,
+  FORMAT_UNKNOWN_TOKEN,
   OTHER_FORMAT_EXTENSIONS,
 } from "../../src/renderer/format-filter-presets";
 
@@ -74,11 +75,13 @@ describe("format-filter-presets", () => {
     expect(allChipTokens()).not.toContain(FORMAT_TEXT_TOKEN);
   });
 
-  it("keeps HTML, HDF, and HTM in the other-format group", () => {
+  it("keeps HTML, HDF, and HTM in the miscellaneous-format group", () => {
     const documentGroup = FORMAT_FILTER_GROUPS.find(
       (group) => group.labelKey === "filter.formatGroupDocument",
     );
     expect(documentGroup?.extensions).toEqual(["pdf"]);
     expect(OTHER_FORMAT_EXTENSIONS).toEqual(["html", "hdf", "htm"]);
+    expect(FORMAT_UNKNOWN_TOKEN).toBe("unknown");
+    expect(allChipTokens()).not.toContain(FORMAT_UNKNOWN_TOKEN);
   });
 });

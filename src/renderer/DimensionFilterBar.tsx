@@ -29,6 +29,7 @@ import {
   FORMAT_FILTER_GROUPS,
   OTHER_FORMAT_EXTENSIONS,
   FORMAT_TEXT_TOKEN,
+  FORMAT_UNKNOWN_TOKEN,
 } from "./format-filter-presets";
 import { DimensionEnableToggle } from "./dimension-enable-toggle";
 import {
@@ -466,6 +467,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
 
   const chips = buildActiveFilterChips(snapshot, {
     textFormatLabel: t("filter.formatText"),
+    unknownFormatLabel: t("filter.formatUnrecognized"),
   });
   const controlsDisabled = Boolean(disabled || interactionsLocked);
   const selectedTagNames = tagFilter
@@ -971,7 +973,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
                   checked={otherGroupState === "all"}
                   disabled={controlsDisabled}
                   indeterminate={otherGroupState === "partial"}
-                  label={t("filter.formatGroupOther")}
+                  label={t("filter.formatGroupMisc")}
                   onToggle={() =>
                     setFormatFilter(
                       toggleFormatGroup(formatFilter, otherFormatTokens),
@@ -1005,6 +1007,19 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
                     );
                   })}
                 </div>
+              </div>
+              <div className="format-filter-group">
+                <FormatGroupCheckbox
+                  checked={formatTokensHas(formatFilter, FORMAT_UNKNOWN_TOKEN)}
+                  disabled={controlsDisabled}
+                  indeterminate={false}
+                  label={t("filter.formatUnrecognized")}
+                  onToggle={() =>
+                    setFormatFilter(
+                      toggleFormatGroup(formatFilter, [FORMAT_UNKNOWN_TOKEN]),
+                    )
+                  }
+                />
               </div>
               <label className="dimension-filter-check">
                 <input
