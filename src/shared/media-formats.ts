@@ -10,7 +10,7 @@
 export const JPEG_IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.jfif'] as const;
 
 export const SHARP_IMAGE_EXTENSIONS = [
-  '.png', ...JPEG_IMAGE_EXTENSIONS, '.gif', '.tif', '.tiff', '.webp', '.svg',
+  '.png', ...JPEG_IMAGE_EXTENSIONS, '.gif', '.tif', '.tiff', '.webp', '.avif', '.svg',
 ] as const;
 
 /** Formats decoded by the bundled OIIO runtime rather than by Chromium/sharp. */
@@ -42,8 +42,8 @@ export const CHROMIUM_DIRECT_PLAY_VIDEO_EXTENSIONS = ['.mp4', '.webm', '.m4v'] a
 
 /**
  * T1 3D formats (slice 0030, decision #3): FBX / OBJ(MTL) / glTF / GLB / STL.
- * Registration means Serpent owns a preview path for these; actual rendering
- * (viewer + offscreen thumbnails) lands in later slices (C / E).
+ * `.blend` is not in this set: there is no reliable public mesh parser for
+ * Blender 3–4.x, and bundling Blender is out of scope (size + GPL).
  */
 export const MODEL_EXTENSIONS = [
   '.fbx', '.obj', '.gltf', '.glb', '.stl',
@@ -170,6 +170,7 @@ export function directImageMimeForExtension(
     case '.jfif': return 'image/jpeg';
     case '.gif': return 'image/gif';
     case '.webp': return 'image/webp';
+    case '.avif': return 'image/avif';
     // SVG stays vector in the viewer; the grid still uses its generated
     // thumbnail for predictable card sizing and performance.
     case '.svg': return 'image/svg+xml';
@@ -187,6 +188,7 @@ export function imageMimeForExtension(extensionOrFilename: string): string | nul
     case '.tif':
     case '.tiff': return 'image/tiff';
     case '.webp': return 'image/webp';
+    case '.avif': return 'image/avif';
     case '.bmp': return 'image/bmp';
     case '.ico': return 'image/x-icon';
     case '.svg': return 'image/svg+xml';

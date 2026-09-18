@@ -13,8 +13,9 @@
 - [架构](architecture.md)——进程模型、目录结构、关键设计
 - [测试](testing.md)——测试体系与运行方式
 - [新增媒体格式支持](media-format-support.md)——从共享注册表到导入、预览、过滤、协议和验收
-- [分支与开发工作流](workflow.md)——`main`/`dev` 定位、外部贡献、Beads 工单、文档记录、验收和交接经验
-- [贡献者名单](../../CONTRIBUTORS.md)——已被项目接受并合并的贡献
+- [分支与开发工作流](workflow.md)——分支策略、开源贡献流程与维护者工作纪律
+- [贡献指南](contributing.md)——开源协作、Pull Request 与代码门禁要求
+- [贡献者名单](https://github.com/dolag233/Serpent/blob/dev/CONTRIBUTORS.md)——已被项目接受并合并的贡献列表
 
 其他软件文档（内部记录仅仓库 `dev` 分支，网站不发布）：
 
@@ -29,7 +30,10 @@
 
 - [插件开发指南](../manual/plugins/development.md) + [最佳实践](../manual/plugins/best-practices.md) + [API 参考](../manual/plugins/api-reference.md)
 - [插件分发与更新](../manual/plugins/distribution-and-updates.md)
-- 完整参考实现：[Serpent-Plugin-ImageUpscaler](https://github.com/dolag233/Serpent-Plugin-ImageUpscaler)
+- 官方插件参考实现：
+  - [Serpent-Plugin-Renamer](https://github.com/dolag233/Serpent-Plugin-Renamer)——非受限模式（`unrestricted`），基于 Host 标准对话框与列表控件实现资产批量重命名与实时改动预览
+  - [Serpent-Plugin-MediaConverter](https://github.com/dolag233/Serpent-Plugin-MediaConverter)——媒体转码与压缩扩展，演示多规格媒体计划、后台 Job 队列任务生命周期与全平台包分发（`any`）
+  - [Serpent-Plugin-ImageUpscaler](https://github.com/dolag233/Serpent-Plugin-ImageUpscaler)——非受限模式（`unrestricted`），演示外部 AI 推理二进制文件管理、跨平台独立 ZIP 分流打包发布（`darwin-arm64` / `win32-x64`）与分块内容回写
 - [脚本开发指南](../manual/scripts/development.md) + [API 参考](../manual/scripts/api-reference.md)
 - [MCP 开发指南](../manual/mcp/development.md) + [API 参考](../manual/mcp/api-reference.md)
 

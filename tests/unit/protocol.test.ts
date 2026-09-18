@@ -2370,6 +2370,7 @@ describe('public errors', () => {
     'AI_NETWORK',
     'AI_TIMEOUT',
     'AI_INVALID_RESPONSE',
+    'AI_REQUEST_REJECTED',
   ] as const)('accepts safe actionable AI reason %s', (reason) => {
     expect(createPublicError('AI_ANALYSIS_FAILED', reason)).toMatchObject({
       code: 'AI_ANALYSIS_FAILED',
@@ -2419,6 +2420,18 @@ describe('public errors', () => {
     const publicError = toPublicError(sqliteError);
     expect(publicError.code).toBe('LIBRARY_IO_ERROR');
     expect(publicError.reason).toBe('IO_ERROR');
+    expect(JSON.stringify(publicError)).not.toContain('/secret');
+  });
+
+  it('classifies Sharp missing-input as a vanished asset, not a read-only library', () => {
+    const sharpError = new Error('Input file is missing: /secret/library/Assets/photo.png');
+    expect(classifyUnknownFailure(sharpError)).toEqual({
+      code: 'ASSET_NOT_FOUND',
+      reason: 'SOURCE_NOT_FOUND',
+    });
+    const publicError = toPublicError(sharpError);
+    expect(publicError.code).toBe('ASSET_NOT_FOUND');
+    expect(publicError.reason).toBe('SOURCE_NOT_FOUND');
     expect(JSON.stringify(publicError)).not.toContain('/secret');
   });
 
@@ -2570,6 +2583,7 @@ describe('external import progress events', () => {
       importId: 'eagle-import-01',
       phase: 'copy',
       cancelable: false,
+      sequence: 12,
       filesProcessed: 32,
       totalFiles: 385,
       bytesProcessed: 1024,
@@ -2577,6 +2591,7 @@ describe('external import progress events', () => {
     })).toMatchObject({
       phase: 'copy',
       cancelable: false,
+      sequence: 12,
       filesProcessed: 32,
       totalFiles: 385,
     });

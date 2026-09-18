@@ -56,6 +56,35 @@ describe("import overlay copy", () => {
     ).toBe(true);
   });
 
+  it("does not resurrect the overlay from a late copy after the same import completed", () => {
+    expect(
+      shouldApplyImportProgressEvent(progress(), false, "import-1"),
+    ).toBe(false);
+    expect(
+      shouldApplyImportProgressEvent(
+        progress({ phase: "complete" }),
+        false,
+        "import-1",
+      ),
+    ).toBe(false);
+    expect(
+      shouldApplyImportProgressEvent(progress(), false, "import-other"),
+    ).toBe(true);
+  });
+
+  it("does not resurrect the overlay from a late copy after the import RPC has returned", () => {
+    expect(
+      shouldApplyImportProgressEvent(progress(), false, null, {
+        rpcInFlight: false,
+      }),
+    ).toBe(false);
+    expect(
+      isBlockingImportOverlayVisible("ready", progress(), false, {
+        rpcInFlight: false,
+      }),
+    ).toBe(false);
+  });
+
   it("uses an import title for file transfers and open titles for library conversion", () => {
     expect(importOverlayTitle("import")).toEqual({ key: "progress.importingAssets" });
     expect(importOverlayTitle("open").key).toBe("progress.openingLibrary");

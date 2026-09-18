@@ -12,7 +12,7 @@ Use [Serpent Releases](https://github.com/dolag233/Serpent/releases) for the cur
 
 ## macOS
 
-1. Download the matching `Serpent-<version>-arm64.dmg` or x64 package.
+1. Download the matching `Serpent-darwin-arm64-<version>-package.dmg` (or Intel build).
 2. Open the DMG and drag Serpent to Applications.
 
 Unsigned development builds may trigger Gatekeeper. Verify the source, then right-click the app, choose Open, and confirm. If it is still blocked, clear quarantine from Terminal:
@@ -25,10 +25,10 @@ To uninstall, move the app to the Trash. Libraries live where you created them a
 
 ## Windows
 
-1. Download `Serpent-<version> Setup.exe` or the Windows package attached to the release.
-2. Run the installer and follow the prompts.
+1. Download the Windows installer package `Serpent-win-x86-64-<version>-setup.zip` (extract and run the setup wizard), or download the portable build `Serpent-win-x86-64-<version>-portable.zip` (extract and run directly from any local directory).
+2. Run the installer and follow the wizard to choose install path, language, and shortcut preferences.
 
-Unsigned development builds may trigger SmartScreen. Verify the source, then choose **More info → Run anyway**. Uninstall from **Settings → Apps**.
+Unsigned development builds may trigger SmartScreen. Verify the source, then choose **More info → Run anyway**. Uninstall from **Settings → Apps**; the uninstaller will cleanly remove application files.
 
 ## Browser extension
 

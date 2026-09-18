@@ -125,8 +125,8 @@ test("masonry Tab follows the left-to-right reading order", async () => {
     await expect(masonryButton).toHaveAttribute("aria-pressed", "true");
     await expect(window.locator(".masonry-columns")).toBeVisible();
 
-    const firstCard = window.locator('.asset-card[title="marquee-00.txt"]');
-    const secondCard = window.locator('.asset-card[title="marquee-01.txt"]');
+    const firstCard = window.locator('.asset-card[data-asset-name="marquee-00.txt"]');
+    const secondCard = window.locator('.asset-card[data-asset-name="marquee-01.txt"]');
     await firstCard.click();
     await expect(firstCard).toHaveClass(/is-selected/);
     await firstCard.focus();

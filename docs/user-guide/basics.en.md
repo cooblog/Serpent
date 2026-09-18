@@ -56,30 +56,58 @@ In **Settings → Assets**, turn **Detect image sequences during import** on or 
 
 In the dialog, adjust the frame range and FPS, then choose whether to import only the current file or the selected frames as a sequence.
 
+## Workspace tabs
+
+Serpent supports multi-tab parallel browsing at the top of the window:
+
+![Workspace tabs](../assets/ui/serpent-tab.png)
+
+- **Create and switch**: Click the `+` button at the right of the tab bar or use shortcuts `⌘T` (macOS) / `Ctrl+T` (Windows) to open a new tab. Each tab independently maintains its browsing position, search and filter criteria, selections, and scroll viewport.
+- **Path hint**: Hovering the mouse over a folder tab displays its full relative path within the library (or disk path for linked folders), helping distinguish same-name subdirectories.
+- **Context menu**: Right-click a tab to "Reveal in sidebar" (expands and focuses the item in the sidebar tree), "Copy path", "Reveal in Finder / File Explorer", "Close tab", or "Close other tabs".
+- **Closing and shortcuts**: Use `⌘W` / `Ctrl+W` or click `×` on the tab to close it. When only one tab remains, the close button and close menu items are automatically disabled.
+- **Session restore**: After quitting and reopening the application, all tabs, their order, and the active tab are automatically restored for each library.
+
+## Custom folder and collection appearance (icons and colors)
+
+Customize icons and color accents for managed library folders, linked folder roots, collections, and smart collections:
+
+![Custom folder and collection appearance](../assets/ui/serpent-folder-icon.png)
+
+- **Setting and clearing**: Right-click a target in the sidebar or tab bar, select **Icons and colors...**, and pick from curated emoji, decorative vector icons, and theme-adapted color swatches; click **Restore default** to revert to standard icons.
+- **Consistent appearance**: Custom icons and colors synchronize across the sidebar, workspace tabs, and move/add menus.
+- **Linked folder indicators**: Linked folder roots retain linked and offline badges even with custom icons; virtual subdirectories within linked folders do not support custom appearance.
+- **Data safety**: Appearance is stored purely as internal library metadata and never renames or moves real folders on disk.
+
 ## Browse and organize
 
-- Sidebar: All assets, Trash, folders, collections, and smart collections. Folders and collections can include descendants; a collection is a many-to-many relationship, so an asset may belong to several collections.
-- Canvas: tile, masonry, and folder/collection cards. Resizing sidebars or card size reflows the layout while preserving the approximate scroll position.
-- Toolbar: search, filters, sorting, view, and card fields. In non-grid pages, irrelevant view controls are hidden.
-- Inspector: file information, tags, rating, favorite, description, source URL, author, technical metadata, color space, and AI content.
+- **Sidebar**: All assets, Trash, folders, collections, and smart collections. Click or drag to the empty space at the bottom to return to the library root; use the context menu on managed folders to import linked folders.
+- **Canvas**: Supports tile and masonry layouts; use the top toolbar to switch views and toggle visible card fields (filename, size, date, resolution, etc.).
+- **Hover scrub**: Hovering over a video or audio card displays a scrub bar to quickly jump and preview playback.
+- **Toolbar**: Search, advanced filters, sorting, and view controls.
+- **Inspector**: Displays information, tags, rating, favorite status, description, source URL, technical metadata, and AI analysis results for the selected asset.
 
-Click to select and double-click to open the viewer. Drag on empty canvas space to marquee-select; use `⌘` on macOS or `Ctrl` on Windows while clicking to add to a selection. `Tab` moves focus between assets; `Shift` enables range selection where supported. Folders, collections, and smart collections support context-menu actions, inline `F2` rename, and `Delete`; deleting a non-empty container confirms first, and deleting a collection never deletes its assets.
+Supports marquee selection, `⌘`/`Ctrl` click to add, and `Shift` range selection; press `F2` to rename inline.
 
 ![Library, Inspector, filters, and AI overview](../assets/ui/Serpent-Preview.png)
 
 ## Viewer
 
-Double-click an asset to open the viewer. Images, SVG, RAW, PSD, TIFF, TGA, and EXR use their decoder or a generated derivative; SVG is rendered from its vector source in the viewer, not treated as the thumbnail. Videos loop by default and may use a Serpent-generated compatible proxy. Audio shows a waveform and playback controls. 3D models use the dedicated model viewer. PDF files render page-by-page in the built-in pdf.js viewer.
+Double-click an asset to open the fullscreen viewer (press `Esc` to exit):
 
-The viewer supports pan, wheel zoom, fit-to-view (numpad `.`), fullscreen, and rotate/horizontal/vertical mirror transforms for images and video. PDF preview supports zoom (0.25×–8×), pan, and fit-to-page; scrolling zooms around the mouse pointer. For formats other than PNG/JPEG, Serpent uses a detected color space when available and lets you choose among supported spaces. EXR can expose multiple planes/parts when present; this is not a professional channel-grading tool.
+- **Navigation**: Use arrow keys `←` / `→` to navigate smoothly between assets in the current view.
+- **Media playback & transforms**:
+  - Videos and audio play automatically on open;
+  - 3D models support mouse drag rotation, zoom, and HDRI lighting switching;
+  - The toolbar provides 90° clockwise rotation, horizontal/vertical flip, fit-to-view (numpad `.`), and fullscreen.
 
 ![3D viewer and Inspector](../assets/ui/3D-inspector.png)
 
 ## Tags, collections, and smart collections
 
-- Add tags from the Inspector or an asset context menu. The tag picker supports search, recent tags, and batch operations.
-- Collections are manually maintained relationships. Drag assets into a collection or use the **Add to collection** submenu; removing an asset from a collection only removes the relationship.
-- Smart collections save a search, filter, and sort definition and calculate results live.
+- **Tags**: Add from the Inspector or context menu, with batch tagging across multiple assets; filter by tags in the search box or filter panel.
+- **Collections**: Curate assets across folders (an asset can belong to multiple collections); removing an asset from a collection or deleting a collection never deletes the underlying file. Opening a parent collection lets you toggle whether to include descendant assets.
+- **Smart collections**: Save custom search queries and structured filter criteria, automatically displaying matching assets whenever opened; right-click to edit rules.
 
 ## Trash and deletion
 
@@ -97,7 +125,11 @@ Serpent can sync a library across machines over WebDAV: configure servers global
 
 | Action | macOS | Windows |
 | --- | --- | --- |
-| Open viewer | Enter | Enter |
+| Toggle fullscreen | ⌃⌘F | F11 |
+| New workspace tab | ⌘T | Ctrl+T |
+| Close current tab | ⌘W | Ctrl+W |
+| Open viewer | Enter / Space | Enter / Space |
+| Exit viewer to browse | Esc | Esc |
 | Open in external app | ⌘O | Ctrl+O |
 | Reveal in file manager | ⌘⇧S | Ctrl+Shift+S |
 | Focus search | ⌘F | Ctrl+F |

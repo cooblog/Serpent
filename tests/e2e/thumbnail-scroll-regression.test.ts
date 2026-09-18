@@ -191,7 +191,7 @@ async function readScrollSnapshot(window: Page): Promise<ScrollSnapshot> {
     const undecodedImages: string[] = [];
     const detachedBadges: string[] = [];
     for (const card of visibleCards) {
-      const name = card.getAttribute("title") ?? "unknown";
+      const name = card.getAttribute("data-asset-name") ?? "unknown";
       const image = card.querySelector<HTMLImageElement>("img.asset-thumbnail");
       if (image && (!image.complete || image.naturalWidth <= 0)) {
         undecodedImages.push(name);

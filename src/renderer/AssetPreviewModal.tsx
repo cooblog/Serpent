@@ -42,7 +42,6 @@ import { PdfViewerSurface } from "./PdfViewerSurface";
 import { HtmlViewerSurface } from "./HtmlViewerSurface";
 import { useViewerVolume } from "./use-viewer-volume";
 import { ZoomableImage } from "./zoomable-preview-image";
-import { detectPbrTextureChannel } from "./pbr-texture-channel";
 import { useViewerChromeContrast } from "./use-viewer-chrome-contrast";
 import { VIEWER_CHROME_TAB_INDEX } from "./viewer-focus-policy";
 import { ImageSequencePlayer } from "./ImageSequencePlayer";
@@ -865,10 +864,6 @@ const AssetPreviewModalContent = forwardRef<
   const ready = primarySurface === "media";
   const unsupported = primarySurface === "unsupported";
   const imageSrc = resolution?.url ?? placeholderUrl;
-  const pbrChannel =
-    asset.mediaType === "image"
-      ? detectPbrTextureChannel(asset.displayName)
-      : null;
   const showImage =
     asset.mediaType === "image" &&
     Boolean(imageSrc) &&
@@ -1203,7 +1198,6 @@ const AssetPreviewModalContent = forwardRef<
               onRotate={rotateViewer}
               onSwipeNext={onNext}
               onSwipePrevious={onPrevious}
-              pbrChannel={pbrChannel}
               placeholderSrc={placeholderUrl ?? undefined}
               isAnimated={isGifDisplayName(asset.displayName)}
               onPresentationReady={notifyPresentationReady}

@@ -38,8 +38,7 @@ describe("LibraryService.toSummaryMediaType (Serpent-671)", () => {
   });
 
   it("does not classify adjacent formats as model", () => {
-    // OBJ/STL are ASCII by nature, but they are model assets, not text files;
-    // .dae/.3ds/.blend stay `other` until slice G.
+    // .dae/.3ds/.blend stay `other`. DCC project files are not in the T1 set.
     expect(LibraryService.detectMediaType("scene.dae")).toBe("other");
     expect(LibraryService.detectMediaType("mesh.3ds")).toBe("other");
     expect(LibraryService.detectMediaType("project.blend")).toBe("other");

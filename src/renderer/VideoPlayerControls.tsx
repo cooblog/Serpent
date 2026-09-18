@@ -11,8 +11,10 @@ import {
   matchVideoPlaybackSeekKey,
   matchVideoPlaybackRateKey,
   nextFrameSeekTime,
+  applyMediaAutoplayIntent,
   nextPlaybackIntent,
   resolveFrameStepSeconds,
+  shouldAutoStartMediaPlayback,
   scrubRatioFromClientX,
   scrubRatioFromTime,
   scrubTimeFromRatio,
@@ -167,13 +169,20 @@ export function VideoPlayerControls({
     frameRateFpsRef.current = frameRateFps;
   }, [playbackRate, duration, frameRateFps]);
   const frameSeekGeneration = useRef(0);
+  const autoPlayRef = useRef(autoPlay);
+  const userPausedRef = useRef(false);
+  useEffect(() => {
+    autoPlayRef.current = autoPlay;
+  }, [autoPlay]);
 
   const togglePlayback = useCallback(() => {
     const video = videoRef.current;
     if (!video) return;
     if (nextPlaybackIntent(video.paused) === "play") {
+      userPausedRef.current = false;
       void video.play().catch(() => undefined);
     } else {
+      userPausedRef.current = true;
       video.pause();
     }
   }, []);
@@ -189,6 +198,7 @@ export function VideoPlayerControls({
     const video = videoRef.current;
     if (!video) return;
     const generation = ++frameSeekGeneration.current;
+    userPausedRef.current = true;
     video.pause();
     setPaused(true);
     const mediaDuration = video.duration || durationRef.current;
@@ -364,6 +374,19 @@ export function VideoPlayerControls({
   }, [volume, muted, src]);
 
   useEffect(() => {
+    userPausedRef.current = false;
+    const video = videoRef.current;
+    if (!video) return;
+    applyMediaAutoplayIntent(
+      video,
+      shouldAutoStartMediaPlayback({
+        autoPlay,
+        userPaused: userPausedRef.current,
+      }),
+    );
+  }, [autoPlay, src]);
+
+  useEffect(() => {
     seekSessionRef.current?.cancel();
     return () => seekSessionRef.current?.cancel();
   }, [src]);
@@ -475,6 +498,14 @@ export function VideoPlayerControls({
             if (video.videoWidth > 0 && video.videoHeight > 0 && !video.error) {
               onReady?.();
               onPresentationReady?.();
+              if (
+                shouldAutoStartMediaPlayback({
+                  autoPlay: autoPlayRef.current,
+                  userPaused: userPausedRef.current,
+                })
+              ) {
+                applyMediaAutoplayIntent(video, true);
+              }
             }
           }}
           onPause={() => setPaused(true)}

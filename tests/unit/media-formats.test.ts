@@ -29,6 +29,11 @@ describe('media format registry', () => {
     }
     expect(imageDecoderForExtension('.zip')).toBeNull();
     expect(directImageMimeForExtension('.png')).toBe('image/png');
+    expect(directImageMimeForExtension('.avif')).toBe('image/avif');
+    expect(directImageMimeForExtension('photo.AVIF')).toBe('image/avif');
+    expect(imageDecoderForExtension('.avif')).toBe('sharp');
+    expect(imageMimeForExtension('.avif')).toBe('image/avif');
+    expect(isSupportedImageExtension('photo.avif')).toBe(true);
     expect(directImageMimeForExtension('.tiff')).toBeNull();
     expect(directImageMimeForExtension('.psd')).toBeNull();
     expect(imageViewerDecoderForExtension('.tiff')).toBe('oiio');
@@ -85,6 +90,7 @@ describe('media format registry', () => {
       expect(modelMimeForExtension(extension)).toMatch(/^model\//);
     }
     expect(isSupportedModelExtension('scene.3ds')).toBe(false);
+    expect(isSupportedModelExtension('project.blend')).toBe(false);
     expect(isSupportedModelExtension('texture.png')).toBe(false);
     expect(isSupportedModelExtension('model')).toBe(false);
     // Multi-dot names resolve by final extension only, like images/videos.

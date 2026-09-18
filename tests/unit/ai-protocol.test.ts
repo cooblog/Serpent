@@ -181,6 +181,35 @@ describe('vendorFailure', () => {
     });
   });
 
+  it('maps HTTP 400 request refusals away from unparseable-result copy', () => {
+    expect(vendorFailure(new VendorAdapterError(
+      'invalid_response',
+      'AI service returned HTTP 400',
+      {
+        details: {
+          httpStatus: 400,
+          formatRejected: true,
+          providerMessage: 'This response_format type is unavailable now',
+        },
+      },
+    ))).toEqual({
+      errorCode: 'AI_REQUEST_REJECTED',
+      reason: 'AI_REQUEST_REJECTED',
+      retryable: false,
+    });
+  });
+
+  it('maps a 400 without formatRejected as a rejected request, not a parse failure', () => {
+    expect(vendorFailure(new VendorAdapterError(
+      'invalid_response',
+      'AI service returned HTTP 400',
+      { details: { httpStatus: 400 } },
+    ))).toMatchObject({
+      errorCode: 'AI_REQUEST_REJECTED',
+      reason: 'AI_REQUEST_REJECTED',
+    });
+  });
+
   it('creates a cause-bearing diagnostic with safe provider and system details', () => {
     const systemError = Object.assign(
       new Error('fetch https://example.test/path?key=AIza-secret failed with Bearer top-secret'),
@@ -923,8 +952,47 @@ describe('OpenAIVendorAdapter', () => {
   it('only classifies explicit response-format compatibility failures', () => {
     expect(isStructuredOutputFormatRejection('response_format must be json_object')).toBe(true);
     expect(isStructuredOutputFormatRejection('unsupported json_schema response format')).toBe(true);
+    expect(isStructuredOutputFormatRejection(
+      'This response_format type is unavailable now',
+    )).toBe(true);
     expect(isStructuredOutputFormatRejection('unknown model: qwen-7b')).toBe(false);
     expect(isStructuredOutputFormatRejection('invalid API key')).toBe(false);
+  });
+
+  it('falls back after a relay says the response_format type is unavailable', async () => {
+    const requestFormats: unknown[] = [];
+    const fetchStub: typeof fetch = async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      requestFormats.push(body.response_format ?? null);
+      if (requestFormats.length === 1) {
+        return new Response(
+          JSON.stringify({
+            error: {
+              message: 'This response_format type is unavailable now',
+              type: 'invalid_request_error',
+              code: 'invalid_request_error',
+            },
+          }),
+          { status: 400, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      return new Response(
+        JSON.stringify(openAiChatResponse({ tags: ['plain-text-ok'] })),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    };
+    const adapter = new OpenAIVendorAdapter(
+      'test-api-key',
+      'compat-model',
+      fetchStub,
+      'http://format-unavailable.local/v1',
+    );
+
+    await expect(adapter.analyze(TEST_IMAGE_REQUEST)).resolves.toMatchObject({
+      tags: ['plain-text-ok'],
+    });
+    expect(requestFormats[0]).toMatchObject({ type: 'json_schema' });
+    expect(requestFormats).toContainEqual({ type: 'json_object' });
   });
 
   it('posts to a custom OpenAI-compatible base URL when provided', async () => {

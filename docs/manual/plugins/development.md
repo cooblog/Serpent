@@ -12,7 +12,7 @@
 | [插件 API 参考](api-reference.md) | `serpent.*` 方法、权限和错误码 |
 | [插件分发与更新](distribution-and-updates.md) | 安装通道、平台 token、GitHub Release 文件名 |
 | [插件开发最佳实践](best-practices.md) | 成品包、ZIP 路径、Job 进度、内容分块、原生二进制 |
-| [Image Upscaler](https://github.com/dolag233/Serpent-Plugin-ImageUpscaler) | 无限制插件 + 平台 Release 的参考实现 |
+| 官方插件参考实现 | [Renamer](https://github.com/dolag233/Serpent-Plugin-Renamer)（非受限模式 UI 插件）、[MediaConverter](https://github.com/dolag233/Serpent-Plugin-MediaConverter)（媒体转码与通用包）、[ImageUpscaler](https://github.com/dolag233/Serpent-Plugin-ImageUpscaler)（非受限原生二进制与分流包） |
 
 ## 1. 先了解插件模型
 
@@ -490,12 +490,20 @@ quarantine。`dispose` 应可重复调用且不依赖当前 UI。
 宿主 React/DOM 注入、通用 Python 运行时、任意 SQL、系统全局键鼠 Hook 或由权限拦截 unrestricted Node 行为。它们不是当前可发布的
 插件契约；不确定的行为按开发态限制处理，并在插件 README 中说明。
 
-## 14. 参考实现
+## 14. 官方参考实现
 
 仓库内的 `tests/fixtures/plugins/*-probe/` 覆盖单一扩展点，适合对照 schema 和 Host 行为。
 
-需要对照「可安装、可发布、带原生运行时」的完整插件时，使用
-[Serpent-Plugin-ImageUpscaler](https://github.com/dolag233/Serpent-Plugin-ImageUpscaler)。
-它演示了 `unrestricted` + `global`、`setup`/`dispose`、冻结 `invocation`、Job 工作单元进度、
-Base64 分块 staging、一次 `replaceContentBatch`，以及 macOS/Windows GitHub Release 平台 ZIP。
+需要对照真实生产级别、可安装、可发布的完整插件时，可参考以下官方实现：
+
+- **[Serpent-Plugin-Renamer](https://github.com/dolag233/Serpent-Plugin-Renamer)**：
+  - 采用非受限模式（`runtime.mode: "unrestricted"`），主要面向资产重命名与多条件批量替换场景；
+  - 完整演示了基于 Host 标准对话框与列表控件（`ui.list`、`ui.toggle`）构建交互界面、输入防抖与实时改名规则预览、文件名冲突检测以及通过 `assets.renameFiles` 执行原子化批量重命名。
+- **[Serpent-Plugin-MediaConverter](https://github.com/dolag233/Serpent-Plugin-MediaConverter)**：
+  - 媒体转码与压缩扩展，采用全平台通用包分发（`platformToken: any`）；
+  - 完整演示了多规格媒体转码计划生成、按分辨率或体积百分比缩放、后台 Job 队列长任务生命周期维护与进度状态同步。
+- **[Serpent-Plugin-ImageUpscaler](https://github.com/dolag233/Serpent-Plugin-ImageUpscaler)**：
+  - 采用非受限模式（`runtime.mode: "unrestricted"`），集成外部原生 AI 模型推理可执行文件；
+  - 完整演示了跨平台原生二进制子进程生命周期管理、`darwin-arm64` 与 `win32-x64` 分流打包发布、以及 Base64 分块内容暂存与回写。
+
 实践说明集中在 [插件开发最佳实践](best-practices.md)。

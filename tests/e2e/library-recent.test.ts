@@ -234,7 +234,7 @@ test("keeps decoded previews isolated when switching between libraries", async (
     window: Page,
     fileName: string,
   ) => {
-    const card = window.locator(`[data-asset-id][title="${fileName}"]`);
+    const card = window.locator(`[data-asset-id][data-asset-name="${fileName}"]`);
     await expect(card).toBeVisible({ timeout: 15_000 });
     const image = card.locator(`img[alt="${fileName}"]`);
     await expect(image).toBeVisible({ timeout: 15_000 });

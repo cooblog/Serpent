@@ -438,7 +438,7 @@ test("drops an asset into a nested collection and persists membership", async ()
     await window.getByRole("button", { name: "所有资产", exact: true }).click();
     await window.getByRole("button", { name: "导入文件", exact: true }).first().click();
     const sourceAsset = window.locator(
-      '.asset-card[title="nested-drop.txt"]',
+      '.asset-card[data-asset-name="nested-drop.txt"]',
     );
     await expect(sourceAsset).toBeVisible({ timeout: 15_000 });
 
@@ -455,7 +455,7 @@ test("drops an asset into a nested collection and persists membership", async ()
       "子合集B",
     );
     await expect(
-      window.locator('.asset-card[title="nested-drop.txt"]'),
+      window.locator('.asset-card[data-asset-name="nested-drop.txt"]'),
     ).toBeVisible({ timeout: 15_000 });
   } finally {
     await application.close();

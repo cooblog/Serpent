@@ -3290,7 +3290,10 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       const command = request.command;
       const linkedFolder = await withMediaSchedulingSuspended(
         command.libraryId,
-        () => libraryService.importFolderAsLinked(command),
+        () => libraryService.importFolderAsLinked({
+          ...command,
+          reconcileWatchers: false,
+        }),
         { resumeScheduling: false },
       );
       // Linked import already registered every asset. Do not list the whole
@@ -3299,6 +3302,16 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       // Also skip the unbounded post-import enqueue: it would insert jobs for
       // every missing thumbnail before browse can run.
       scheduleThumbnailScene(request.command.libraryId, 'linked');
+      setImmediate(() => {
+        try {
+          if (!libraryService.hasOpenLibrary(command.libraryId)) return;
+          libraryService.reconcileLinkedWatchersForLibrary(command.libraryId);
+        } catch (error) {
+          libraryService.reportDiagnostic('linked-watch.reconcile-deferred', error, {
+            libraryId: command.libraryId,
+          });
+        }
+      });
       return { ok: true, type: 'asset.import-linked.completed', linkedFolder };
     }
     case 'linked-folder.list':

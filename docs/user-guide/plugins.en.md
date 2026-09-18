@@ -4,24 +4,31 @@ Plugins add tools, menus, or workflows to Serpent. They are not ordinary library
 
 ## Install a plugin
 
-Install official and certified third-party plugins from the plugin community:
+Official plugins and verified third-party community plugins can be installed in one click from the built-in Plugin Community:
+
+- **Official plugins**: Developed and maintained directly by the Serpent team, identified with an official badge.
+- **Verified plugins**: Built by open-source community developers, audited for security and usability by the Serpent team, and included in the official catalog.
 
 1. Open **Settings → Plugins** and choose **Browse community**.
-2. Browse or search. Click a card to see the author, version, repository, and readme; click **Install** and choose **User-wide** or **This library**.
-3. After installation, return to the plugin list. Non-restricted plugins still need an explicit trust decision before they run.
+2. Browse or search. Click a card to see the author, version, repository, permission declarations, and readme; click **Install** and choose **User-wide** or **This library**.
+3. After installation, return to the plugin list. Restricted plugins can be enabled immediately; unrestricted plugins require confirming trust before their first run.
 
-A user-wide plugin is available in every library; a library plugin is used only in the current library.
+A user-wide plugin is available across all libraries on your machine; a library plugin is active only in the current library.
 
 ![Plugin community](../assets/ui/serpent-plugin-community.png)
 
-Local folders, local ZIP archives, and GitHub URLs you paste yourself use **Advanced install** on the same page:
+If you have local files or a direct GitHub repository address provided by an author, use **Advanced install**:
 
 1. In **Settings → Plugins**, choose **Advanced install**.
 2. Choose **Install ZIP** or **Install folder**, or paste a GitHub repository / Release URL. For example:
 
-   `https://github.com/dolag233/Serpent-Plugin-ImageUpscaler`
+   - Batch renamer plugin: `https://github.com/dolag233/Serpent-Plugin-Renamer`
+   - Media converter plugin: `https://github.com/dolag233/Serpent-Plugin-MediaConverter`
+   - Image upscaler plugin: `https://github.com/dolag233/Serpent-Plugin-ImageUpscaler`
 
-3. Choose **User-wide** or **This library** in the same way.
+3. Choose **User-wide** or **This library**.
+
+*If you are a plugin author and want your plugin included in the official community catalog for all users, see the [Plugin Distribution and Certification Guide](../manual/plugins/distribution-and-updates.md#5-成为官方插件与官方认证插件).*
 
 The plugin appears in the plugin list after installation. Follow the plugin author’s own instructions if it needs additional setup.
 

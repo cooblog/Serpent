@@ -16,6 +16,7 @@ import { VIEWER_CHROME_TAB_INDEX } from "./viewer-focus-policy";
 import {
   isDecodedImage,
   resolveViewerImageDisplay,
+  shouldRecoverCachedFullImage,
 } from "./viewer-mip-upgrade";
 import {
   IDENTITY_VIEWER_DISPLAY_TRANSFORM,
@@ -28,10 +29,6 @@ import {
   VIEWER_MAX_SCALE,
   VIEWER_MIN_SCALE,
 } from "./viewer-fit";
-import {
-  pbrTextureDisplayFilter,
-  type PbrTextureChannelPresentation,
-} from "./pbr-texture-channel";
 
 export type ZoomableImageHandle = {
   fitToWindow: () => void;
@@ -82,8 +79,6 @@ export const ZoomableImage = forwardRef<
     onRotate?: () => void;
     fitRequestToken?: number;
     displayTransform?: ViewerDisplayTransform;
-    /** Detected read-only PBR channel presentation for this image asset. */
-    pbrChannel?: PbrTextureChannelPresentation | null;
     /** Keep animated formats on their static placeholder until promotion. */
     isAnimated?: boolean;
     /**
@@ -111,7 +106,6 @@ export const ZoomableImage = forwardRef<
     onRotate,
     fitRequestToken,
     displayTransform = IDENTITY_VIEWER_DISPLAY_TRANSFORM,
-    pbrChannel = null,
     isAnimated = false,
     placeholderSrc,
     preloadOnly = false,
@@ -121,6 +115,7 @@ export const ZoomableImage = forwardRef<
 ) {
   const t = useT();
   const imageRef = useRef<HTMLImageElement>(null);
+  const fullImageRef = useRef<HTMLImageElement>(null);
   const [decodedSource, setDecodedSource] = useState<string | null>(null);
   const [imageError, setImageError] = useState(false);
   const decodeRequestRef = useRef(0);
@@ -229,14 +224,28 @@ export const ZoomableImage = forwardRef<
     },
     [measureFromImage, notifyPresentationReady],
   );
+  const promoteDecodedImageRef = useRef(promoteDecodedImage);
+  promoteDecodedImageRef.current = promoteDecodedImage;
 
-  // Invalidate pending decode continuations before React can reconcile a new
-  // source. The source identity latch above also makes this safe across the
-  // passive-effect boundary of a thumbnail → original prop update.
-  useEffect(() => {
+  // Invalidate in layout, not a passive effect. A cache-hit `load` can fire
+  // during commit (ABCBA's second A); a later useEffect would bump the decode
+  // token after that promotion had already started, and no second load
+  // arrives. Recover here if the full-source image is already decoded.
+  useLayoutEffect(() => {
     decodeRequestRef.current += 1;
     setDecodedSource(null);
     setImageError(false);
+    const image = fullImageRef.current;
+    if (
+      image &&
+      shouldRecoverCachedFullImage({
+        image,
+        decodedSource: null,
+        source: fullSource,
+      })
+    ) {
+      promoteDecodedImageRef.current(image, fullSource);
+    }
   }, [fullSource, placeholderSrc, src]);
 
   const handleImageError = useCallback(() => {
@@ -266,10 +275,6 @@ export const ZoomableImage = forwardRef<
   // the visual gap on some files but doubled source I/O and decode pressure on
   // the viewer's critical path. The ready thumbnail remains visible while
   // this single full image loads and is revealed only after naturalWidth > 0.
-
-  const pbrFilter = pbrChannel
-    ? pbrTextureDisplayFilter(pbrChannel)
-    : "none";
 
   useLayoutEffect(() => {
     const image = imageRef.current;
@@ -336,7 +341,6 @@ export const ZoomableImage = forwardRef<
               alt={fullLayerDecoded ? "" : alt}
               aria-hidden={fullLayerDecoded ? true : undefined}
               className={`preview-image preview-image-placeholder${fullLayerDecoded ? " is-hidden" : ""}`}
-              data-pbr-channel={pbrChannel?.channel}
               decoding="async"
               draggable={false}
               onError={handleImageError}
@@ -352,7 +356,6 @@ export const ZoomableImage = forwardRef<
               style={{
                 width: displayW,
                 height: displayH,
-                filter: pbrFilter,
                 transform: `translate(${view.x}px, ${view.y}px) ${viewerDisplayTransformCss(displayTransform)}`,
                 transformOrigin: "center center",
               }}
@@ -361,7 +364,6 @@ export const ZoomableImage = forwardRef<
               alt={fullLayerDecoded ? alt : ""}
               aria-hidden={!fullLayerDecoded ? true : undefined}
               className={`preview-image preview-image-full${fullLayerDecoded ? " is-visible" : " is-hidden"}`}
-              data-pbr-channel={pbrChannel?.channel}
               decoding="async"
               draggable={false}
               onError={handleImageError}
@@ -369,12 +371,16 @@ export const ZoomableImage = forwardRef<
                 setImageError(false);
                 promoteDecodedImage(event.currentTarget, fullSource);
               }}
-              ref={fullLayerDecoded ? imageRef : undefined}
+              ref={(node) => {
+                fullImageRef.current = node;
+                if (fullLayerDecoded) {
+                  imageRef.current = node;
+                }
+              }}
               src={fullSource}
               style={{
                 width: displayW,
                 height: displayH,
-                filter: pbrFilter,
                 transform: `translate(${view.x}px, ${view.y}px) ${viewerDisplayTransformCss(displayTransform)}`,
                 transformOrigin: "center center",
               }}
@@ -384,19 +390,20 @@ export const ZoomableImage = forwardRef<
           <img
             alt={alt}
             className="preview-image"
-            data-pbr-channel={pbrChannel?.channel}
             draggable={false}
             onError={handleImageError}
             onLoad={(event) => {
               setImageError(false);
               promoteDecodedImage(event.currentTarget, paintSrc);
             }}
-            ref={imageRef}
+            ref={(node) => {
+              imageRef.current = node;
+              fullImageRef.current = node;
+            }}
             src={display.displayUrl ?? src}
             style={{
               width: displayW,
               height: displayH,
-              filter: pbrFilter,
               transform: `translate(${view.x}px, ${view.y}px) ${viewerDisplayTransformCss(displayTransform)}`,
               transformOrigin: "center center",
             }}

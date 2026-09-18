@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { ImageSequenceSummary } from "../shared/asset-types";
 import type { PreviewResolution } from "../shared/library-api";
@@ -10,6 +10,7 @@ import {
 import { Icon } from "./Icons";
 import { SequenceFrameCanvas } from "./SequenceFrameCanvas";
 import { resolveSequenceFrameUrl } from "./sequence-frame-preview";
+import { useCardHoverScrub } from "./use-card-hover-scrub";
 
 interface AssetCardMediaProps {
   alt: string;
@@ -82,6 +83,28 @@ export function AssetCardMedia({
   const shouldLoadCover =
     !deferUntilVisible || loadImmediately || isActive || hovering;
   const live = resolveLivePreviewMedia(isActive && !isSequence, preview);
+  const mediaHostRef = useRef<HTMLDivElement>(null);
+  const liveMediaRef = useRef<HTMLMediaElement | null>(null);
+  const hoverScrubEnabled =
+    hovering && (live.kind === "video" || live.kind === "audio");
+  const hoverScrub = useCardHoverScrub({
+    enabled: hoverScrubEnabled,
+    hostRef: mediaHostRef,
+    mediaRef: liveMediaRef,
+  });
+  const bindLiveMedia = (element: HTMLMediaElement | null) => {
+    liveMediaRef.current = element;
+    if (element) element.volume = mediaVolume;
+  };
+  const hoverPlayhead =
+    hoverScrub.showPlayhead ? (
+      <div aria-hidden="true" className="asset-card-hover-progress">
+        <div
+          className="asset-card-hover-progress-fill"
+          style={{ width: `${hoverScrub.playheadPercent}%` }}
+        />
+      </div>
+    ) : null;
   const [sequenceFrame, setSequenceFrame] = useState(0);
   // Serpent-2ajm: a failed image load must never paint the browser's broken
   // image glyph — fall back to the themed file/cracked icon instead.
@@ -112,7 +135,7 @@ export function AssetCardMedia({
     const visibleSequenceUrl = shouldLoadCover ? sequenceUrl : null;
     if (!isActive) {
       return (
-        <div className="asset-card-media">
+        <div className="asset-card-media" ref={mediaHostRef}>
           {visibleSequenceUrl && !errored ? (
             <img
               alt={alt}
@@ -130,7 +153,7 @@ export function AssetCardMedia({
       );
     }
     return (
-      <div className="asset-card-media">
+      <div className="asset-card-media" ref={mediaHostRef}>
         {visibleSequenceUrl && !errored ? (
           <img
             alt={alt}
@@ -154,7 +177,7 @@ export function AssetCardMedia({
 
   const visibleCoverUrl = shouldLoadCover ? coverUrl : null;
   return (
-    <div className="asset-card-media">
+    <div className="asset-card-media" ref={mediaHostRef}>
       {visibleCoverUrl && !errored ? (
         <img
           alt={alt}
@@ -178,7 +201,7 @@ export function AssetCardMedia({
       ) : null}
       {live.kind === "video" && live.url ? (
         <video
-          autoPlay
+          autoPlay={!hovering}
           className="asset-card-media-live"
           loop
           muted={resolveLiveVideoMuted({
@@ -190,26 +213,22 @@ export function AssetCardMedia({
           playsInline
           poster={preview?.posterUrl}
           preload="metadata"
-          // volume is a DOM property, not a JSX attribute — set it via ref.
-          ref={(element) => {
-            if (element) element.volume = mediaVolume;
-          }}
+          ref={bindLiveMedia}
           src={live.url}
         />
       ) : null}
       {live.kind === "audio" && live.url && shouldPlayLiveAudio({ hovering, hoverAudioPlay }) ? (
         <audio
-          autoPlay
+          autoPlay={false}
           className="asset-card-media-live"
           loop
           muted={mediaMuted}
           preload="metadata"
-          ref={(element) => {
-            if (element) element.volume = mediaVolume;
-          }}
+          ref={bindLiveMedia}
           src={live.url}
         />
       ) : null}
+      {hoverPlayhead}
     </div>
   );
 }

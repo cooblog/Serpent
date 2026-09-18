@@ -36,18 +36,15 @@
 
 从 [GitHub Releases](https://github.com/dolag233/Serpent/releases) 下载最新安装包。
 
-**macOS**：下载 `Serpent-<版本>-arm64.dmg`，拖入「应用程序」。首次打开时 macOS 会提示"无法验证开发者"，右键点击应用 → 打开（仅首次），或运行：
+**macOS**：下载 `Serpent-darwin-arm64-<版本>-package.dmg`（或便携版 `.zip`），将 Serpent 拖入「应用程序」。首次打开时 macOS 若提示"无法验证开发者"，右键点击应用 → 选择「打开」（仅首次），或在终端执行：
 
 ```bash
 xattr -cr /Applications/Serpent.app
 ```
 
-**Windows**：运行 `Serpent-<版本> Setup.exe`。未签名版本首次运行会显示 SmartScreen 警告，选择「更多信息 → 仍要运行」。
+**Windows**：下载安装包 `Serpent-win-x86-64-<版本>-setup.zip`（解压运行内含的安装程序），或下载便携版 `Serpent-win-x86-64-<版本>-portable.zip`（解压即用）。未签名版本首次运行会显示 SmartScreen 警告，选择「更多信息 → 仍要运行」。
 
-**浏览器扩展**：从[浏览器扩展发布页](https://github.com/dolag233/Serpent-Extension/releases)下载。安装后打开 `chrome://extensions`，开启开发者模式，加载已解压的扩展：
-
-- macOS：`Serpent.app/Contents/Resources/extension`
-- Windows：安装目录 `resources/extension`
+**浏览器扩展**：从[浏览器扩展发布页](https://github.com/dolag233/Serpent-Extension/releases)下载。安装与配置指引见[浏览器扩展使用指南](docs/user-guide/browser-extension.md)。
 
 ## 本地构建
 
@@ -79,6 +76,7 @@ npm run make             # 按平台生成安装包（macOS dmg / Windows zip；
 | [使用手册](docs/user-guide/README.md) | 安装、导入、浏览、搜索、标签、合集、3D 查看、故障排查 |
 | [在线文档](https://serpent.dolag.work/docs/user-guide/) | 浏览器中阅读最新使用手册 |
 | [开发者文档](docs/developer/README.md) | 环境搭建、构建打包、架构、测试 |
+| [贡献指南](docs/developer/contributing.md) | 开源协作准则、环境准备与 Pull Request 流程 |
 | [扩展作者手册](docs/manual/README.md) | 插件 / 脚本 / MCP |
 | [产品简报](docs/product-brief.md) | 产品愿景与 MVP 边界 |
 

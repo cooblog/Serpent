@@ -53,6 +53,10 @@ export type UseExternalImportHandlersParams = {
   /** After a successful import without conflicts: reveal/select imported assets. */
   onImportCompleted: (completion: ImportCompletion) => void | Promise<void>;
   setUiState: (state: "loading" | "importing" | "ready") => void;
+  /** Drop/paste RPC return must clear the overlay even if a complete event was lost. */
+  setImportProgress: (progress: null) => void;
+  /** Overlay session is the Worker import command, not follow-up reveal. */
+  runImportRpc: <T>(work: () => Promise<T>) => Promise<T>;
   setError: (message: string | null) => void;
   setNotice: (message: string | null) => void;
   setConflicts: (plan: ImportConflictPlan | null) => void;
@@ -88,6 +92,8 @@ export function useExternalImportHandlers({
   reloadCurrentContentRef,
   onImportCompleted,
   setUiState,
+  setImportProgress,
+  runImportRpc,
   setError,
   setNotice,
   setConflicts,
@@ -165,7 +171,7 @@ export function useExternalImportHandlers({
       setError(null);
       setNotice(null);
       try {
-        const result = await api.importDropped({
+        const result = await runImportRpc(() => api.importDropped({
           libraryId: library.libraryId,
           targetFolderId: targetFolderId ?? undefined,
           targetCollectionId,
@@ -173,13 +179,14 @@ export function useExternalImportHandlers({
           files,
           html: webPayload?.html,
           uriList: webPayload?.uriList,
-        });
+        }));
         await applyDesktopImportResult(result);
       } catch (caught) {
         if (!shouldSuppressClipboardPasteFeedback(caught)) {
           setError(toMessage(caught, t("toast.dropImportFailed"), locale));
         }
       } finally {
+        setImportProgress(null);
         setUiState("ready");
         setExternalDropActive(false);
         externalDragDepth.current = 0;
@@ -194,7 +201,9 @@ export function useExternalImportHandlers({
       library,
       locale,
       managedImportTargetFolderIdRef,
+      runImportRpc,
       setError,
+      setImportProgress,
       setNotice,
       setUiState,
       t,
@@ -214,12 +223,12 @@ export function useExternalImportHandlers({
       setError(null);
       setNotice(null);
       try {
-        const result = await api.pasteClipboardImage({
+        const result = await runImportRpc(() => api.pasteClipboardImage({
           libraryId: library.libraryId,
           targetFolderId:
             options?.targetFolderId ?? managedImportTargetFolderIdRef.current,
           targetCollectionId: activeCollectionId ?? undefined,
-        });
+        }));
         if (!result.ok) {
           if (result.error.code === "CLIPBOARD_IMAGE_NOT_FOUND") {
             if (options?.onNoClipboardImage) {
@@ -248,6 +257,7 @@ export function useExternalImportHandlers({
           setError(toMessage(caught, t("toast.clipboardImportFailed"), locale));
         }
       } finally {
+        setImportProgress(null);
         setUiState("ready");
       }
     },
@@ -260,10 +270,12 @@ export function useExternalImportHandlers({
       managedImportTargetFolderIdRef,
       onImportCompleted,
       reloadCurrentContentRef,
+      runImportRpc,
       setConflicts,
       setSourceFailurePlan,
       setImageSequenceImportOffer,
       setError,
+      setImportProgress,
       setNotice,
       setUiState,
       t,

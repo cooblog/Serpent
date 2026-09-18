@@ -3339,6 +3339,118 @@ describe('audio waveform thumbnail (Serpent-13v)', () => {
     service.closeAll();
   });
 
+  it('uses attached album art as the grid thumbnail (Serpent-690060)', async () => {
+    process.env['SERPENT_FFMPEG_PATH'] = '/fake/ffmpeg';
+    const sharp = require('sharp') as (input: unknown) => {
+      png(): { toBuffer(): Promise<Buffer> };
+    };
+    const coverPng = await sharp({
+      create: {
+        width: 32,
+        height: 24,
+        channels: 3,
+        background: { r: 200, g: 40, b: 80 },
+      },
+    }).png().toBuffer();
+    const probeJson = JSON.stringify({
+      streams: [
+        {
+          codec_type: 'audio',
+          codec_name: 'mp3',
+          channels: 2,
+          sample_rate: '44100',
+        },
+        {
+          codec_type: 'video',
+          codec_name: 'mjpeg',
+          width: 32,
+          height: 24,
+          disposition: { attached_pic: 1 },
+        },
+      ],
+      format: {
+        filename: '/fake/song.mp3',
+        format_name: 'mp3',
+        duration: '12.0',
+        bit_rate: '128000',
+      },
+    });
+
+    const root = temporaryRoot();
+    const service = new LibraryService({
+      spawnFn: async (command, args) => {
+        const outputPath = args.at(-1);
+        if (outputPath && ['.jpg', '.png', '.webp', '.json'].some((extension) => outputPath.endsWith(extension))) {
+          mkdirSync(path.dirname(outputPath), { recursive: true });
+          if (outputPath.endsWith('.png')) {
+            const isWaveform = args.some((argument) => argument.includes('showwavespic'));
+            writeFileSync(outputPath, isWaveform ? VALID_1X1_PNG : coverPng);
+          } else {
+            writeFileSync(outputPath, Buffer.from('mock-output-data'));
+          }
+        }
+        if (command.includes('ffprobe')) {
+          return { stdout: Buffer.from(probeJson), stderr: '', exitCode: 0 };
+        }
+        return { stdout: Buffer.alloc(0), stderr: '', exitCode: 0 };
+      },
+    });
+    const created = service.createLibrary({
+      displayName: 'AudioAlbumCover',
+      selectedParentPath: root,
+    });
+    const sourcePath = path.join(root, 'song.mp3');
+    writeFileSync(sourcePath, Buffer.alloc(4096, 0));
+    importNoConflict(service, created.libraryId, sourcePath);
+    const asset = service.listAssets({
+      libraryId: created.libraryId,
+      recursive: true,
+    })[0]!;
+
+    const result = (await service.generateThumbnail({
+      libraryId: created.libraryId,
+      assetId: asset.assetId,
+    }))!;
+
+    const db = assertDb(created.libraryPath);
+    const thumb = db
+      .prepare(
+        "SELECT kind, mime_type, generator_version, width, height, status FROM revision_artifacts WHERE artifact_id = ?",
+      )
+      .get(result.artifactId) as {
+        kind: string;
+        mime_type: string;
+        generator_version: string;
+        width: number;
+        height: number;
+        status: string;
+      };
+    expect(thumb).toMatchObject({
+      kind: 'thumbnail',
+      mime_type: 'image/jpeg',
+      status: 'ready',
+      width: 32,
+      height: 24,
+    });
+    expect(thumb.generator_version).toContain(AUDIO_WAVEFORM_COVER_GENERATOR_TAG);
+    expect(thumb.width).not.toBe(640);
+    const poster = db
+      .prepare(
+        "SELECT kind, width, height, status FROM revision_artifacts WHERE revision_id = ? AND kind = 'video_poster' AND invalidated_at IS NULL",
+      )
+      .get(
+        (db.prepare('SELECT current_revision_id FROM assets WHERE asset_id = ?').get(asset.assetId) as { current_revision_id: string }).current_revision_id,
+      ) as { kind: string; width: number; height: number; status: string };
+    expect(poster).toMatchObject({
+      kind: 'video_poster',
+      width: 1280,
+      height: 220,
+      status: 'ready',
+    });
+    db.close();
+    service.closeAll();
+  });
+
   it('does not generate an Opus/Ogg playback proxy for WAV until explicitly requested', async () => {
     process.env['SERPENT_FFMPEG_PATH'] = '/fake/ffmpeg';
     const root = temporaryRoot();

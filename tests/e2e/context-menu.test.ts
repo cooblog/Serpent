@@ -615,16 +615,16 @@ test("multi-asset menu shows a visible count and mixed-selection skip reasons", 
       .first()
       .click();
     await expect(
-      window.locator('[data-asset-id][title="managed.png"]'),
+      window.locator('[data-asset-id][data-asset-name="managed.png"]'),
     ).toBeVisible({ timeout: 15_000 });
 
     await openLinkedFolderImportMenu(application, window);
     await window.getByRole("button", { name: "所有资产" }).click();
 
     const managedCard = window.locator(
-      '[data-asset-id][title="managed.png"]',
+      '[data-asset-id][data-asset-name="managed.png"]',
     );
-    const linkedCard = window.locator('[data-asset-id][title="linked.png"]');
+    const linkedCard = window.locator('[data-asset-id][data-asset-name="linked.png"]');
     await expect(managedCard).toBeVisible({ timeout: 15_000 });
     await expect(linkedCard).toBeVisible({ timeout: 15_000 });
 

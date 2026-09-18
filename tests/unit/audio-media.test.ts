@@ -12,6 +12,7 @@ import {
   audioMimeForExtension,
   audioWaveformCoverAspectRatio,
   contrastsWithLightCanvas,
+  ffprobeHasAttachedPicture,
   isAudioFileName,
   isLightFriendlyWaveformCoverBackground,
   isNearFourByThreeAspect,
@@ -51,7 +52,7 @@ test("waveform cover geometry is approximately 4:3 (Serpent-dxk)", () => {
   ).toBe(true);
   expect(isNearFourByThreeAspect(640, 160)).toBe(false);
   expect(isNearFourByThreeAspect(160, 640)).toBe(false);
-  expect(AUDIO_WAVEFORM_COVER_GENERATOR_TAG).toBe("waveform-cover6");
+  expect(AUDIO_WAVEFORM_COVER_GENERATOR_TAG).toBe("audio-cover7");
 });
 
 test("viewer waveform strip is wide (not 4:3 grid cover)", () => {
@@ -97,4 +98,25 @@ test("waveform cover stage contrasts with light canvas (Serpent-muc)", () => {
   expect(
     contrastsWithLightCanvas({ r: 0xe8, g: 0xea, b: 0xe7 }),
   ).toBe(false);
+});
+
+test("ffprobeHasAttachedPicture requires an attached_pic video stream", () => {
+  expect(ffprobeHasAttachedPicture({
+    streams: [
+      { codec_type: "audio", codec_name: "mp3" },
+      {
+        codec_type: "video",
+        codec_name: "mjpeg",
+        disposition: { attached_pic: 1 },
+      },
+    ],
+  })).toBe(true);
+  expect(ffprobeHasAttachedPicture({
+    streams: [
+      { codec_type: "audio", codec_name: "aac" },
+      { codec_type: "video", codec_name: "h264", width: 1920, height: 1080 },
+    ],
+  })).toBe(false);
+  expect(ffprobeHasAttachedPicture({ streams: [{ codec_type: "audio" }] })).toBe(false);
+  expect(ffprobeHasAttachedPicture(null)).toBe(false);
 });

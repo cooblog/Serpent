@@ -5,6 +5,7 @@ import {
   isDecodedImage,
   resolveViewerImageDisplay,
   resolveViewerPlaceholderUrl,
+  shouldRecoverCachedFullImage,
 } from "../../src/renderer/viewer-mip-upgrade";
 
 const readyImage = {
@@ -94,5 +95,30 @@ describe("viewer mip upgrade (Serpent-eh07)", () => {
     expect(isDecodedImage({ complete: true, naturalWidth: 800 })).toBe(true);
     expect(isDecodedImage({ complete: true, naturalWidth: 0 })).toBe(false);
     expect(isDecodedImage({ complete: false, naturalWidth: 800 })).toBe(false);
+  });
+
+  it("recovers a cache-hit original after the decode token is invalidated", () => {
+    const decoded = { complete: true, naturalWidth: 64 };
+    expect(
+      shouldRecoverCachedFullImage({
+        image: decoded,
+        decodedSource: null,
+        source: "serpent://source/a",
+      }),
+    ).toBe(true);
+    expect(
+      shouldRecoverCachedFullImage({
+        image: decoded,
+        decodedSource: "serpent://source/a",
+        source: "serpent://source/a",
+      }),
+    ).toBe(false);
+    expect(
+      shouldRecoverCachedFullImage({
+        image: { complete: false, naturalWidth: 0 },
+        decodedSource: null,
+        source: "serpent://source/a",
+      }),
+    ).toBe(false);
   });
 });

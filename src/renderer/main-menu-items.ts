@@ -116,6 +116,7 @@ export type MainMenuActions = {
   readonly clearSelection: () => void;
   readonly openSettings: () => void;
   readonly openBackgroundJobs: () => void;
+  readonly toggleFullscreen: () => void;
   readonly openAppLog: () => void;
   readonly openAbout: () => void;
   readonly openGitHub: () => void;
@@ -320,6 +321,12 @@ export function buildMainMenuSections({
       label: label(locale, "shell.mainMenuWindow"),
       icon: "fullscreen",
       items: [
+        {
+          id: "window.toggle-fullscreen",
+          label: label(locale, "shell.mainMenuToggleFullscreen"),
+          shortcut: shortcut(platform, "⌃⌘F", "F11"),
+          onSelect: actions.toggleFullscreen,
+        },
         {
           id: "window.background-jobs",
           label: label(locale, "toolbar.backgroundJobs"),

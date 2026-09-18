@@ -123,6 +123,12 @@ export const PLATFORM_SHORTCUT_TABLE: readonly PlatformShortcutRow[] = [
     mac: { label: "⌘0", key: "0", metaKey: true },
     windows: { label: "Ctrl+0", key: "0", ctrlKey: true },
   },
+  {
+    id: "window.toggle-fullscreen",
+    purpose: "Toggle application window fullscreen (not viewer element fullscreen)",
+    mac: { label: "⌃⌘F", key: "f", metaKey: true, ctrlKey: true },
+    windows: { label: "F11", key: "F11" },
+  },
 ] as const;
 
 /**

@@ -15,8 +15,12 @@
 ### Windows
 
 - Git、PowerShell
-- Visual Studio Build Tools：Desktop development with C++ 工作负载 + Windows SDK
-- 媒体组件构建：`scripts/media-build/win32-x64.ps1`
+- Visual Studio Build Tools：勾选“使用 C++ 的桌面开发”（Desktop development with C++）工作负载及 Windows SDK（原生模块 `better-sqlite3` 编译必需）
+- **Inno Setup 6**（构建 Windows 安装包 `SerpentSetup.exe` 时必需）：
+  - 推荐方式（免管理员）：通过 NuGet 获取 `Tools.InnoSetup`，解压提取 `ISCC.exe` 放置于 `%LOCALAPPDATA%\SerpentTools\inno\tools\` 目录；
+  - 官网安装方式：安装官方 Inno Setup 6 并将环境变量 `SERPENT_INNO_TOOLS` 指向 `ISCC.exe` 所在目录（或加入系统 `PATH`）；
+  - 若仅在开发态运行（`npm start`）或生成便携版（`npm run package`），则无需安装 Inno Setup。
+- 媒体组件构建（仅需要重建底层二进制时）：`scripts/media-build/win32-x64.ps1`（vcpkg）
 
 ## 首次构建
 

@@ -201,6 +201,7 @@ export class DashScopeVendorAdapter implements VendorAdapter {
     return new VendorAdapterError(
       httpStatusToErrorKind(response.status, bodyText),
       `AI service returned HTTP ${response.status}`,
+      { details: { httpStatus: response.status } },
     );
   }
 

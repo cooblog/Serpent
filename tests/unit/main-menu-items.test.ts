@@ -28,6 +28,7 @@ function createActions(): MainMenuActions {
     clearSelection: vi.fn(),
     openSettings: vi.fn(),
     openBackgroundJobs: vi.fn(),
+    toggleFullscreen: vi.fn(),
     openAppLog: vi.fn(),
     openAbout: vi.fn(),
     openGitHub: vi.fn(),
@@ -132,14 +133,29 @@ describe("main-menu-items (Serpent-bnah)", () => {
     expect(settings?.items).toBeUndefined();
     expect(sections.find((section) => section.id === "window")?.items).toEqual(
       expect.arrayContaining([
+        expect.objectContaining({ id: "window.toggle-fullscreen", shortcut: "F11" }),
         expect.objectContaining({ id: "window.background-jobs" }),
         expect.objectContaining({ id: "window.diagnostics" }),
       ]),
     );
+    const fullscreen = sections
+      .find((section) => section.id === "window")
+      ?.items?.find((item) => item.id === "window.toggle-fullscreen");
+    fullscreen?.onSelect();
+    expect(actions.toggleFullscreen).toHaveBeenCalledTimes(1);
     const about = sections.find((section) => section.id === "about");
     const diagnostics = about?.items?.find((item) => item.id === "about.diagnostics");
     diagnostics?.onSelect?.();
     expect(actions.openAppLog).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows Control+Command+F for window fullscreen on macOS", () => {
+    const { sections } = build({ platform: "mac" });
+    expect(
+      sections
+        .find((section) => section.id === "window")
+        ?.items?.find((item) => item.id === "window.toggle-fullscreen")?.shortcut,
+    ).toBe("⌃⌘F");
   });
 
   it("keeps the Library menu aligned with the library switcher", () => {

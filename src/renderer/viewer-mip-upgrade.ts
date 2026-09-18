@@ -81,6 +81,25 @@ export function isDecodedImage(image: {
 }
 
 /**
+ * Chromium can fire `load` synchronously while React commits a cached
+ * `src`. A later source-change effect that invalidates in-flight decode
+ * tokens will drop that promotion, and no second `load` arrives. Recover
+ * when the full-source image is already decoded but the latch is not.
+ */
+export function shouldRecoverCachedFullImage(input: {
+  readonly image: {
+    readonly complete: boolean;
+    readonly naturalWidth: number;
+  } | null;
+  readonly decodedSource: string | null;
+  readonly source: string;
+}): boolean {
+  if (!input.source || !input.image) return false;
+  if (input.decodedSource === input.source) return false;
+  return isDecodedImage(input.image);
+}
+
+/**
  * Whether the viewer should treat the surface as presentable before the
  * full `requestPreview` round-trip returns (image + ready thumbnail).
  */

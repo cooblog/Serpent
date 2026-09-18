@@ -289,12 +289,25 @@ describe('Linked folder import', () => {
       libraryId: created.libraryId,
       sourceRootPath: sourceRoot,
     });
+    const cataloged = service.listAssets({
+      libraryId: created.libraryId,
+      folderId: linked.folderId,
+      recursive: false,
+    });
+    expect(cataloged).toHaveLength(1);
+    expect(cataloged[0]?.thumbnailStatus).not.toBe('ready');
+    // Linked import returns after catalog commit. Width/height come from the
+    // same visible-window probe browse uses, not from the import mutation.
+    const probed = service.persistVisibleWindowImageDimensions(
+      created.libraryId,
+      [cataloged[0]!.assetId],
+    );
+    expect(probed).toEqual([{ assetId: cataloged[0]!.assetId, width: 1, height: 1 }]);
     const assets = service.listAssets({
       libraryId: created.libraryId,
       folderId: linked.folderId,
       recursive: false,
     });
-    expect(assets).toHaveLength(1);
     expect(assets[0]?.width).toBe(1);
     expect(assets[0]?.height).toBe(1);
     expect(assets[0]?.thumbnailStatus).not.toBe('ready');

@@ -8,25 +8,25 @@
 
 当前共享媒体格式注册表（`src/shared/media-formats.ts`，音频另由 `src/shared/audio-media.ts` 注册）包含：
 
-- 图像：PNG、JPEG、GIF、TIFF、WebP、SVG、BMP、ICO、PSD、EXR、TGA，以及 DNG、CR2、CR3、NEF、ARW、RAF、ORF、RW2 等 RAW。
+- 图像：PNG、JPEG、GIF、TIFF、WebP、**AVIF**、SVG、BMP、ICO、PSD、EXR、TGA，以及 DNG、CR2、CR3、NEF、ARW、RAF、ORF、RW2 等 RAW。
 - 视频：MP4、MOV、AVI、WMV、WebM、MKV、M4V。
-- 音频：WAV、MP3、OGG/OGA、M4A、AAC、FLAC、Opus（音频的具体预览能力仍应按解码路径逐项验证）。
+- 音频：WAV、MP3、OGG/OGA、M4A、AAC、FLAC、Opus（网格缩略图优先用内嵌专辑封面，否则波形图）。
 - 3D：FBX、OBJ、glTF、GLB、STL。
 - 文档/网页：PDF、HTML、HTM。
 
 ### 当前图像查看器路径
 
-- PNG、JPEG、GIF、WebP、SVG 可以直接由 Chromium 读取源文件（SVG 保留矢量语义）。
+- PNG、JPEG、GIF、WebP、AVIF、SVG 可以直接由 Chromium 读取源文件（SVG 保留矢量语义；动画 AVIF 查看器走源文件，卡片缩略图取首帧）。
 - BMP、TIFF、TGA、PSD、EXR 和 RAW/ICO 不能依赖 Chromium 的源文件 MIME。它们的卡片仍使用有界缩略图，但双击查看会生成独立的全分辨率解码图；EXR 的 plane 和色彩空间属于该查看图的生成条件。
 - TIFF 缩略图直接使用 OIIO，避免 Sharp/libvips 读取大型私有 TIFF 元数据时触发内存分配上限。普通文件与带大型自定义 tag 的 TIFF 都必须走同一条安全路径。
 
-AVIF 当前不在注册表中，已建立工单 `Serpent-b906b1`。
+AVIF 已登记为 Sharp 图像（工单 `Serpent-c93c75`，接替已关闭的 `Serpent-b906b1`）。Windows packaged 与 Computer Use 仍须在验收清单标明未执行。
 
 ## 建议优先级
 
 ### P1：优先补齐的图像格式
 
-- **AVIF（`.avif`）**：现代高压缩图像，支持透明度和动画；需要走图像源图/缩略图/查看器链路，不应因为它是图像而自动生成视频类 proxy。MDN 将 AVIF 列为 `image/avif`，并指出其适合静态和动画图像：[Image file type and format guide](https://developer.mozilla.org/en-US/docs/Web/Media/Guides/Formats/Image_types)。对应工单：`Serpent-b906b1`。
+- **AVIF（`.avif`）**：已接入共享注册表与 Sharp/Chromium 路径（`Serpent-c93c75`）。动画文件的卡片仍用首帧；查看器走源文件。跨平台 packaged 证据未齐前不要写成发布通过。
 - **HEIF/HEIC（`.heif`、`.heic`）**：手机和摄影工作流常见，通常包含 HEVC 编码，需要确认打包后的 Sharp/OIIO/系统解码器是否具备可分发的解码能力，以及许可和跨平台一致性。HEIF 属于 ISO/IEC 23008-12 体系，MPEG/ISO 的 MIAF 说明见：[ISO/IEC 23000-22](https://www.iso.org/standard/87576.html)。
 - **APNG（`.apng`）**：设计素材和动图工作流中会遇到。需要明确查看器是显示首帧、播放动画，还是只提供静态缩略图；不能把 APNG 当作普通 PNG 后悄悄丢掉动画帧。W3C PNG 第三版同时登记 `image/png` 与 `image/apng`，并说明 APNG 已广泛实现：[PNG Specification (Third Edition)](https://www.w3.org/TR/png-3/)。
 
@@ -55,4 +55,4 @@ AVIF 当前不在注册表中，已建立工单 `Serpent-b906b1`。
 
 ## 结论
 
-当前最直接的下一步是完成 `Serpent-b906b1` 的 AVIF 全链路支持；随后按 HEIF/HEIC、APNG 的优先级验证，再根据真实用户素材决定影视容器、音频和游戏纹理格式。JPEG XL、DDS/KTX2 以及更多 3D 交换格式应在确认解码器、跨平台打包和查看器语义后分别立项。
+当前最直接的下一步是收口 AVIF 的 Windows/packaged 证据，以及按 HEIF/HEIC、APNG 的优先级验证；再根据真实用户素材决定影视容器、音频和游戏纹理格式。JPEG XL、DDS/KTX2 以及更多 3D 交换格式应在确认解码器、跨平台打包和查看器语义后分别立项。

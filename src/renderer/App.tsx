@@ -80,6 +80,7 @@ import {
   isBlockingImportOverlayVisible,
   shouldApplyImportProgressEvent,
 } from "./import-progress-copy";
+import { addRetiredImportId, runImportRpc } from "./import-progress-session";
 import { isActiveDeleteProgress, isDeleteProgressCancelable } from "./delete-progress-copy";
 import { activeLibrarySwitchActivity } from "./library-switch-safety";
 import { createLibraryTransitionLock } from "./library-transition-lock";
@@ -942,6 +943,7 @@ function AppInner() {
     useState(false);
   const importDecisionSubmittingRef = useRef(false);
   const completedImportIdRef = useRef<string | null>(null);
+  const retiredImportIdsRef = useRef<Set<string>>(new Set());
   const [imageSequenceImportOffer, setImageSequenceImportOffer] =
     useState<ImageSequenceImportOffer | null>(null);
   const [imageSequenceImportIndex, setImageSequenceImportIndex] = useState(0);
@@ -1570,6 +1572,44 @@ function AppInner() {
     useState<ImportProgressEvent | null>(null);
   const importProgressRef = useRef(importProgress);
   importProgressRef.current = importProgress;
+  const importRpcDepthRef = useRef(0);
+  const importOverlayDismissedRef = useRef(false);
+  const activeImportIdRef = useRef<string | null>(null);
+  const [importRpcInFlight, setImportRpcInFlight] = useState(false);
+  const [importOverlayDismissed, setImportOverlayDismissed] = useState(false);
+  const beginImportRpc = useCallback(() => {
+    importRpcDepthRef.current += 1;
+    importOverlayDismissedRef.current = false;
+    setImportOverlayDismissed(false);
+    setImportRpcInFlight(true);
+  }, []);
+  const endImportRpc = useCallback(() => {
+    importRpcDepthRef.current = Math.max(0, importRpcDepthRef.current - 1);
+    if (importRpcDepthRef.current === 0) {
+      addRetiredImportId(
+        retiredImportIdsRef.current,
+        importProgressRef.current?.importId ?? activeImportIdRef.current,
+      );
+      activeImportIdRef.current = null;
+      setImportProgress(null);
+      importOverlayDismissedRef.current = false;
+      setImportOverlayDismissed(false);
+      setImportRpcInFlight(false);
+    }
+  }, []);
+  const runCurrentImportRpc = useCallback(
+    <T,>(work: () => Promise<T>): Promise<T> => runImportRpc(
+      { begin: beginImportRpc, end: endImportRpc },
+      work,
+    ),
+    [beginImportRpc, endImportRpc],
+  );
+  const dismissImportOverlay = useCallback(() => {
+    const importId = importProgressRef.current?.importId;
+    addRetiredImportId(retiredImportIdsRef.current, importId);
+    importOverlayDismissedRef.current = true;
+    setImportOverlayDismissed(true);
+  }, []);
   const importAwaitingUserDecisionRef = useRef(false);
   const importInterruptRef = useRef<"abandon" | "stop" | null>(null);
   const [importInterrupt, setImportInterrupt] = useState<"abandon" | "stop" | null>(
@@ -7572,6 +7612,7 @@ function AppInner() {
         setImageSequenceImportOffer(offer);
       },
       onPasteCompleted: (completion) => revealAfterImportRef.current(completion),
+      runImportRpc: runCurrentImportRpc,
     });
 
   const osClipboardPasteAtRef = useRef(0);
@@ -7656,6 +7697,8 @@ function AppInner() {
     reloadCurrentContentRef,
     onImportCompleted: (completion) => revealAfterImportRef.current(completion),
     setUiState,
+    setImportProgress,
+    runImportRpc: runCurrentImportRpc,
     setError,
     setNotice,
     setConflicts: (plan) => {
@@ -8346,18 +8389,19 @@ function AppInner() {
     setError(null);
     setNotice(null);
     try {
-      const result =
+      const result = await runCurrentImportRpc(() =>
         kind === "files"
-          ? await api.importFiles({
+          ? api.importFiles({
               libraryId: library.libraryId,
               targetFolderId: managedImportTargetFolderIdRef.current,
               autoDetectImageSequences: imageSequencePrefs.autoDetectOnImport,
             })
-          : await api.importFolder({
+          : api.importFolder({
               libraryId: library.libraryId,
               targetFolderId: managedImportTargetFolderIdRef.current,
               autoDetectImageSequences: imageSequencePrefs.autoDetectOnImport,
-            });
+            }),
+      );
       if (!result.ok) {
         if (result.error.code === "CANCELLED") {
           setNotice(t("toast.importCancelled"));
@@ -8393,7 +8437,9 @@ function AppInner() {
     setError(null);
     setNotice(null);
     try {
-      const result = await api.importEagleLibrary({ libraryId: library.libraryId });
+      const result = await runCurrentImportRpc(() =>
+        api.importEagleLibrary({ libraryId: library.libraryId }),
+      );
       if (!result.ok) {
         if (result.error.code === "CANCELLED") {
           setNotice(t("toast.importCancelled"));
@@ -8423,7 +8469,9 @@ function AppInner() {
     setError(null);
     setNotice(null);
     try {
-      const result = await api.importBillfishLibrary({ libraryId: library.libraryId });
+      const result = await runCurrentImportRpc(() =>
+        api.importBillfishLibrary({ libraryId: library.libraryId }),
+      );
       if (!result.ok) {
         if (result.error.code === "CANCELLED") {
           setNotice(t("toast.importCancelled"));
@@ -8460,16 +8508,18 @@ function AppInner() {
     setImageSequenceImportError(null);
     setUiState("importing");
     try {
-      const result = await api.confirmImageSequenceImport({
-        libraryId: library.libraryId,
-        offerId: imageSequenceImportOffer.offerId!,
-        action: input.action,
-        sequenceIndex: input.sequenceIndex,
-        firstFrame: input.firstFrame,
-        lastFrame: input.lastFrame,
-        fps: input.fps,
-        applyToRest: input.applyToRest,
-      });
+      const result = await runCurrentImportRpc(() =>
+        api.confirmImageSequenceImport({
+          libraryId: library.libraryId,
+          offerId: imageSequenceImportOffer.offerId!,
+          action: input.action,
+          sequenceIndex: input.sequenceIndex,
+          firstFrame: input.firstFrame,
+          lastFrame: input.lastFrame,
+          fps: input.fps,
+          applyToRest: input.applyToRest,
+        }),
+      );
       if (!result.ok) throw new LibraryOperationError(result.error);
       const completion = applyImportPrepareResult(result.value, {
         onConflicts: (plan) => {
@@ -8520,11 +8570,13 @@ function AppInner() {
     const startedAt = Date.now();
     setUiState("importing");
     try {
-      const result = await api.resolveImport({
-        importId: plan.importId,
-        suspectedDuplicate: duplicate,
-        nameConflict: name,
-      });
+      const result = await runCurrentImportRpc(() =>
+        api.resolveImport({
+          importId: plan.importId,
+          suspectedDuplicate: duplicate,
+          nameConflict: name,
+        }),
+      );
       if (!result.ok) throw new LibraryOperationError(result.error);
       completedImportIdRef.current = plan.importId;
       clearImportConflictsUi();
@@ -8573,10 +8625,12 @@ function AppInner() {
     const startedAt = Date.now();
     setUiState("importing");
     try {
-      const result = await api.skipImportSourceFailure({
-        importId: plan.importId,
-        applyToRest: input.applyToRest,
-      });
+      const result = await runCurrentImportRpc(() =>
+        api.skipImportSourceFailure({
+          importId: plan.importId,
+          applyToRest: input.applyToRest,
+        }),
+      );
       if (!result.ok) throw new LibraryOperationError(result.error);
       const completion = applyImportPrepareResult(result.value, {
         onConflicts: (next) => {
@@ -8713,13 +8767,15 @@ function AppInner() {
     setError(null);
     setNotice(null);
     try {
-      const result = await api.importFolderAsLinked({
-        libraryId: library.libraryId,
-        displayName: undefined,
-        // Serpent-316493: null = library root (folder-section link button);
-        // a managed folder id hangs the link under that folder.
-        parentFolderId,
-      });
+      const result = await runCurrentImportRpc(() =>
+        api.importFolderAsLinked({
+          libraryId: library.libraryId,
+          displayName: undefined,
+          // Serpent-316493: null = library root (folder-section link button);
+          // a managed folder id hangs the link under that folder.
+          parentFolderId,
+        }),
+      );
       if (!result.ok) {
         if (result.error.code === "CANCELLED") return;
         throw new LibraryOperationError(result.error);
@@ -9923,7 +9979,7 @@ function AppInner() {
   async function startImport() {
     if (!api) return;
     try {
-      const result = await api.importLibrary();
+      const result = await runCurrentImportRpc(() => api.importLibrary());
       if (!result.ok) {
         if (result.error.code === "CANCELLED") {
           setImportProgress(null);
@@ -9946,7 +10002,7 @@ function AppInner() {
     if (!api) return;
     const startedAt = Date.now();
     try {
-      const result = await api.importLibraryZip();
+      const result = await runCurrentImportRpc(() => api.importLibraryZip());
       if (!result.ok) {
         if (result.error.code === "CANCELLED") {
           setImportProgress(null);
@@ -10052,18 +10108,20 @@ function AppInner() {
     const validated = importValidated;
     const startedAt = Date.now();
     setImportValidated(null);
-    setImportProgress({
-      type: "import.progress",
-      importId: validated.importId,
-      phase: "copy",
-      filesProcessed: 0,
-      totalFiles: 0,
-      bytesProcessed: 0,
-      totalBytes: 0,
-    });
     try {
-      const result = await api.importLibraryCopy({
-        importId: validated.importId,
+      const result = await runCurrentImportRpc(async () => {
+        setImportProgress({
+          type: "import.progress",
+          importId: validated.importId,
+          phase: "copy",
+          filesProcessed: 0,
+          totalFiles: 0,
+          bytesProcessed: 0,
+          totalBytes: 0,
+        });
+        return api.importLibraryCopy({
+          importId: validated.importId,
+        });
       });
       if (!result.ok) {
         if (result.error.code === "CANCELLED") {
@@ -10095,18 +10153,20 @@ function AppInner() {
     const validated = importValidated;
     const startedAt = Date.now();
     setImportValidated(null);
-    setImportProgress({
-      type: "import.progress",
-      importId: validated.importId,
-      phase: "open",
-      filesProcessed: 0,
-      totalFiles: 0,
-      bytesProcessed: 0,
-      totalBytes: 0,
-    });
     try {
-      const result = await api.importLibraryOpenInPlace({
-        importId: validated.importId,
+      const result = await runCurrentImportRpc(async () => {
+        setImportProgress({
+          type: "import.progress",
+          importId: validated.importId,
+          phase: "open",
+          filesProcessed: 0,
+          totalFiles: 0,
+          bytesProcessed: 0,
+          totalBytes: 0,
+        });
+        return api.importLibraryOpenInPlace({
+          importId: validated.importId,
+        });
       });
       if (!result.ok) {
         if (result.error.code === "CANCELLED") {
@@ -10320,12 +10380,25 @@ function AppInner() {
           !shouldApplyImportProgressEvent(
             event,
             importAwaitingUserDecisionRef.current,
+            null,
+            {
+              rpcInFlight: importRpcDepthRef.current > 0,
+              current: importProgressRef.current,
+              retiredImportIds: retiredImportIdsRef.current,
+              activeImportId: activeImportIdRef.current
+                ?? importProgressRef.current?.importId
+                ?? null,
+            },
           )
         ) {
           return;
         }
         setImportProgress(event);
+        if (event.importId && !activeImportIdRef.current) {
+          activeImportIdRef.current = event.importId;
+        }
         if (["complete", "cancelled", "failed"].includes(event.phase)) {
+          addRetiredImportId(retiredImportIdsRef.current, event.importId);
           importInterruptRef.current = null;
           setImportInterrupt(null);
           setImportProgress(null);
@@ -10375,6 +10448,10 @@ function AppInner() {
     uiState,
     importProgress,
     importAwaitingUserDecision,
+    {
+      rpcInFlight: importRpcInFlight,
+      overlayDismissed: importOverlayDismissed,
+    },
   );
   const blockingImportOverlayVisible = useDelayedVisibility(
     importOverlayReady,
@@ -10509,6 +10586,7 @@ function AppInner() {
     onCancelBlockingImport: () => {
       void cancelImport("abandon");
     },
+    onDismissBlockingImport: dismissImportOverlay,
     onCancelBlockingDelete: () => {
       void cancelDiskDelete();
     },
@@ -11796,6 +11874,9 @@ function AppInner() {
         setAppSettingsOpen(true);
       },
       openBackgroundJobs: () => openMediaJobs(),
+      toggleFullscreen: () => {
+        void shellApi?.windowControl("fullscreen-toggle");
+      },
       openAppLog,
       openAbout,
       openGitHub: () => {
@@ -12082,6 +12163,7 @@ function AppInner() {
         onStop={() => {
           void cancelImport("stop");
         }}
+        onDismiss={dismissImportOverlay}
         progress={importProgress}
         transferKind={libraryTransferKind}
         transferName={libraryTransferName}
@@ -13112,8 +13194,8 @@ function AppInner() {
                       aria-pressed={selectedIdSet.has(asset.assetId)}
                       className={`asset-card${selectedIdSet.has(asset.assetId) ? " is-selected" : ""}${asset.availability === "missing" ? " is-missing" : ""}${corruptAsset ? " is-corrupt" : ""}${asset.deletedAt ? " is-trashed" : ""}${renamingThisAsset ? " is-renaming" : ""}`}
                       data-asset-id={asset.assetId}
+                      data-asset-name={asset.displayName}
                       data-media-type={asset.mediaType}
-                      title={asset.displayName}
                       draggable={!showTrash && !renamingThisAsset}
                       key={renderOptions?.stableSlot
                         ? undefined

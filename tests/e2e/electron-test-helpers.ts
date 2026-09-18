@@ -40,10 +40,10 @@ export function resolveElectronExecutablePath(): string {
   return executablePath;
 }
 
-/** Locate a browse card by its stable filename title, independent of caption formatting. */
+/** Locate a browse card by filename, independent of caption formatting. */
 export function assetCard(window: Page, displayName: string): Locator {
   const escaped = displayName.replaceAll('"', '\\"');
-  return window.locator(`.asset-card[title="${escaped}"]`);
+  return window.locator(`.asset-card[data-asset-name="${escaped}"]`);
 }
 
 /**

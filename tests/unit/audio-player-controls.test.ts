@@ -67,6 +67,7 @@ describe("AudioPlayerControls trail pump (Serpent-mrsm)", () => {
     await act(async () => {
       root?.render(
         createElement(AudioPlayerControls, {
+          autoPlay: false,
           muted: false,
           onError: () => undefined,
           onMutedChange: () => undefined,

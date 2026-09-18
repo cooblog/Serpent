@@ -131,7 +131,7 @@ function outputFormatMentioned(value: string): boolean {
 }
 
 function explicitFormatRejection(value: string): boolean {
-  return /\b(?:unsupported|not\s+supported|does\s+not\s+support|not\s+available|unrecognised?|must\s+be|only\s+(?:accepts?|allows?|supports?)|expected\s+(?:one|a)\s+of)\b/iu.test(value);
+  return /\b(?:unsupported|not\s+supported|does\s+not\s+support|not\s+available|unavailable|unrecognised?|must\s+be|only\s+(?:accepts?|allows?|supports?)|expected\s+(?:one|a)\s+of)\b/iu.test(value);
 }
 
 function schemaShapeRejection(value: string, attemptedMode?: OpenAiStructuredOutputMode): boolean {

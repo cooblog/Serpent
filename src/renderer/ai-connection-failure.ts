@@ -5,8 +5,8 @@
  * After jobs become terminal `failed` with connection-class codes, the
  * Renderer shows one Retry/Abort dialog per wave — not per asset.
  *
- * AI_INVALID_RESPONSE is intentionally excluded (model/content failure,
- * not a lost connection).
+ * AI_INVALID_RESPONSE / AI_REQUEST_REJECTED are intentionally excluded
+ * (model or request-shape failure, not a lost connection).
  */
 
 /** Error codes that mean the provider link is unhealthy. */

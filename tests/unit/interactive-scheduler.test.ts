@@ -554,6 +554,41 @@ describe('InteractiveScheduler', () => {
     expect(maintenanceWorkStarted).toBe(true);
   });
 
+  it('admits status snapshots while maintenance shares the Worker with one thumbnail wave', async () => {
+    const scheduler = new InteractiveScheduler();
+    let releaseMaintenance!: () => void;
+    const maintenance = scheduler.schedule(
+      { requestId: 'reconcile', lane: 'maintenance', libraryId: 'library-1', label: 'reconciliation' },
+      () => new Promise<void>((resolve) => { releaseMaintenance = resolve; }),
+    );
+    await Promise.resolve();
+    let releaseThumbnails!: () => void;
+    const thumbnails = scheduler.schedule(
+      {
+        requestId: 'thumbnails',
+        lane: 'background-primary',
+        libraryId: 'library-1',
+        label: 'media.process-thumbnail-queue',
+      },
+      () => new Promise<void>((resolve) => { releaseThumbnails = resolve; }),
+    );
+    await Promise.resolve();
+
+    let historyStarted = false;
+    const history = scheduler.schedule(
+      { requestId: 'status-history', lane: 'background-secondary', libraryId: 'library-1', label: 'history.status' },
+      () => {
+        historyStarted = true;
+      },
+    );
+
+    expect(historyStarted).toBe(true);
+    await history;
+    releaseThumbnails();
+    releaseMaintenance();
+    await Promise.all([thumbnails, maintenance]);
+  });
+
   it('keeps interaction latest-wins keys isolated per consumerId', async () => {
     const scheduler = new InteractiveScheduler();
     let releaseBlocking!: () => void;

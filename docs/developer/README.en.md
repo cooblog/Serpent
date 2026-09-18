@@ -13,8 +13,9 @@ For developers working on Serpent itself: architecture, building from source, te
 - [Architecture](architecture.md) — process model, directory layout, key design
 - [Testing](testing.md) — test layers and how to run them
 - [Adding media format support](media-format-support.md) — registry, import, preview, filters, protocols, and acceptance
-- [Branches and workflow](workflow.md) — `main`/`dev`, external contributions, Beads tickets, development records, acceptance, and handoff
-- [Contributors](../../CONTRIBUTORS.md) — contributions accepted and merged into the project
+- [Branches and workflow](workflow.md) — branching strategy, open source contribution process, and maintainer workflow discipline
+- [Contributing guide](contributing.en.md) — open source collaboration, Pull Requests, and code gate requirements
+- [Contributors](https://github.com/dolag233/Serpent/blob/dev/CONTRIBUTORS.md) — contributions accepted and merged into the project
 
 Other software docs (internal records live on the repo `dev` branch and are not published to the site):
 
@@ -29,7 +30,10 @@ For developers writing plugins, scripts or MCP adapters. **No software-architect
 
 - [Plugin development guide](../manual/plugins/development.md) + [best practices](../manual/plugins/best-practices.md) + [API reference](../manual/plugins/api-reference.md)
 - [Plugin distribution and updates](../manual/plugins/distribution-and-updates.md)
-- Reference implementation: [Serpent-Plugin-ImageUpscaler](https://github.com/dolag233/Serpent-Plugin-ImageUpscaler)
+- Official plugin reference implementations:
+  - [Serpent-Plugin-Renamer](https://github.com/dolag233/Serpent-Plugin-Renamer) — Unrestricted mode (`unrestricted`), batch asset renaming and real-time diff preview built on standard host dialogs and list controls
+  - [Serpent-Plugin-MediaConverter](https://github.com/dolag233/Serpent-Plugin-MediaConverter) — Media transcoding and compression extension demonstrating multi-profile media plans, background job queue lifecycle, and universal package distribution (`any`)
+  - [Serpent-Plugin-ImageUpscaler](https://github.com/dolag233/Serpent-Plugin-ImageUpscaler) — Unrestricted mode (`unrestricted`), external AI inference binary orchestration, platform-specific packaging (`darwin-arm64` / `win32-x64`), and chunked content streaming
 - [Script development guide](../manual/scripts/development.md) + [API reference](../manual/scripts/api-reference.md)
 - [MCP development guide](../manual/mcp/development.md) + [API reference](../manual/mcp/api-reference.md)
 

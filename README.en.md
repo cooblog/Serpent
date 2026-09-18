@@ -36,20 +36,17 @@ Import, browse, search, tag, collect, preview 3D models (FBX/OBJ/GLB and more), 
 
 ## Install
 
-Download the latest installer from [GitHub Releases](https://github.com/dolag233/Serpent/releases).
+Download the latest release package from [GitHub Releases](https://github.com/dolag233/Serpent/releases).
 
-**macOS**: download `Serpent-<version>-arm64.dmg` and drag it into Applications. On first launch macOS shows "cannot verify the developer" — right-click the app → Open (first time only), or run:
+**macOS**: download `Serpent-darwin-arm64-<version>-package.dmg` (or portable `.zip`) and drag Serpent into Applications. On first launch, if macOS prompts "cannot verify the developer", right-click the app → select Open (first time only), or run:
 
 ```bash
 xattr -cr /Applications/Serpent.app
 ```
 
-**Windows**: run `Serpent-<version> Setup.exe`. Unsigned builds show a SmartScreen warning on first run — choose "More info → Run anyway".
+**Windows**: download the installer package `Serpent-win-x86-64-<version>-setup.zip` (extract and run the included installer), or download the portable version `Serpent-win-x86-64-<version>-portable.zip` (extract and run directly). Unsigned builds show a SmartScreen warning on first run — choose "More info → Run anyway".
 
-**Browser extension**: download it from the [browser extension releases](https://github.com/dolag233/Serpent-Extension/releases). Open `chrome://extensions`, enable Developer mode, and load the unpacked extension:
-
-- macOS: `Serpent.app/Contents/Resources/extension`
-- Windows: `resources/extension` in the install directory
+**Browser extension**: download it from the [browser extension releases](https://github.com/dolag233/Serpent-Extension/releases). See the [Browser Extension User Guide](docs/user-guide/browser-extension.en.md) for installation and setup instructions.
 
 ## Build locally
 
@@ -81,6 +78,7 @@ The full build, packaging and release flow is in the [developer docs](docs/devel
 | [User guide](docs/user-guide/README.en.md) | Install, import, browse, search, tags, collections, 3D viewer, troubleshooting |
 | [Online docs](https://serpent.dolag.work/docs/user-guide/) | The latest user guide in your browser |
 | [Developer docs](docs/developer/README.en.md) | Setup, build & packaging, architecture, testing |
+| [Contributing Guide](docs/developer/contributing.en.md) | Open source collaboration, environment setup, and Pull Request workflow |
 | [Extension author manual](docs/manual/README.md) | Plugins / scripts / MCP |
 | [Product brief](docs/product-brief.md) | Product vision and MVP scope |
 

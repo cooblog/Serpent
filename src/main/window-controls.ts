@@ -42,6 +42,9 @@ function applyWindowControl(
       if (window.isMaximized()) window.unmaximize();
       else window.maximize();
       break;
+    case "fullscreen-toggle":
+      window.setFullScreen(!window.isFullScreen());
+      break;
     case "steal-focus":
       // Do not blur/reattach here: the renderer may call this while Main is
       // already cycling activation after a native dialog.

@@ -164,7 +164,7 @@ async function startCachedViewportProbe(window: Page) {
       )?.textContent?.trim();
       const hasCachedFolderAssets = [
         ...(canvas?.querySelectorAll<HTMLElement>(".asset-card") ?? []),
-      ].some((card) => card.getAttribute("title")?.startsWith("folder-view-") === true);
+      ].some((card) => card.getAttribute("data-asset-name")?.startsWith("folder-view-") === true);
       if (
         host?.getAttribute("aria-busy") === "true" &&
         canvas &&
@@ -330,7 +330,7 @@ test("keeps navigation inside explicit tabs and exposes contextual tab actions",
     await createFolder(window, "角色原画");
     await importFilesThroughBridge(window, "角色原画");
     await createFolder(window, "并发目标");
-    const searchedAsset = window.locator('.asset-card[title="blue metal.txt"]');
+    const searchedAsset = window.locator('.asset-card[data-asset-name="blue metal.txt"]');
     await expect(searchedAsset).toBeVisible({ timeout: 15_000 });
     await createCollection(window, "灵感合集");
     const smartCollectionId = await createSmartCollection(window, "慢速智能合集");
@@ -422,7 +422,7 @@ test("keeps navigation inside explicit tabs and exposes contextual tab actions",
       "aria-busy",
       "true",
     );
-    await expect(window.locator('.asset-card[title^="folder-view-"]').first()).toBeVisible();
+    await expect(window.locator('.asset-card[data-asset-name^="folder-view-"]').first()).toBeVisible();
     const cachedViewportProbe = await stopCachedViewportProbe(window);
     expect(cachedViewportProbe.targetFrames).toBeGreaterThan(0);
     expect(cachedViewportProbe.firstTargetProgress).not.toBeNull();
@@ -602,12 +602,12 @@ test("keeps navigation inside explicit tabs and exposes contextual tab actions",
     await tablist.locator(".workspace-tab").first()
       .getByRole("button", { name: "关闭标签页：角色原画" }).click();
     await expect(tabs).toHaveCount(1);
-    await expect(window.locator('.asset-card[title="blue metal.txt"]')).toBeVisible({
+    await expect(window.locator('.asset-card[data-asset-name="blue metal.txt"]')).toBeVisible({
       timeout: 15_000,
     });
     await expect(window.locator(".scope-crumb-label.is-current")).toContainText("慢速智能合集");
     await window.waitForTimeout(1_000);
-    await expect(window.locator('.asset-card[title="blue metal.txt"]')).toBeVisible();
+    await expect(window.locator('.asset-card[data-asset-name="blue metal.txt"]')).toBeVisible();
     await expect(window.locator(".scope-crumb-label.is-current")).toContainText("慢速智能合集");
   } finally {
     await quitApplication(application);

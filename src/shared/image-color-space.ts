@@ -22,7 +22,7 @@ export const COMMON_IMAGE_COLOR_SPACE_OPTIONS: readonly ImageColorSpaceOption[] 
 export const COLOR_MANAGED_IMAGE_EXTENSIONS = new Set([
   '.bmp', '.cr2', '.cr3', '.dng', '.exr', '.ico', ...JPEG_IMAGE_EXTENSIONS, '.nef', '.png',
   '.orf', '.psd', '.raf', '.raw', '.rw2', '.tga', '.tif', '.tiff', '.webp',
-  '.arw',
+  '.avif', '.arw',
 ]);
 
 export function canOverrideImageColorSpace(extensionOrFilename: string): boolean {

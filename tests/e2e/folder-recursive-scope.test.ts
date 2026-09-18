@@ -298,7 +298,7 @@ test("managed folder rows can be dragged into Trash", async () => {
       .getByRole("button", { name: "导入文件", exact: true })
       .first()
       .click();
-    await expect(window.locator('[data-asset-id][title="inside-folder.txt"]')).toBeVisible({
+    await expect(window.locator('[data-asset-id][data-asset-name="inside-folder.txt"]')).toBeVisible({
       timeout: 15_000,
     });
 
@@ -331,7 +331,7 @@ test("managed folder rows can be dragged into Trash", async () => {
     const restoredFolderRow = sidebarFolderRow(window, "待回收文件夹");
     await expect(restoredFolderRow).toBeVisible({ timeout: 15_000 });
     await restoredFolderRow.click();
-    await expect(window.locator('[data-asset-id][title="inside-folder.txt"]')).toBeVisible({
+    await expect(window.locator('[data-asset-id][data-asset-name="inside-folder.txt"]')).toBeVisible({
       timeout: 15_000,
     });
     expect(

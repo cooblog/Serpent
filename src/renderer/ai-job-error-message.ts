@@ -19,6 +19,21 @@ export function messageForAiErrorCode(
   return lookup(`error.reason.${code}`) ?? lookup(`error.code.${code}`) ?? code;
 }
 
+/** User-facing line for an AI job row. Prefer the mapped reason, not the diagnostic dump. */
+export function displayAiJobFailure(
+  errorCode: string | null | undefined,
+  errorDetail: string | null | undefined,
+  locale: AppLocale = DEFAULT_LOCALE,
+): string {
+  if (errorCode) {
+    const localized = messageForAiErrorCode(errorCode, locale);
+    if (localized !== errorCode) return localized;
+  }
+  const detail = errorDetail?.trim();
+  if (detail) return detail;
+  return errorCode ?? "";
+}
+
 export function summarizeAiFailureCodes(
   codes: readonly string[],
   locale: AppLocale,

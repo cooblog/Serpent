@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   clampScrubTime,
@@ -20,6 +20,8 @@ import {
   VIDEO_PLAYBACK_RATES,
   VIDEO_SKIP_SECONDS,
   videoSeekDeltaSeconds,
+  applyMediaAutoplayIntent,
+  shouldAutoStartMediaPlayback,
 } from "../../src/renderer/video-player-controls";
 
 describe("VIDEO_PLAYBACK_RATES", () => {
@@ -371,5 +373,43 @@ describe("formatVideoClockTime", () => {
     expect(formatVideoClockTime(-1)).toBe("0:00");
     expect(formatVideoClockTime(Number.NaN)).toBe("0:00");
     expect(formatVideoClockTime(Number.POSITIVE_INFINITY)).toBe("0:00");
+  });
+});
+
+describe("shouldAutoStartMediaPlayback", () => {
+  it("starts after a preload surface is promoted, not while hidden or after a user pause", () => {
+    expect(
+      shouldAutoStartMediaPlayback({ autoPlay: false, userPaused: false }),
+    ).toBe(false);
+    expect(
+      shouldAutoStartMediaPlayback({ autoPlay: true, userPaused: false }),
+    ).toBe(true);
+    expect(
+      shouldAutoStartMediaPlayback({ autoPlay: true, userPaused: true }),
+    ).toBe(false);
+  });
+});
+
+describe("applyMediaAutoplayIntent", () => {
+  it("calls play when promoting a paused element, and pause when hiding it", () => {
+    const play = vi.fn(() => Promise.resolve());
+    const pause = vi.fn();
+    const media = { paused: true, play, pause };
+    applyMediaAutoplayIntent(media, true);
+    expect(play).toHaveBeenCalledOnce();
+    expect(pause).not.toHaveBeenCalled();
+
+    media.paused = false;
+    play.mockClear();
+    applyMediaAutoplayIntent(media, false);
+    expect(pause).toHaveBeenCalledOnce();
+    expect(play).not.toHaveBeenCalled();
+  });
+
+  it("does not call play again when the element is already playing", () => {
+    const play = vi.fn(() => Promise.resolve());
+    const media = { paused: false, play, pause: vi.fn() };
+    applyMediaAutoplayIntent(media, true);
+    expect(play).not.toHaveBeenCalled();
   });
 });

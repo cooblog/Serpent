@@ -26,7 +26,7 @@ const CAPTION_FIELDS = {
   dimensions: true,
 } as const;
 
-/** Visual asset whose pixel size was never decoded (unsupported avif/raw…). */
+/** Visual asset whose pixel size was never decoded (undecoded raw…). */
 function unsizedEntry(assetId: string) {
   return { assetId, width: null, height: null, mediaType: "image" as const };
 }

@@ -11,11 +11,35 @@ const REASON_BY_KIND: Record<VendorAdapterErrorKind, PublicErrorReason> = {
   invalid_response: 'AI_INVALID_RESPONSE',
 };
 
+function httpStatusFromVendorError(error: VendorAdapterError): number | undefined {
+  if (typeof error.details?.httpStatus === 'number') return error.details.httpStatus;
+  const match = error.message.match(/\bHTTP\s+(\d{3})\b/i);
+  return match ? Number(match[1]) : undefined;
+}
+
+/**
+ * HTTP 400/422 means the provider refused the request as sent.
+ * That is not “we could not parse a completed analysis”.
+ */
+export function isAiRequestRejected(error: VendorAdapterError): boolean {
+  if (error.kind !== 'invalid_response') return false;
+  if (error.details?.formatRejected) return true;
+  const status = httpStatusFromVendorError(error);
+  return status === 400 || status === 422;
+}
+
 export function vendorFailure(error: VendorAdapterError): {
   errorCode: string;
   reason: PublicErrorReason;
   retryable: boolean;
 } {
+  if (isAiRequestRejected(error)) {
+    return {
+      errorCode: 'AI_REQUEST_REJECTED',
+      reason: 'AI_REQUEST_REJECTED',
+      retryable: error.retryable ?? false,
+    };
+  }
   return {
     errorCode: `AI_${error.kind.toUpperCase()}`,
     reason: REASON_BY_KIND[error.kind],

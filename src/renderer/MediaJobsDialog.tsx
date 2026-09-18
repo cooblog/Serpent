@@ -1,6 +1,7 @@
 import { Icon } from "./Icons";
 import { iconActionAttrs } from "./icon-action-attrs";
-import { useT } from "./i18n";
+import { useLocale, useT } from "./i18n";
+import { displayAiJobFailure } from "./ai-job-error-message";
 import { DialogShell } from "./ui/patterns";
 import { Tooltip } from "./ui/primitives/Tooltip";
 import {
@@ -64,6 +65,7 @@ export function MediaJobsDialog({
   onViewAppLog,
 }: MediaJobsDialogProps) {
   const t = useT();
+  const { locale } = useLocale();
   if (!open) return null;
 
   return (
@@ -321,7 +323,7 @@ export function MediaJobsDialog({
                           className="media-jobs-grid-cell"
                           title={job.errorCode ?? undefined}
                         >
-                          {job.errorDetail ?? job.errorCode ?? "—"}
+                          {displayAiJobFailure(job.errorCode, job.errorDetail, locale) || "—"}
                         </span>
                       </div>
                       {job.status === "running" && (

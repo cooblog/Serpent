@@ -239,8 +239,8 @@ test('lists menus.asset and settings.pages after enable, and after recent-librar
     await expectContributionsAndSettingsIframe(window, libraryId);
 
     await window.getByRole('button', { name: '导入文件', exact: true }).first().click();
-    const probeCard = window.locator('.asset-card[title="probe.png"]');
-    const secondProbeCard = window.locator('.asset-card[title="probe-two.png"]');
+    const probeCard = window.locator('.asset-card[data-asset-name="probe.png"]');
+    const secondProbeCard = window.locator('.asset-card[data-asset-name="probe-two.png"]');
     await expect(probeCard).toBeVisible({ timeout: 30_000 });
     await expect(secondProbeCard).toBeVisible({ timeout: 30_000 });
     await expect(window.locator('.asset-card')).toHaveCount(2);

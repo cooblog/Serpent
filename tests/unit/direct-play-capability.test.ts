@@ -149,4 +149,16 @@ describe('DirectPlayCapabilityService', () => {
     expect(service.claimProxyFallback('asset-1:revision-1').shouldRequestProxy).toBe(true);
     expect(() => service.claimProxyFallback('   ')).toThrow('playbackKey must not be empty.');
   });
+
+  it('treats non-string codec entries as empty instead of throwing', async () => {
+    const { canPlayType, probe, service } = createService();
+
+    await expect(service.decide({
+      container: 'mp4',
+      mimeType: 'video/mp4',
+      codecs: [123 as unknown as string, null as unknown as string],
+    })).resolves.toEqual({ mode: 'proxy', reason: 'media_capability_unknown' });
+    expect(canPlayType).not.toHaveBeenCalled();
+    expect(probe).not.toHaveBeenCalled();
+  });
 });
