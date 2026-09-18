@@ -25,6 +25,18 @@ const nonBlankString = z.string().min(1).refine((value) => value.trim().length >
 
 const displayNameSchema = nonBlankString.max(255);
 const identifierSchema = nonBlankString.max(255);
+const viewportScrollDirectionSchema = z.enum(['up', 'down', 'stationary', 'jump']);
+const viewportPriorityFields = {
+  consumerId: identifierSchema.optional(),
+  libraryGeneration: z.number().int().nonnegative().optional(),
+  interactionGeneration: z.number().int().nonnegative().optional(),
+  viewportGeneration: z.number().int().nonnegative().optional(),
+  direction: viewportScrollDirectionSchema.optional(),
+  focusedAssetIds: z.array(identifierSchema).max(16).optional(),
+  nearForwardAssetIds: z.array(identifierSchema).max(100).optional(),
+  nearBackwardAssetIds: z.array(identifierSchema).max(50).optional(),
+  scopeWarmAssetIds: z.array(identifierSchema).max(200).optional(),
+};
 const importCancelModeSchema = z.enum(['abandon', 'stop']);
 /**
  * Linked-folder subtree path. Empty string means the linked folder root
@@ -1068,6 +1080,7 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     type: z.literal('asset.thumbnail.visible-window.request'),
     libraryId: identifierSchema,
     assetIds: z.array(identifierSchema).min(1).max(300),
+    ...viewportPriorityFields,
   }),
   z.strictObject({
     type: z.literal('sync.asset-card-status.request'),
@@ -1381,6 +1394,7 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     type: z.literal('asset.thumbnail.visible-window'),
     libraryId: identifierSchema,
     assetIds: z.array(identifierSchema).min(1).max(300),
+    ...viewportPriorityFields,
   }),
   z.strictObject({
     type: z.literal('sync.probe'),

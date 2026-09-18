@@ -41,10 +41,12 @@ import {
   resolveAssetCardCoverUrl,
 } from "./asset-card-hover-preview";
 import { shouldShowThumbnailFailureBadge } from "./thumbnail-failure-badge";
+import { viewportPriorityReportKey } from "../shared/viewport-priority";
 import {
-  normalizeVisibleWindowAssetIds,
-  visibleWindowReportKey,
-} from "./visible-window";
+  collectIntersectingCanvasAssetIds,
+  composeBrowseViewportPriorityBands,
+  orderedIdsForViewportPriorityReport,
+} from "./viewport-priority-report";
 import {
   assetSupportsThumbnail,
   isBenignThumbnailErrorCode,
@@ -511,6 +513,7 @@ import { isGeometryPlaceholder } from "./browse/use-virtual-browse-session";
 import { deferNavigationHydration } from "./browse/defer-navigation-hydration";
 import {
   virtualLayoutEntryForAsset,
+  virtualLayoutPublishedId,
   type VirtualBrowseLayout,
 } from "./browse/virtual-browse-layout";
 import { formatBytes, formatShortDate } from "./format-file-meta";
@@ -538,6 +541,10 @@ import {
   mergeAssetThumbnailPatch,
   type AssetThumbnailPatch,
 } from "./asset-thumbnail-patches";
+import {
+  expandThumbnailCardEvents,
+  shouldProjectThumbnailCompletion,
+} from "./thumbnail-completion-projection";
 import {
   captureAnchor,
   pickNearestCard,
@@ -789,6 +796,10 @@ function AppInner() {
     targetFolderId: string;
   }>({ folderId: "", name: "", targetFolderId: "" });
   const [assets, setAssets] = useState<AssetSummary[]>([]);
+  const assetsRef = useRef<AssetSummary[]>([]);
+  useEffect(() => {
+    assetsRef.current = assets;
+  }, [assets]);
   const [browseLayout, setBrowseLayout] = useState<BrowseLayoutEntry[]>([]);
   const [virtualBrowseLayout, setVirtualBrowseLayout] =
     useState<VirtualBrowseLayout | null>(null);
@@ -2184,6 +2195,10 @@ function AppInner() {
     canvas.scrollTop = targetTop;
   });
   const reportedVisibleWindowKeyRef = useRef("");
+  const visibleWindowAssetIdsRef = useRef<ReadonlySet<string>>(new Set());
+  const viewportScrollTopRef = useRef<number | undefined>(undefined);
+  const viewportGenerationRef = useRef(0);
+  const interactionGenerationRef = useRef(0);
   // Serpent-wgl2: the marquee box div is always mounted and moved directly
   // through this ref — never through React state (per-frame state re-renders
   // the whole non-memoized grid).
@@ -2636,43 +2651,62 @@ function AppInner() {
     // stay identical. Reset the renderer-side guard so it can re-arm the
     // Worker after the Worker invalidates its corresponding key.
     reportedVisibleWindowKeyRef.current = "";
+    interactionGenerationRef.current += 1;
+    viewportScrollTopRef.current = undefined;
     let frame: number | undefined;
     let debounceTimer: number | undefined;
     const report = () => {
       frame = undefined;
-      const canvasRect = canvas.getBoundingClientRect();
-      // Queue only cards that actually intersect the viewport. The virtual
-      // canvas deliberately mounts an overscan/runway band, but those cards
-      // pass deferUntilVisible to AssetCardMedia and do not load a URL yet.
-      // Sending them through the same high-priority queue would let below-fold
-      // work compete with the images the user can already see.
-      const ids: string[] = [];
-      const seenIds = new Set<string>();
-      for (const slot of canvas.querySelectorAll<HTMLElement>(
-        ".asset-card[data-asset-id], [data-layout-asset-id]",
-      )) {
-        const rect = slot.getBoundingClientRect();
-        if (rect.bottom <= canvasRect.top || rect.top >= canvasRect.bottom) {
-          continue;
-        }
-        const assetId = slot.dataset.assetId ?? slot.dataset.layoutAssetId;
-        if (
-          assetId &&
-          !isGeometryPlaceholder({ assetId }) &&
-          !seenIds.has(assetId)
-        ) {
-          seenIds.add(assetId);
-          ids.push(assetId);
-        }
-      }
-      if (ids.length === 0) return;
-      const stableIds = normalizeVisibleWindowAssetIds(ids);
-      const key = visibleWindowReportKey(library.libraryId, stableIds);
+      const intersectingIds = collectIntersectingCanvasAssetIds(
+        canvas,
+        (assetId) => isGeometryPlaceholder({ assetId }),
+      );
+      const orderedIds = orderedIdsForViewportPriorityReport({
+        visibleIds: intersectingIds,
+        ...(virtualBrowseLayout
+          ? {
+              virtualLayout: {
+                indexOf: (assetId) => virtualBrowseLayout.indexByAssetId.get(assetId),
+                idAt: (index) => {
+                  const published = virtualLayoutPublishedId(virtualBrowseLayout, index);
+                  return isGeometryPlaceholder({ assetId: published }) ? undefined : published;
+                },
+                total: virtualBrowseLayout.total,
+              },
+            }
+          : {}),
+        fallbackOrderedIds: visibleBrowseLayout.map((entry) => entry.assetId),
+      });
+      const bands = composeBrowseViewportPriorityBands({
+        intersectingIds,
+        focusedIds: [
+          previewAssetRef.current?.assetId,
+          selectedAssetIdRef.current,
+        ],
+        orderedIds,
+        loadedIds: assetsRef.current.map((asset) => asset.assetId),
+        scrollTop: canvas.scrollTop,
+        previousScrollTop: viewportScrollTopRef.current,
+        viewportHeight: canvas.clientHeight,
+      });
+      if (!bands) return;
+      viewportScrollTopRef.current = canvas.scrollTop;
+      const key = viewportPriorityReportKey(library.libraryId, bands, 0);
       if (key === reportedVisibleWindowKeyRef.current) return;
       reportedVisibleWindowKeyRef.current = key;
+      viewportGenerationRef.current += 1;
+      visibleWindowAssetIdsRef.current = new Set(bands.visible);
       void api.reportVisibleWindow({
         libraryId: library.libraryId,
-        assetIds: stableIds,
+        assetIds: bands.visible,
+        consumerId: `browse:${window.name || "main"}`,
+        interactionGeneration: interactionGenerationRef.current,
+        viewportGeneration: viewportGenerationRef.current,
+        direction: bands.direction,
+        focusedAssetIds: bands.focused,
+        nearForwardAssetIds: bands.nearForward,
+        nearBackwardAssetIds: bands.nearBackward,
+        scopeWarmAssetIds: bands.scopeWarm,
       });
     };
     const schedule = () => {
@@ -4607,11 +4641,19 @@ function AppInner() {
         setFolderBrowseRefreshToken((token) => token + 1);
       });
     };
+    const thumbnailSubscriptions = () => ({
+      loadedAssetIds: new Set(assetsRef.current.map((asset) => asset.assetId)),
+      visibleAssetIds: visibleWindowAssetIdsRef.current,
+      selectedAssetId: selectedAssetIdRef.current ?? null,
+      viewerAssetId: previewAssetRef.current?.assetId ?? null,
+      folderCoverAssetIds: folderCoverCandidateAssetIdsRef.current,
+    });
     const unsubscribe = api.onThumbnailEvent((event) => {
       if (event.libraryId !== effectLibraryId || !isEffectLibraryCurrent()) return;
-      // A completion event is the cheapest status signal the panel has.
-      jobStatusCoordinatorRef.current?.noteActivity("media");
+      const subscriptions = thumbnailSubscriptions();
       if (event.type === "asset.dimensions.ready") {
+        if (!shouldProjectThumbnailCompletion(event.assetId, subscriptions)) return;
+        jobStatusCoordinatorRef.current?.noteActivity("media");
         queuePatch(event.assetId, {
           width: event.width,
           height: event.height,
@@ -4632,6 +4674,7 @@ function AppInner() {
           library &&
           isEffectLibraryCurrent()
         ) {
+          jobStatusCoordinatorRef.current?.noteActivity("media");
           if (event.kind === "extract_metadata") {
             setExtractedMetadataRefreshKey((key) => key + 1);
           }
@@ -4653,60 +4696,66 @@ function AppInner() {
         }
         return;
       }
-      if (event.type === "asset.thumbnail.failed") {
-        queueLayoutArtifactPatch(event.assetId, null);
-        const suppressFailure = isBenignThumbnailErrorCode(event.errorCode);
-        setThumbnailFailures((failures) => {
-          const next = new Map(failures);
-          if (suppressFailure) {
-            next.delete(event.assetId);
-          } else {
-            next.set(
-              event.assetId,
-              event.reason ?? t("toast.thumbnailFailed"),
-            );
+      const cardEvents = expandThumbnailCardEvents(event);
+      if (cardEvents.length === 0) return;
+      jobStatusCoordinatorRef.current?.noteActivity("media");
+      const failureUpdates = new Map<string, string | null>();
+      for (const cardEvent of cardEvents) {
+        if (!shouldProjectThumbnailCompletion(cardEvent.assetId, subscriptions)) {
+          continue;
+        }
+        if (cardEvent.type === "asset.thumbnail.failed") {
+          queueLayoutArtifactPatch(cardEvent.assetId, null);
+          const suppressFailure = isBenignThumbnailErrorCode(cardEvent.errorCode);
+          failureUpdates.set(
+            cardEvent.assetId,
+            suppressFailure ? null : (cardEvent.reason ?? t("toast.thumbnailFailed")),
+          );
+          if (!suppressFailure) {
+            queuePatch(cardEvent.assetId, {
+              thumbnailStatus: "failed",
+              thumbnailArtifactId: null,
+              ...(cardEvent.width === undefined ? {} : { width: cardEvent.width }),
+              ...(cardEvent.height === undefined ? {} : { height: cardEvent.height }),
+            });
           }
-          return next;
-        });
-        if (!suppressFailure) {
-          queuePatch(event.assetId, {
-            thumbnailStatus: "failed",
-            thumbnailArtifactId: null,
-            ...(event.width === undefined ? {} : { width: event.width }),
-            ...(event.height === undefined ? {} : { height: event.height }),
-          });
+          continue;
         }
-        return;
-      }
-      if (event.type === "asset.thumbnail.ready") {
-        if (event.artifactId) {
-          queueLayoutArtifactPatch(event.assetId, event.artifactId);
+        if (cardEvent.artifactId) {
+          queueLayoutArtifactPatch(cardEvent.assetId, cardEvent.artifactId);
         }
-        setThumbnailFailures((failures) => {
-          if (!failures.has(event.assetId)) return failures;
-          const next = new Map(failures);
-          next.delete(event.assetId);
-          return next;
-        });
-        if (event.artifactId) {
-          queuePatch(event.assetId, {
+        failureUpdates.set(cardEvent.assetId, null);
+        if (cardEvent.artifactId) {
+          queuePatch(cardEvent.assetId, {
             thumbnailStatus: "ready",
-            thumbnailArtifactId: event.artifactId,
-            ...(event.width === undefined ? {} : { width: event.width }),
-            ...(event.height === undefined ? {} : { height: event.height }),
-            ...(event.durationMs === undefined
+            thumbnailArtifactId: cardEvent.artifactId,
+            ...(cardEvent.width === undefined ? {} : { width: cardEvent.width }),
+            ...(cardEvent.height === undefined ? {} : { height: cardEvent.height }),
+            ...(cardEvent.durationMs === undefined
               ? {}
-              : { durationMs: event.durationMs }),
-            sequenceFrameArtifactId: event.artifactId,
+              : { durationMs: cardEvent.durationMs }),
+            sequenceFrameArtifactId: cardEvent.artifactId,
           });
-          // Serpent-d0nv: when a cover candidate of the current folder-card
-          // row finishes generating, re-fetch the browse entries so the card
-          // shows its cover immediately instead of staying on the empty
-          // folder icon until navigation.
-          if (folderCoverCandidateAssetIdsRef.current.has(event.assetId)) {
+          if (folderCoverCandidateAssetIdsRef.current.has(cardEvent.assetId)) {
             scheduleFolderBrowseRefresh();
           }
         }
+      }
+      if (failureUpdates.size > 0) {
+        setThumbnailFailures((failures) => {
+          let next = failures;
+          for (const [assetId, reason] of failureUpdates) {
+            if (reason === null) {
+              if (!next.has(assetId)) continue;
+              if (next === failures) next = new Map(failures);
+              next.delete(assetId);
+              continue;
+            }
+            if (next === failures) next = new Map(failures);
+            next.set(assetId, reason);
+          }
+          return next;
+        });
       }
     });
     return () => {

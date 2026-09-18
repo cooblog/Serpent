@@ -70,6 +70,7 @@ import type {
   MediaJob,
   AiJob,
   TagOperationSkip,
+  ThumbnailEvent,
 } from './protocol/responses';
 import type {
   NameConflictDecision,
@@ -685,7 +686,19 @@ export interface SerpentLibraryApi {
   // for them (Serpent-fu2i), so the no-op result carries no artifact.
   requestThumbnail(input: { libraryId: string; assetId: string }): Promise<LibraryApiResult<{ assetId: string; artifactId?: string }>>;
   /** Serpent-visible-window: queue-jump + header-probe the viewport assets. */
-  reportVisibleWindow(input: { libraryId: string; assetIds: string[] }): Promise<void>;
+  reportVisibleWindow(input: {
+    libraryId: string;
+    assetIds: string[];
+    consumerId?: string;
+    libraryGeneration?: number;
+    interactionGeneration?: number;
+    viewportGeneration?: number;
+    direction?: "up" | "down" | "stationary" | "jump";
+    focusedAssetIds?: string[];
+    nearForwardAssetIds?: string[];
+    nearBackwardAssetIds?: string[];
+    scopeWarmAssetIds?: string[];
+  }): Promise<void>;
   /** Serpent-xffq: 同步服务器列表（全局，Main 持有；密码不回传）。 */
   syncListServers(): Promise<LibraryApiResult<Array<{ id: string; baseUrl: string; username?: string; hasPassword: boolean; allowInsecureTls: boolean }>>>;
   /** Serpent-xffq: 保存/新增同步服务器（密码经 Main safeStorage 加密）。 */
@@ -756,7 +769,7 @@ export interface SerpentLibraryApi {
   cancelMediaJobs(input: { libraryId: string; jobIds?: string[] }): Promise<LibraryApiResult<{ cancelledCount: number }>>;
   retryMediaJobs(input: { libraryId: string; jobIds: string[] }): Promise<LibraryApiResult<{ retriedCount: number }>>;
   listPluginJobs(input: { libraryId: string }): Promise<LibraryApiResult<PluginJobStatus>>;
-  onThumbnailEvent(listener: (event: { type: 'asset.thumbnail.ready' | 'asset.thumbnail.failed' | 'asset.dimensions.ready' | 'asset.derived.ready'; libraryId: string; assetId: string; artifactId?: string; errorCode?: string; reason?: string; width?: number; height?: number; durationMs?: number; kind?: 'extract_metadata' | 'extract_palette' | 'generate_contact_sheet' | 'generate_webm_proxy' | 'generate_audio_proxy' }) => void): () => void;
+  onThumbnailEvent(listener: (event: ThumbnailEvent) => void): () => void;
   // AI extended
   testAiConnection(input: {
     apiFormat: AiApiFormat;

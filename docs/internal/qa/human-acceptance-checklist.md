@@ -57,6 +57,14 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | VIEWER-PROXY-001 / `Serpent-0d6421` | 代理播放提示隐藏后不再出现 | 人类验收通过 | ① **完全退出**后再打开含这次改动的构建。② 打开一段当前播放器会落到代理的视频（例如部分 MOV）。③ 看到「原视频无法播放，当前播放的是代理视频」。④ 点「隐藏提示」。⑤ 等视频循环或从头再播。⑥ 确认左上角没有「显示代理提示」。 | 隐藏后提示不再出现；循环/重播也不会再弹出；没有重新显示入口。换到另一条会走代理的视频时，提示可以再出现一次。 | [开发日志](../development/2026-09-18-proxy-playback-notice-dismiss-development-log.md) / `ProxyPlaybackNotice.tsx` / `AssetPreviewModal.tsx` | 2026-09-18 用户本人验收通过（用户原话「SHELL-FOCUS-001、VIEWER-PROXY-001通过」）。 |
 
+### 2026-09-18 离屏缩略图完成事件
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| MEDIA-MEM-001 / `Serpent-df0ec0` | 后台缩略图完成不拖垮当前浏览 | 待人类验收 | ① **完全退出**后再打开含这次改动的构建。② 打开一个后台仍在大量补缩略图的资源库。③ 停在某一文件夹，确认眼前卡片能出图。④ 不要滚动，等后台继续跑一会儿。⑤ 再慢慢向下滚，新进入画面的卡片应能陆续出图。⑥ 打开一张图的查看器，确认仍能看到画面。 | 当前看得见的卡片应能解码出图（`complete` 且宽度大于 0）。滚动、切文件夹、打开查看器应仍跟手。后台补齐可以继续，但不应让已经离开当前范围的完成项把界面越用越重。 | [开发日志](../development/2026-09-18-offscreen-thumbnail-completion-batch-development-log.md) / `thumbnail-completion-fanout.ts` / `thumbnail-completion-projection.ts` | 自动化：fanout/projection 单测覆盖立即送达、75ms 批量、每批 ≤100、范围外不进卡片 Map。Electron E2E、CDP heap、5,000 离屏项隔离 fixture、packaged、Computer Use 未执行；内存平台不得凭本增量宣称已验证。 |
+| VIEWPORT-BAND-001 / `Serpent-926e2f` | 滚动时眼前卡片优先出图，邻近区随后补齐 | 人类验收通过 | ① **完全退出**后再打开含这次改动的构建。② 打开一个后台仍在补缩略图、且明显超过一屏的文件夹。③ 停在中部，确认眼前卡片先出图。④ 慢慢向下滚：刚进入画面的卡片应尽快出图。⑤ 不要滚动，等一会儿，确认后台任务数量仍在下降。⑥ 打开一张图的查看器，确认当前这张仍能看到画面。 | 当前画面和查看器里的图应优先于更远处的回填。停住不滚时，后台任务不应一直停在同一数量。 | [开发日志](../development/2026-09-18-viewport-priority-bands-development-log.md) / [卡住修复](../development/2026-09-18-background-queue-stall-and-sequence-thumbnails-development-log.md) / `viewport-priority.ts` | 2026-09-18 用户报告后台任务直接卡住。根因是 overlay 把后台 claim 锁在视口 ID。已改为 §4.1 两段式 claim：先 overlay `IN`，前台 band 没有 queued 工作且泵未带显式 `assetIds` 时回落持久队列。Worker 回归：overlay 抽空后能领取库外任务；可见收窄后 outside 仍保持 queued。**2026-09-19 用户本人验收通过**（用户原话「可以，通过」）。工单 `Serpent-926e2f` 的滚动命中率 / 双窗口 / packaged 证据仍未齐，不因此关单。 |
+| SEQ-THUMB-001 | 序列帧只为卡片主帧生成缩略图 | 人类验收通过 | ① **完全退出**后再打开含这次改动的构建。② 打开含序列帧的资源库，或导入一组连续编号图片并做成序列。③ 打开「后台任务」，看是否还在为序列里每一张图单独排队缩略图。④ 画布上该序列应仍是一张卡片并能出图。 | 30 帧的序列不应出现 30 条缩略图任务。只有代表这张卡片的主帧需要缩略图。隐藏帧不应继续占着队列。 | [开发日志](../development/2026-09-18-background-queue-stall-and-sequence-thumbnails-development-log.md) / `library-service.ts` `enqueueThumbnailJobs` | 组成序列时取消隐藏帧已有主预览/色卡任务；之后不再入队。导入 30 帧自动成组后，即使按全部帧 ID 入队，`generate_thumbnail` 行数 ≤ 1。任务面板不列出 `SEQUENCE_MEMBER`。**2026-09-19 用户本人验收通过**（用户原话「可以，通过」）。 |
+
 ### 2026-09-18 格式杂项、所在文件夹与序列帧检测
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |

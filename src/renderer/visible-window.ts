@@ -13,6 +13,20 @@ export function normalizeVisibleWindowAssetIds(
     .slice(0, MAX_VISIBLE_WINDOW_ASSETS);
 }
 
+export function preserveVisibleWindowAssetIds(
+  assetIds: readonly string[],
+): string[] {
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  for (const assetId of assetIds) {
+    if (!assetId || seen.has(assetId)) continue;
+    seen.add(assetId);
+    ids.push(assetId);
+    if (ids.length >= MAX_VISIBLE_WINDOW_ASSETS) break;
+  }
+  return ids;
+}
+
 export function visibleWindowReportKey(
   libraryId: string,
   assetIds: readonly string[],

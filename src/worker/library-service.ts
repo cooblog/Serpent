@@ -188,6 +188,12 @@ import type { LibraryNavigationSummary } from '../shared/library-navigation';
 import { isLibraryRootFolderId } from '../shared/library-root-folder';
 import { BROWSE_SCOPE_MAX_ASSETS } from '../shared/browse-scope';
 import {
+  VIEWPORT_CLAIM_ID_LIMIT,
+  shouldFallbackViewportClaimToPersistentQueue,
+  uniqueAssetIdsInOrder,
+  viewportClaimRankOrderSql,
+} from '../shared/viewport-priority';
+import {
   createAutomationFilePlanHash,
   createAutomationImportPlanHash,
 } from '../shared/automation-file-plan';
@@ -4505,6 +4511,10 @@ class AsyncSemaphore {
 
   constructor(private readonly limit: number) {}
 
+  hasIdleCapacity(): boolean {
+    return this.active < this.limit;
+  }
+
   async run<T>(signal: AbortSignal | undefined, task: () => Promise<T>): Promise<T> {
     const release = await this.acquire(signal);
     try {
@@ -4581,6 +4591,12 @@ const interactiveSharpDecoderSemaphore = new AsyncSemaphore(MEDIA_INTERACTIVE_DE
 // a time is the intentional safety limit even on high-core machines.
 const ffmpegDecoderSemaphore = new AsyncSemaphore(1);
 const oiioDecoderSemaphore = new AsyncSemaphore(1);
+
+/** True when a visible/viewer Sharp job can start without aborting a running background decode. */
+export function hasIdleForegroundImageSlot(): boolean {
+  return interactiveSharpDecoderSemaphore.hasIdleCapacity()
+    && sharpNativeDecoderSemaphore.hasIdleCapacity();
+}
 
 type MediaDecodeLane = 'background' | 'interactive';
 
@@ -17190,7 +17206,73 @@ export class LibraryService {
     frames.forEach((frame, position) => {
       insertFrame.run(sequenceId, frame.assetId, frame.frameNumber, position);
     });
+    this.cancelHiddenSequenceMemberMediaJobs(
+      openLibrary,
+      frames.slice(1).map((frame) => frame.assetId),
+    );
     return sequenceId;
+  }
+
+  /**
+   * Hidden sequence frames are not browse cards. Cancel leftover primary and
+   * palette jobs so they cannot occupy the background queue.
+   */
+  private cancelHiddenSequenceMemberMediaJobs(
+    openLibrary: OpenLibrary,
+    hiddenAssetIds: readonly string[],
+  ): void {
+    const uniqueIds = [...new Set(hiddenAssetIds.filter(Boolean))];
+    if (uniqueIds.length === 0) return;
+    const jobIds = sqliteAllInChunks<string, { job_id: string }>({
+      connection: openLibrary.connection,
+      values: uniqueIds,
+      buildSql: (placeholders) =>
+        `SELECT job_id
+           FROM jobs
+          WHERE library_id = ?
+            AND kind IN ('generate_thumbnail', 'extract_palette')
+            AND status IN ('queued', 'paused', 'running')
+            AND asset_id IN (${placeholders})`,
+      bind: (chunk) => [openLibrary.summary.libraryId, ...chunk],
+    }).map((row) => row.job_id);
+    if (jobIds.length === 0) return;
+    const now = new Date().toISOString();
+    sqliteRunInChunks({
+      connection: openLibrary.connection,
+      values: jobIds,
+      buildSql: (placeholders) =>
+        `UPDATE jobs
+            SET status = 'cancelled', error_code = 'SEQUENCE_MEMBER', updated_at = ?
+          WHERE library_id = ?
+            AND status IN ('queued', 'paused', 'running')
+            AND job_id IN (${placeholders})`,
+      bind: (chunk) => [now, openLibrary.summary.libraryId, ...chunk],
+    });
+    this.abortActiveMediaJobs(openLibrary.summary.libraryId, jobIds);
+    this.mediaJobSummaryCache.invalidate(openLibrary.summary.libraryId);
+  }
+
+  private cancelQueuedHiddenSequenceMemberJobs(openLibrary: OpenLibrary): void {
+    if (!hasTable(openLibrary.connection, 'asset_sequence_frames')) return;
+    const now = new Date().toISOString();
+    const result = openLibrary.connection
+      .prepare(
+        `UPDATE jobs
+            SET status = 'cancelled', error_code = 'SEQUENCE_MEMBER', updated_at = ?
+          WHERE library_id = ?
+            AND kind IN ('generate_thumbnail', 'extract_palette')
+            AND status IN ('queued', 'paused')
+            AND EXISTS (
+              SELECT 1
+                FROM asset_sequence_frames hidden_sequence_frame
+               WHERE hidden_sequence_frame.asset_id = jobs.asset_id
+                 AND hidden_sequence_frame.position > 0
+            )`,
+      )
+      .run(now, openLibrary.summary.libraryId);
+    if (result.changes > 0) {
+      this.mediaJobSummaryCache.invalidate(openLibrary.summary.libraryId);
+    }
   }
 
   private dissolveImageSequencesForAssets(
@@ -21477,7 +21559,7 @@ export class LibraryService {
     // were cancelled by the claim-time guard) in the task panel.  The rows
     // stay in SQLite for diagnostics, but they are not actionable media work.
     const visibleJobFilter = `
-          AND (j.error_code IS NULL OR j.error_code <> 'ASSET_IGNORED')
+          AND (j.error_code IS NULL OR j.error_code NOT IN ('ASSET_IGNORED', 'SEQUENCE_MEMBER'))
           AND (j.asset_id IS NULL OR ${this.explicitIgnoreSql(openLibrary.connection, 'a')})`;
     const summaryToken = this.mediaJobSummaryToken(openLibrary);
     const tableCounts = JOB_SUMMARY_CACHE_ENABLED && this.hasMediaJobStatusCountsTable(openLibrary)
@@ -21499,7 +21581,7 @@ export class LibraryService {
           `SELECT status, COUNT(*) AS count FROM jobs
             LEFT JOIN assets a ON a.asset_id = jobs.asset_id
             WHERE jobs.library_id = ? AND jobs.kind IN (${kindPlaceholders})
-              AND (jobs.error_code IS NULL OR jobs.error_code <> 'ASSET_IGNORED')
+              AND (jobs.error_code IS NULL OR jobs.error_code NOT IN ('ASSET_IGNORED', 'SEQUENCE_MEMBER'))
               AND (jobs.asset_id IS NULL OR ${this.explicitIgnoreSql(openLibrary.connection, 'a')})
             GROUP BY status`,
         ).all(openLibrary.summary.libraryId, ...MEDIA_JOB_KINDS) as Array<{
@@ -30350,6 +30432,7 @@ export class LibraryService {
     if (!columnsFor(openLibrary.connection, 'revision_artifacts').has('status')) {
       return 0;
     }
+    this.cancelQueuedHiddenSequenceMemberJobs(openLibrary);
     const artifactColumns = columnsFor(openLibrary.connection, 'revision_artifacts');
     const selectedIds = [...new Set(options.assetIds ?? [])].slice(0, 500);
     const limit = options.limit === undefined
@@ -30619,6 +30702,15 @@ export class LibraryService {
                WHERE loff.folder_id = a.linked_folder_id
                  AND loff.status = 'offline'
             )`;
+    const hiddenSequenceMemberSql = hasTable(openLibrary.connection, 'asset_sequence_frames')
+      ? `
+            AND NOT EXISTS (
+              SELECT 1
+                FROM asset_sequence_frames hidden_sequence_frame
+               WHERE hidden_sequence_frame.asset_id = a.asset_id
+                 AND hidden_sequence_frame.position > 0
+            )`
+      : '';
     const extensionSql = supportedExtensions
       .map(() => 'LOWER(a.relative_file_path) LIKE ?')
       .join(' OR ');
@@ -30664,6 +30756,7 @@ export class LibraryService {
             AND a.availability = 'available'
             ${selectedSql}
             ${notOfflineLinkedFolderSql}
+            ${hiddenSequenceMemberSql}
             AND (${extensionSql})
             AND NOT EXISTS (
               SELECT 1 FROM revision_artifacts ra
@@ -30930,7 +31023,11 @@ export class LibraryService {
        * keeps the original queue-wide scope; an array limits future claims.
        */
       claimAssetIdsRef?: { current: readonly string[] | undefined };
-      /** Serpent-4bdd26 收编：Restrict a visible-window pump to the latest viewport asset ids. */
+      /**
+       * Restrict a visible-window pump to the latest viewport asset ids.
+       * Background pumps omit this so overlay `IN (...)` can fall back to the
+       * persistent queue once those ids have no queued work.
+       */
       assetIds?: readonly string[];
       /** Serpent-4bdd26 收编：Stop claiming more jobs when a newer queue scene supersedes this pump. */
       signal?: AbortSignal;
@@ -31256,7 +31353,17 @@ export class LibraryService {
           AND COALESCE(jobs.error_code, '') = '${IMPORTED_THUMBNAIL_NORMALIZATION_JOB}'
         )`
       : '';
-    const nextJobQuery = (claimAssetIds: readonly string[] | undefined) => openLibrary.connection.prepare(
+    const hiddenSequenceClaimGuard = hasTable(openLibrary.connection, 'asset_sequence_frames')
+      ? `AND NOT EXISTS (
+            SELECT 1
+              FROM asset_sequence_frames hidden_sequence_frame
+             WHERE hidden_sequence_frame.asset_id = jobs.asset_id
+               AND hidden_sequence_frame.position > 0
+          )`
+      : '';
+    const nextJobQuery = (claimAssetIds: readonly string[] | undefined) => {
+      const rankOrder = viewportClaimRankOrderSql(claimAssetIds);
+      return openLibrary.connection.prepare(
       `SELECT job_id, asset_id, revision_id, kind, priority, attempt_count, error_code
          FROM jobs
         WHERE library_id = ?
@@ -31265,38 +31372,63 @@ export class LibraryService {
           ${buildAssetClause(claimAssetIds)}
           ${primaryPreviewClaimGuard}
           ${interactiveImportedNormalizationGuard}
+          ${hiddenSequenceClaimGuard}
           ${deferSecondaryAfterPrimarySql}
           AND (
             error_code IS NULL
             OR error_code NOT IN ('JOB_LEASE_LOST', '${MEDIA_RESOURCE_EXHAUSTED_ERROR_CODE}')
             OR updated_at <= ?
           )
-        ORDER BY ${interactiveImageFirstOrder}priority DESC, created_at
+        ORDER BY ${interactiveImageFirstOrder}${rankOrder.sql}priority DESC, created_at
         LIMIT 1`,
     );
+    };
     const normalizedClaimAssetIds = (assetIds: readonly string[] | undefined): string[] | undefined =>
-      assetIds === undefined ? undefined : [...new Set(assetIds)].slice(0, 100);
+      assetIds === undefined ? undefined : uniqueAssetIdsInOrder(assetIds, VIEWPORT_CLAIM_ID_LIMIT);
     const claimAssetIdsKey = (assetIds: readonly string[] | undefined): string | undefined =>
       assetIds === undefined ? undefined : [...assetIds].toSorted().join('\u0000');
-    let nextJobAssetIds = pumpAssetIds;
+    let nextJobAssetIds: readonly string[] | undefined = pumpAssetIds;
     let nextJobAssetKey = claimAssetIdsKey(nextJobAssetIds);
     let nextJob = nextJobQuery(nextJobAssetIds);
-    const claimNextJob = (): unknown => {
-      const requestedAssetIds = options.claimAssetIdsRef?.current ?? pumpAssetIds;
-      const currentAssetIds = normalizedClaimAssetIds(requestedAssetIds);
-      const currentAssetKey = claimAssetIdsKey(currentAssetIds);
-      if (currentAssetKey !== nextJobAssetKey) {
-        nextJobAssetIds = currentAssetIds;
-        nextJobAssetKey = currentAssetKey;
-        nextJob = nextJobQuery(nextJobAssetIds);
-      }
+    const executeClaimQuery = (): unknown => {
+      const rankOrder = viewportClaimRankOrderSql(nextJobAssetIds);
       return nextJob.get(
         libraryId,
         ...jobKinds,
         ...(nextJobAssetIds ?? []),
         ...(deferSecondaryAfterPrimarySql === '' ? [] : [waveStartedAtIso]),
         new Date(Date.now() - MEDIA_RESOURCE_RETRY_DELAY_MS).toISOString(),
+        ...rankOrder.params,
       );
+    };
+    const adoptClaimAssetIds = (assetIds: readonly string[] | undefined): void => {
+      nextJobAssetIds = assetIds;
+      nextJobAssetKey = claimAssetIdsKey(assetIds);
+      nextJob = nextJobQuery(nextJobAssetIds);
+    };
+    const claimNextJob = (): unknown => {
+      const requestedAssetIds = options.claimAssetIdsRef?.current ?? pumpAssetIds;
+      const currentAssetIds = normalizedClaimAssetIds(requestedAssetIds);
+      const currentAssetKey = claimAssetIdsKey(currentAssetIds);
+      if (currentAssetKey !== nextJobAssetKey) {
+        adoptClaimAssetIds(currentAssetIds);
+      }
+      const scoped = executeClaimQuery();
+      if (
+        scoped !== undefined
+        || !shouldFallbackViewportClaimToPersistentQueue({
+          interactive: options.interactive === true,
+          restrictedByAssetIds: options.assetIds !== undefined,
+          scopedClaimIds: nextJobAssetIds,
+        })
+      ) {
+        return scoped;
+      }
+      if (options.claimAssetIdsRef) {
+        options.claimAssetIdsRef.current = undefined;
+      }
+      adoptClaimAssetIds(undefined);
+      return executeClaimQuery();
     };
 
     let processed = 0;

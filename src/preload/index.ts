@@ -181,6 +181,7 @@ import {
   type RendererLibrarySummary,
   type RendererLifecycleEvent,
   type RendererResult,
+  type ThumbnailEvent,
   type ImportCompletion,
   type ImportConflictPlan,
   type ImportSourceFailurePlan,
@@ -2073,9 +2074,46 @@ const library: SerpentLibraryApi = Object.freeze({
 
   // Serpent-visible-window: fire-and-forget report of the viewport assets —
   // worker queue-jumps their thumbnail jobs and header-probes dimensions.
-  async reportVisibleWindow({ libraryId, assetIds }: { libraryId: string; assetIds: string[] }): Promise<void> {
+  async reportVisibleWindow({
+    libraryId,
+    assetIds,
+    consumerId,
+    libraryGeneration,
+    interactionGeneration,
+    viewportGeneration,
+    direction,
+    focusedAssetIds,
+    nearForwardAssetIds,
+    nearBackwardAssetIds,
+    scopeWarmAssetIds,
+  }: {
+    libraryId: string;
+    assetIds: string[];
+    consumerId?: string;
+    libraryGeneration?: number;
+    interactionGeneration?: number;
+    viewportGeneration?: number;
+    direction?: 'up' | 'down' | 'stationary' | 'jump';
+    focusedAssetIds?: string[];
+    nearForwardAssetIds?: string[];
+    nearBackwardAssetIds?: string[];
+    scopeWarmAssetIds?: string[];
+  }): Promise<void> {
     if (assetIds.length === 0) return;
-    await request({ type: 'asset.thumbnail.visible-window.request', libraryId, assetIds });
+    await request({
+      type: 'asset.thumbnail.visible-window.request',
+      libraryId,
+      assetIds,
+      ...(consumerId === undefined ? {} : { consumerId }),
+      ...(libraryGeneration === undefined ? {} : { libraryGeneration }),
+      ...(interactionGeneration === undefined ? {} : { interactionGeneration }),
+      ...(viewportGeneration === undefined ? {} : { viewportGeneration }),
+      ...(direction === undefined ? {} : { direction }),
+      ...(focusedAssetIds === undefined ? {} : { focusedAssetIds }),
+      ...(nearForwardAssetIds === undefined ? {} : { nearForwardAssetIds }),
+      ...(nearBackwardAssetIds === undefined ? {} : { nearBackwardAssetIds }),
+      ...(scopeWarmAssetIds === undefined ? {} : { scopeWarmAssetIds }),
+    });
   },
 
   // Serpent-xffq: 同步服务器（全局）与库绑定（Main 本地，密码 safeStorage）。
@@ -2545,7 +2583,7 @@ const library: SerpentLibraryApi = Object.freeze({
     return () => ipcRenderer.removeListener(AI_CLEARED_CHANNEL, subscription);
   },
 
-  onThumbnailEvent(listener: (event: { type: 'asset.thumbnail.ready' | 'asset.thumbnail.failed' | 'asset.dimensions.ready' | 'asset.derived.ready'; libraryId: string; assetId: string; artifactId?: string; errorCode?: string; reason?: string; width?: number; height?: number; durationMs?: number; kind?: 'extract_metadata' | 'extract_palette' | 'generate_contact_sheet' | 'generate_webm_proxy' | 'generate_audio_proxy' }) => void) {
+  onThumbnailEvent(listener: (event: ThumbnailEvent) => void) {
     const subscription = (_event: Electron.IpcRendererEvent, input: unknown) => {
       try {
         listener(parseThumbnailEvent(input));

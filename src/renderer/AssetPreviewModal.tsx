@@ -11,6 +11,7 @@ import {
 } from "react";
 
 import type { AssetSummary } from "../shared/asset-types";
+import { thumbnailEventConcernsAsset } from "./thumbnail-completion-projection";
 import type {
   PreviewResolution,
   SerpentLibraryApi,
@@ -564,7 +565,10 @@ const AssetPreviewModalContent = forwardRef<
   useEffect(
     () =>
       api.onThumbnailEvent((event) => {
-        if (event.libraryId === libraryId && event.assetId === asset.assetId) {
+        if (
+          event.libraryId === libraryId
+          && thumbnailEventConcernsAsset(event, asset.assetId)
+        ) {
           void resolvePreview(true);
         }
       }),

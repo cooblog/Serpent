@@ -32,6 +32,14 @@ import {
   type DocumentThumbnailRenderResponse,
 } from '../shared/document-thumbnail-protocol';
 import { isBenignThumbnailErrorCode } from '../shared/thumbnail-support';
+import { ThumbnailCompletionFanout } from '../shared/thumbnail-completion-fanout';
+import {
+  ViewportPriorityOverlay,
+  VIEWPORT_PREEMPT_STABLE_MS,
+  claimIdsForThumbnailWave,
+  resolveViewportClaimIds,
+  shouldAbortRunningOutsideViewport,
+} from '../shared/viewport-priority';
 import { SyncEngine, type SyncEngineOptions } from './sync/sync-engine';
 import { createLibrarySyncPort } from './sync/library-port';
 import { WebDAVDriver } from './sync/webdav-driver';
@@ -49,6 +57,7 @@ import {
   LibraryService,
   LibraryServiceError,
   THUMBNAIL_VISIBLE_PAGE_SIZE,
+  hasIdleForegroundImageSlot,
   shutdownActiveMediaProcesses,
   shutdownWorkerResources,
   type ImportFailurePoint,
@@ -199,6 +208,12 @@ const pendingReconciledPrimaryIdleRetries = new Map<string, ReturnType<typeof se
 const lastVisibleWindowKeyByLibrary = new Map<string, string>();
 /** The key alone cannot distinguish geometry churn from real navigation. */
 const lastVisibleWindowAssetIdsByLibrary = new Map<string, string[]>();
+const thumbnailCompletionFanout = new ThumbnailCompletionFanout({
+  publish: (event) => parentPort?.postMessage(event),
+});
+const viewportPriorityOverlay = new ViewportPriorityOverlay();
+const lastViewportVisibleChangeAtMs = new Map<string, number>();
+const lastViewportPreemptAtMs = new Map<string, number>();
 const deferredStartupThumbnailGenerations = new Map<string, number>();
 const pendingStartupThumbnailAdmission = new DeferredThumbnailAdmission();
 type VisibleDimensionProbeState = {
@@ -259,11 +274,13 @@ const libraryService = new LibraryService({
   onAssetsChanged: (event) => {
     lastVisibleWindowKeyByLibrary.delete(event.libraryId);
     lastVisibleWindowAssetIdsByLibrary.delete(event.libraryId);
+    thumbnailCompletionFanout.setImmediateAssetIds(event.libraryId, []);
     parentPort.postMessage(event);
   },
   onLibraryChanged: (event) => {
     lastVisibleWindowKeyByLibrary.delete(event.libraryId);
     lastVisibleWindowAssetIdsByLibrary.delete(event.libraryId);
+    thumbnailCompletionFanout.setImmediateAssetIds(event.libraryId, []);
     parentPort.postMessage(event);
   },
   onProgress: (event) => parentPort.postMessage(event),
@@ -789,7 +806,10 @@ function scheduleThumbnailQueue(
       // replacement wave decode the same first cards twice.
       const assetScope = activeThumbnailQueueAssetScopes.get(libraryId);
       if (assetScope) {
-        assetScope.current = [...new Set(options.assetIds)].slice(0, 100);
+        assetScope.current = resolveViewportClaimIds(
+          viewportPriorityOverlay.rankedClaimIds(libraryId),
+          options.assetIds,
+        );
       }
     }
     rescheduledThumbnailQueues.add(libraryId);
@@ -854,8 +874,7 @@ function scheduleThumbnailQueue(
         durationMs?: number;
       }) => {
         if (result.artifactId) {
-          parentPort?.postMessage({
-            type: 'asset.thumbnail.ready',
+          thumbnailCompletionFanout.publishReady({
             libraryId,
             assetId: result.assetId,
             artifactId: result.artifactId,
@@ -866,8 +885,7 @@ function scheduleThumbnailQueue(
         } else {
           const errorCode = result.errorCode ?? 'THUMBNAIL_GENERATION_FAILED';
           if (isBenignThumbnailErrorCode(errorCode)) return;
-          parentPort?.postMessage({
-            type: 'asset.thumbnail.failed',
+          thumbnailCompletionFanout.publishFailed({
             libraryId,
             assetId: result.assetId,
             errorCode,
@@ -899,6 +917,16 @@ function scheduleThumbnailQueue(
           : undefined);
       if (assetScope.current === undefined && visibleAssetIds !== undefined) {
         assetScope.current = visibleAssetIds;
+      }
+      const waveClaimIds = claimIdsForThumbnailWave({
+        viewportOnlyWave,
+        rankedOverlayIds: viewportPriorityOverlay.rankedClaimIds(libraryId),
+        fallbackIds: assetScope.current ?? visibleAssetIds,
+      });
+      if (viewportOnlyWave) {
+        if (waveClaimIds !== undefined) assetScope.current = waveClaimIds;
+      } else if (assetScope.current === undefined) {
+        assetScope.current = waveClaimIds;
       }
       const processWaveSize = pendingVisibleWave !== undefined
         ? Math.max(1, Math.min(100, Math.trunc(pendingVisibleWave.waveSize)))
@@ -1019,6 +1047,7 @@ function scheduleThumbnailQueue(
       activeThumbnailQueueAssetScopes.delete(libraryId);
     }
     activeThumbnailQueues.delete(libraryId);
+    thumbnailCompletionFanout.flush(libraryId);
     const completedVisibleWaveIsCurrent = pendingVisibleWaveCompleted
       && pendingVisibleWave !== undefined
       && pendingVisibleThumbnailWaves.get(libraryId) === pendingVisibleWave
@@ -1425,6 +1454,10 @@ function cancelDeferredStartupThumbnailScene(libraryId: string): void {
   pendingVisibleThumbnailWaves.delete(libraryId);
   lastVisibleWindowKeyByLibrary.delete(libraryId);
   lastVisibleWindowAssetIdsByLibrary.delete(libraryId);
+  thumbnailCompletionFanout.clear(libraryId);
+  viewportPriorityOverlay.clearLibrary(libraryId);
+  lastViewportVisibleChangeAtMs.delete(libraryId);
+  lastViewportPreemptAtMs.delete(libraryId);
 }
 
 function admitStartupThumbnailScene(libraryId: string, libraryGeneration: number): void {
@@ -2034,6 +2067,12 @@ function scheduleThumbnailScene(
   };
   const config = configs[scene];
   const maxIds = maxIdsOverride ?? config.maxIds ?? 500;
+  if (scene === 'cover' && assetIds && assetIds.length > 0) {
+    thumbnailCompletionFanout.addImmediateAssetIds(
+      libraryId,
+      assetIds.slice(0, maxIds),
+    );
+  }
   try {
     scheduleThumbnailQueue(libraryId, {
       ...(assetIds ? { assetIds: assetIds.slice(0, maxIds) } : {}),
@@ -2435,6 +2474,10 @@ function stopAutomaticWorkForLibrary(
   cancelVisibleWindowDimensionProbes(libraryId);
   lastVisibleWindowKeyByLibrary.delete(libraryId);
   lastVisibleWindowAssetIdsByLibrary.delete(libraryId);
+  thumbnailCompletionFanout.clear(libraryId);
+  viewportPriorityOverlay.clearLibrary(libraryId);
+  lastViewportVisibleChangeAtMs.delete(libraryId);
+  lastViewportPreemptAtMs.delete(libraryId);
   // Closing and deleting destroy the library, so its queued jobs go with it. A
   // switch does not: `stopOutgoingLibrariesForOpen` passes false so the queued
   // work survives for the next open instead of being cancelled and re-enqueued.
@@ -2688,6 +2731,10 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
             cancelVisibleWindowDimensionProbes(outgoingLibraryId);
             lastVisibleWindowKeyByLibrary.delete(outgoingLibraryId);
             lastVisibleWindowAssetIdsByLibrary.delete(outgoingLibraryId);
+            thumbnailCompletionFanout.clear(outgoingLibraryId);
+            viewportPriorityOverlay.clearLibrary(outgoingLibraryId);
+            lastViewportVisibleChangeAtMs.delete(outgoingLibraryId);
+            lastViewportPreemptAtMs.delete(outgoingLibraryId);
           },
           cancelQueuedJobs: (outgoingLibraryId) => {
             libraryService.cancelJobs(outgoingLibraryId);
@@ -4453,15 +4500,12 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
         );
       }
       if (generated) {
-        // Publish the thumbnail-ready event to the renderer
-        if (parentPort) {
-          parentPort.postMessage({
-            type: 'asset.thumbnail.ready',
-            libraryId: request.command.libraryId,
-            assetId: request.command.assetId,
-            artifactId: generated.artifactId,
-          });
-        }
+        thumbnailCompletionFanout.publishImmediate({
+          type: 'asset.thumbnail.ready',
+          libraryId: request.command.libraryId,
+          assetId: request.command.assetId,
+          artifactId: generated.artifactId,
+        });
       }
       return {
         ok: true,
@@ -4673,28 +4717,96 @@ async function handleRequestWithoutWriteLease(request: WorkerRequest): Promise<W
       }
       // Serpent-4bc4ac: ignored assets are not indexed or operated on —
       // drop them before dimension probes and thumbnail scheduling.
-      const visibleAssetIds = libraryService.filterIgnoredAssetIds(
+      const focusedRaw = request.command.focusedAssetIds ?? [];
+      const nearForwardRaw = request.command.nearForwardAssetIds ?? [];
+      const nearBackwardRaw = request.command.nearBackwardAssetIds ?? [];
+      const scopeWarmRaw = request.command.scopeWarmAssetIds ?? [];
+      const allowedAssetIds = new Set(libraryService.filterIgnoredAssetIds(
         libraryId,
-        assetIds,
-      );
+        [...assetIds, ...focusedRaw, ...nearForwardRaw, ...nearBackwardRaw, ...scopeWarmRaw],
+      ));
+      const keepAllowed = (ids: readonly string[]): string[] => {
+        const kept: string[] = [];
+        const seen = new Set<string>();
+        for (const assetId of ids) {
+          if (!assetId || seen.has(assetId) || !allowedAssetIds.has(assetId)) continue;
+          seen.add(assetId);
+          kept.push(assetId);
+        }
+        return kept;
+      };
+      const visibleAssetIds = keepAllowed(assetIds);
+      const focusedAssetIds = keepAllowed(focusedRaw);
+      const nearForwardAssetIds = keepAllowed(nearForwardRaw);
+      const nearBackwardAssetIds = keepAllowed(nearBackwardRaw);
+      const scopeWarmAssetIds = keepAllowed(scopeWarmRaw);
       // The renderer order is meaningful for the first visual wave (top to
       // bottom), while the key and overlap calculation are set-like. Keep the
       // stable key sorted without destroying the caller's scheduling order.
       const visibleWindowKey = [...visibleAssetIds].toSorted().join('\u0000');
-      if (visibleWindowKey === lastVisibleWindowKeyByLibrary.get(libraryId)) {
+      const viewportGeneration = request.command.viewportGeneration;
+      const consumerId = request.command.consumerId ?? 'browse';
+      const bandSnapshotAccepted = viewportPriorityOverlay.apply({
+        libraryId,
+        consumerId,
+        libraryGeneration: request.command.libraryGeneration
+          ?? libraryGenerationRegistry.current(libraryId)
+          ?? 0,
+        interactionGeneration: request.command.interactionGeneration ?? 0,
+        viewportGeneration: viewportGeneration ?? Date.now(),
+        direction: request.command.direction ?? 'stationary',
+        focused: focusedAssetIds,
+        visible: visibleAssetIds,
+        nearForward: nearForwardAssetIds,
+        nearBackward: nearBackwardAssetIds,
+        scopeWarm: scopeWarmAssetIds,
+      });
+      if (!bandSnapshotAccepted.accepted) {
         return { ok: true, type: 'asset.thumbnail.visible-window.acknowledged' };
       }
-      const preemptVisible = shouldPreemptVisibleWindow(
-        lastVisibleWindowAssetIdsByLibrary.get(libraryId),
+      if (
+        viewportGeneration === undefined
+        && visibleWindowKey === lastVisibleWindowKeyByLibrary.get(libraryId)
+      ) {
+        return { ok: true, type: 'asset.thumbnail.visible-window.acknowledged' };
+      }
+      const previousVisible = lastVisibleWindowAssetIdsByLibrary.get(libraryId);
+      const previousVisibleKey = lastVisibleWindowKeyByLibrary.get(libraryId);
+      const visibleSetChanged = visibleWindowKey !== previousVisibleKey;
+      const overlapShouldPreempt = shouldPreemptVisibleWindow(
+        previousVisible,
         visibleAssetIds,
       );
+      const nowMs = Date.now();
+      const viewportStableMs = previousVisible === undefined
+        ? VIEWPORT_PREEMPT_STABLE_MS
+        : visibleSetChanged
+          ? 0
+          : Math.max(0, nowMs - (lastViewportVisibleChangeAtMs.get(libraryId) ?? nowMs));
+      if (visibleSetChanged) lastViewportVisibleChangeAtMs.set(libraryId, nowMs);
       lastVisibleWindowKeyByLibrary.set(libraryId, visibleWindowKey);
       lastVisibleWindowAssetIdsByLibrary.set(libraryId, visibleAssetIds);
-      // A low-overlap destination change can preempt work outside the new
-      // viewport. Small geometry changes keep the current decoder wave alive;
-      // the scheduler still records the latest ids for its next batch.
+      const rankedClaimIds = viewportPriorityOverlay.rankedClaimIds(libraryId);
+      const assetScope = activeThumbnailQueueAssetScopes.get(libraryId);
+      if (assetScope) {
+        assetScope.current = resolveViewportClaimIds(rankedClaimIds, visibleAssetIds);
+      }
+      thumbnailCompletionFanout.setImmediateAssetIds(
+        libraryId,
+        viewportPriorityOverlay.immediateAssetIds(libraryId),
+      );
+      const preemptVisible = shouldAbortRunningOutsideViewport({
+        overlapShouldPreempt,
+        hasIdleForegroundSlot: hasIdleForegroundImageSlot(),
+        viewportStableMs,
+        lastPreemptAtMs: lastViewportPreemptAtMs.get(libraryId),
+        nowMs,
+        p0OrP1Waiting: viewportPriorityOverlay.immediateAssetIds(libraryId).length > 0,
+        lookaheadOnly: previousVisible !== undefined && !visibleSetChanged,
+      });
       if (preemptVisible) {
         libraryService.interruptThumbnailJobsOutsideViewport(libraryId, visibleAssetIds);
+        lastViewportPreemptAtMs.set(libraryId, nowMs);
       }
       // Models use Main's single-flight offscreen renderer. Keep that
       // potentially slow/timeout-prone work out of the fast visible raster

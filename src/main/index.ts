@@ -3593,6 +3593,29 @@ async function commandFor(
         type: "asset.thumbnail.visible-window",
         libraryId: request.libraryId,
         assetIds: request.assetIds,
+        ...(request.consumerId === undefined ? {} : { consumerId: request.consumerId }),
+        ...(request.libraryGeneration === undefined
+          ? {}
+          : { libraryGeneration: request.libraryGeneration }),
+        ...(request.interactionGeneration === undefined
+          ? {}
+          : { interactionGeneration: request.interactionGeneration }),
+        ...(request.viewportGeneration === undefined
+          ? {}
+          : { viewportGeneration: request.viewportGeneration }),
+        ...(request.direction === undefined ? {} : { direction: request.direction }),
+        ...(request.focusedAssetIds === undefined
+          ? {}
+          : { focusedAssetIds: request.focusedAssetIds }),
+        ...(request.nearForwardAssetIds === undefined
+          ? {}
+          : { nearForwardAssetIds: request.nearForwardAssetIds }),
+        ...(request.nearBackwardAssetIds === undefined
+          ? {}
+          : { nearBackwardAssetIds: request.nearBackwardAssetIds }),
+        ...(request.scopeWarmAssetIds === undefined
+          ? {}
+          : { scopeWarmAssetIds: request.scopeWarmAssetIds }),
       };
     case "sync.asset-card-status.request":
       return {
@@ -7747,8 +7770,7 @@ async function startApplication(): Promise<void> {
       // requests in a pure browse profile; the first screen is warmed by the
       // browse response itself and anything else resolves on demand.
     }
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-    mainWindow.webContents.send(THUMBNAIL_CHANNEL, event);
+    sendToLiveWebContents(mainWindow?.webContents, THUMBNAIL_CHANNEL, event);
   });
 
   // Register serpent:// custom protocol for serving thumbnail/preview artifacts.

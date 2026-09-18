@@ -1,4 +1,5 @@
 import { mkdtempSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -9,6 +10,14 @@ import {
   LibraryService,
   LibraryServiceError,
 } from "../../src/worker/library-service";
+
+const require = createRequire(import.meta.url);
+const TestDatabase = require("better-sqlite3") as new (filename: string) => {
+  close(): void;
+  prepare(source: string): {
+    all(...parameters: unknown[]): unknown[];
+  };
+};
 
 const roots: string[] = [];
 const services: LibraryService[] = [];
@@ -715,5 +724,96 @@ describe("image sequence persistence", () => {
       caught = error;
     }
     expect(caught).toMatchObject({ code: "ASSET_STATE_CONFLICT" });
+  });
+
+  it("does not keep thumbnail jobs for hidden sequence frames", () => {
+    const { library, root, service } = fixture();
+    const source = path.join(root, "seq-thumbs");
+    mkdirSync(source, { recursive: true });
+    const requiredPng = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAACAEAAAABCAIAAAAqtLKbAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAOklEQVRYhe3YQQ0AAAgDMeRMImInBh+kySno8yZbESBAgAABAgQIECBAgAABAgQIECBAgAABAnk3zA9mXOIiDxU7WQAAAABJRU5ErkJggg==",
+      "base64",
+    );
+    for (const [index, name] of ["clip_001.png", "clip_002.png", "clip_003.png"].entries()) {
+      writeFileSync(path.join(source, name), Buffer.concat([requiredPng, Buffer.from([index])]));
+    }
+    const completion = service.prepareOrExecuteImport({
+      createImageSequence: false,
+      expandImageSequences: false,
+      libraryId: library.libraryId,
+      sourceKind: "folder",
+      sourcePaths: [source],
+    });
+    expect("importId" in completion).toBe(false);
+    const before = service.listAssets({ libraryId: library.libraryId, recursive: true });
+    expect(before).toHaveLength(3);
+    expect(service.enqueueThumbnailJobs(library.libraryId, {
+      assetIds: before.map((asset) => asset.assetId),
+    })).toBe(3);
+
+    const primary = service.createImageSequence({
+      libraryId: library.libraryId,
+      assetIds: before.map((asset) => asset.assetId),
+      fps: 12,
+    });
+    expect(primary.sequence?.frameCount).toBe(3);
+    const hiddenIds = new Set(
+      primary.sequence!.frames.slice(1).map((frame) => frame.assetId),
+    );
+    expect(hiddenIds.size).toBe(2);
+
+    expect(service.enqueueThumbnailJobs(library.libraryId)).toBe(0);
+    const jobs = service.listMediaJobs(library.libraryId).jobs
+      .filter((job) => job.kind === "generate_thumbnail");
+    expect(jobs.filter((job) => (
+      hiddenIds.has(job.assetId) && (job.status === "queued" || job.status === "running")
+    ))).toEqual([]);
+    const primaryJobs = jobs.filter((job) => job.assetId === primary.assetId);
+    expect(primaryJobs.some((job) => job.status === "queued" || job.status === "running")).toBe(true);
+  });
+
+  it("does not enqueue a thumbnail job per frame of a 30-frame imported sequence", () => {
+    const { library, root, service } = fixture();
+    const source = path.join(root, "seq-30");
+    mkdirSync(source, { recursive: true });
+    const requiredPng = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAACAEAAAABCAIAAAAqtLKbAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAOklEQVRYhe3YQQ0AAAgDMeRMImInBh+kySno8yZbESBAgAABAgQIECBAgAABAgQIECBAgAABAnk3zA9mXOIiDxU7WQAAAABJRU5ErkJggg==",
+      "base64",
+    );
+    for (let index = 1; index <= 30; index += 1) {
+      writeFileSync(
+        path.join(source, `clip_${String(index).padStart(3, "0")}.png`),
+        Buffer.concat([requiredPng, Buffer.from([index])]),
+      );
+    }
+    const completion = service.prepareOrExecuteImport({
+      libraryId: library.libraryId,
+      sourceKind: "folder",
+      sourcePaths: [source],
+      imageSequenceFps: 12,
+    });
+    expect("importId" in completion).toBe(false);
+    const assets = service.listAssets({ libraryId: library.libraryId, recursive: true });
+    expect(assets).toHaveLength(1);
+    expect(assets[0]!.sequence?.frameCount).toBe(30);
+    const hiddenIds = new Set(
+      assets[0]!.sequence!.frames.slice(1).map((frame) => frame.assetId),
+    );
+    expect(hiddenIds.size).toBe(29);
+
+    const frameIds = assets[0]!.sequence!.frames.map((frame) => frame.assetId);
+    expect(service.enqueueThumbnailJobs(library.libraryId, {
+      assetIds: frameIds,
+      limit: 500,
+    })).toBeLessThanOrEqual(1);
+
+    const db = new TestDatabase(path.join(library.libraryPath, ".serpent", "library.db"));
+    const thumbs = db.prepare(
+      "SELECT asset_id, status, error_code FROM jobs WHERE kind = 'generate_thumbnail'",
+    ).all() as Array<{ asset_id: string; status: string; error_code: string | null }>;
+    db.close();
+    expect(thumbs.length).toBeLessThanOrEqual(1);
+    expect(thumbs.every((job) => job.asset_id === assets[0]!.assetId)).toBe(true);
+    expect(thumbs.some((job) => hiddenIds.has(job.asset_id))).toBe(false);
   });
 });
