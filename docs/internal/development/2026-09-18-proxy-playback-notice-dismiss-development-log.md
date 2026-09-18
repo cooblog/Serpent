@@ -30,4 +30,4 @@ Electron 视频 E2E（`tests/e2e/media-video-playback.test.ts`）已改成：隐
 
 ## 验收
 
-`docs/internal/qa/human-acceptance-checklist.md` VIEWER-PROXY-001 / `Serpent-0d6421`。
+`docs/internal/qa/human-acceptance-checklist.md` VIEWER-PROXY-001 / `Serpent-0d6421`：2026-09-18 用户本人验收通过（用户原话「SHELL-FOCUS-001、VIEWER-PROXY-001通过」）。

@@ -49,13 +49,13 @@
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
 | --- | --- | --- | --- | --- | --- | --- |
 | BROWSE-100 / `Serpent-5fddea` | 「所有资产」能滚过首页 100 项 | 人类验收通过 | ① **完全退出**后再打开含这次改动的构建。② 打开明显超过 100 项的资源库，进入「所有资产」。③ 先确认首屏大约 100 张卡片。④ 向下滚到中部、底部，再滚回来。⑤ 点选第 101 张及更后面的卡片。 | 滚动条按全部资产长度变化；中部和底部能出现后续卡片，而不是停在约 100 张。侧栏「所有资产」计数可以大于画布当前已加载数。 | [开发日志](../development/2026-09-18-browse-stale-session-100-and-focus-send-development-log.md) / `use-browse-pagination.ts` / `virtual-browse-canvas.tsx` | 2026-09-18 用户本人验收通过（用户原话「通过」）。 |
-| SHELL-FOCUS-001 / `Serpent-30c8f9` | Renderer 销毁后切窗口不再退出应用 | 待人类验收 | ① 用这次改动的开发构建打开应用。② 在开发态触发一次页面重载（保存源码或手动刷新），或打开资源库后立刻点别的窗口再点回来。③ 看应用是否还在、主进程是否还在跑。 | 焦点来回切换不应把整个应用打掉。开发态热更新后也应还能继续用，而不是主进程带着那条 WebFrameMain 错误退出。 | 同上 / `web-contents-send.ts` / `src/main/index.ts` | 自动化：`web-contents-send` 与 `window-router` 单测覆盖销毁后 send。Computer Use、packaged 未执行。 |
+| SHELL-FOCUS-001 / `Serpent-30c8f9` | Renderer 销毁后切窗口不再退出应用 | 人类验收通过 | ① 用这次改动的开发构建打开应用。② 在开发态触发一次页面重载（保存源码或手动刷新），或打开资源库后立刻点别的窗口再点回来。③ 看应用是否还在、主进程是否还在跑。 | 焦点来回切换不应把整个应用打掉。开发态热更新后也应还能继续用，而不是主进程带着那条 WebFrameMain 错误退出。 | 同上 / `web-contents-send.ts` / `src/main/index.ts` | 2026-09-18 用户本人验收通过（用户原话「SHELL-FOCUS-001、VIEWER-PROXY-001通过」）。 |
 
 ### 2026-09-18 代理视频提示
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
 | --- | --- | --- | --- | --- | --- | --- |
-| VIEWER-PROXY-001 / `Serpent-0d6421` | 代理播放提示隐藏后不再出现 | 待人类验收 | ① **完全退出**后再打开含这次改动的构建。② 打开一段当前播放器会落到代理的视频（例如部分 MOV）。③ 看到「原视频无法播放，当前播放的是代理视频」。④ 点「隐藏提示」。⑤ 等视频循环或从头再播。⑥ 确认左上角没有「显示代理提示」。 | 隐藏后提示不再出现；循环/重播也不会再弹出；没有重新显示入口。换到另一条会走代理的视频时，提示可以再出现一次。 | [开发日志](../development/2026-09-18-proxy-playback-notice-dismiss-development-log.md) / `ProxyPlaybackNotice.tsx` / `AssetPreviewModal.tsx` | 自动化：定向单测 `proxy-playback-notice`。Electron 视频 E2E、Computer Use、packaged 未执行。 |
+| VIEWER-PROXY-001 / `Serpent-0d6421` | 代理播放提示隐藏后不再出现 | 人类验收通过 | ① **完全退出**后再打开含这次改动的构建。② 打开一段当前播放器会落到代理的视频（例如部分 MOV）。③ 看到「原视频无法播放，当前播放的是代理视频」。④ 点「隐藏提示」。⑤ 等视频循环或从头再播。⑥ 确认左上角没有「显示代理提示」。 | 隐藏后提示不再出现；循环/重播也不会再弹出；没有重新显示入口。换到另一条会走代理的视频时，提示可以再出现一次。 | [开发日志](../development/2026-09-18-proxy-playback-notice-dismiss-development-log.md) / `ProxyPlaybackNotice.tsx` / `AssetPreviewModal.tsx` | 2026-09-18 用户本人验收通过（用户原话「SHELL-FOCUS-001、VIEWER-PROXY-001通过」）。 |
 
 ### 2026-09-18 格式杂项、所在文件夹与序列帧检测
 

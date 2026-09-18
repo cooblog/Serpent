@@ -41,5 +41,5 @@ npx vitest run tests/unit/browse-window-slots.test.ts tests/unit/browse-paginati
 
 `docs/internal/qa/human-acceptance-checklist.md`：
 
-- BROWSE-100 / `Serpent-5fddea`
-- SHELL-FOCUS-001 / `Serpent-30c8f9`
+- BROWSE-100 / `Serpent-5fddea`：2026-09-18 用户本人验收通过。
+- SHELL-FOCUS-001 / `Serpent-30c8f9`：2026-09-18 用户本人验收通过（用户原话「SHELL-FOCUS-001、VIEWER-PROXY-001通过」）。
