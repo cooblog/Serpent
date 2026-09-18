@@ -5055,7 +5055,9 @@ body.serpent-modal-open .app-shell {
   cursor: grab;
 }
 .preview-image-viewport.is-pannable:active,
-.preview-video-viewport.is-pannable:active {
+.preview-video-viewport.is-pannable:active,
+.preview-image-viewport[data-panning="true"],
+.preview-video-viewport[data-panning="true"] {
   cursor: grabbing;
 }
 .preview-image-viewport:active,

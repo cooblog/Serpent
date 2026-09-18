@@ -44,6 +44,12 @@
 
 > 2026-08-27 P0：从硬盘删除后再导入同一份 Serpent ZIP，导入库 ID 不变；删除时的 `serpent://` 读取拦住若泄漏，全部卡片会变成裂开图标。见 LIB-ZIP-001（已通过）。
 
+### 2026-09-18 查看器中键拖移画面
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| VIEWER-PAN-MMB-001 / `Serpent-16cd1e` | 图片/视频查看器按住中键拖动可平移画面 | 人类验收通过 | ① **完全退出**后再打开含这次改动的构建。② 打开一张已放大到超出窗口的图片。③ 按住**鼠标中键**拖动。④ 再按住左键拖动对比。⑤ 中键单击（不拖）后看是否出现浏览器式自动滚动。⑥ 对一段已放大的视频再做③④。⑦ 在查看器里点右键，确认仍是菜单而不是平移。 | 中键按住拖动与左键一样移动画面。不要出现页面自动滚动。右键仍弹出菜单。适配窗口（未放大）时拖动可以没有可见位移，这与左键相同。 | [开发日志](../development/2026-09-18-viewer-middle-button-pan-development-log.md) / `use-viewer-zoom-pan.ts` / `viewer-pointer-pan.ts` / `tests/unit/use-viewer-zoom-pan-middle-button.test.tsx` | 2026-09-18：首版只接 `pointerdown`，用户反馈中键无效果。已改 capture `mousedown` + window 移动。`vitest` 2 files / 5 passed。packaged / Computer Use 未执行。**2026-09-18 用户本人验收通过**（用户原话「ok」）。 |
+
 ### 2026-09-17 Blender 工程预览图
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |

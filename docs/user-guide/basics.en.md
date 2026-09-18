@@ -98,6 +98,7 @@ Double-click an asset to open the fullscreen viewer (press `Esc` to exit):
 - **Navigation**: Use arrow keys `←` / `→` to navigate smoothly between assets in the current view.
 - **Media playback & transforms**:
   - Videos and audio play automatically on open;
+  - Images and videos can be panned by dragging with the left or middle mouse button;
   - 3D models support mouse drag rotation, zoom, and HDRI lighting switching;
   - The toolbar provides 90° clockwise rotation, horizontal/vertical flip, fit-to-view (numpad `.`), and fullscreen.
 

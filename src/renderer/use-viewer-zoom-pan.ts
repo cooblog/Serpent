@@ -12,6 +12,7 @@ import {
   fitContainScale,
   isAtFitScale,
 } from "./viewer-fit";
+import { isViewerPanPointerButton } from "./viewer-pointer-pan";
 import {
   classifyViewerWheel,
   isPrimarilyHorizontalWheel,
@@ -40,7 +41,8 @@ interface UseViewerZoomPanOptions {
  * video — Serpent-yo0n / Serpent-190). Owns the viewport ref, the wheel
  * listener (mouse wheel zooms at the pointer, trackpad scroll pans, pinch /
  * Ctrl+wheel zooms — see viewer-wheel-intent.ts), drag-to-pan pointer
- * handlers, and the ResizeObserver that re-fits when the window changes.
+ * handlers (left or middle mouse — Photoshop-style middle-button pan),
+ * and the ResizeObserver that re-fits when the window changes.
  *
  * Consumers render the media element at `natural × view.scale` with
  * `transform: translate(view.x, view.y)` and call `measureAndFit` when the
@@ -277,11 +279,76 @@ export function useViewerZoomPan({
     return () => viewport.removeEventListener("wheel", onWheel);
   }, [commitView, onSwipeNext, onSwipePrevious, zoomAt]);
 
+  // Mouse pan is driven from mousedown, not pointerdown. Chromium/Electron
+  // often omits pointer events for the middle button (or setPointerCapture
+  // throws), then starts autoscroll unless mousedown is cancelled in capture.
+  // Left-button pan uses this same mouse path so the two buttons stay aligned.
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+
+    let draggingButton: number | null = null;
+    const onMove = (event: MouseEvent) => {
+      const drag = dragRef.current;
+      if (!drag || draggingButton === null) return;
+      commitView({
+        ...viewRef.current,
+        x: drag.x + event.clientX - drag.startX,
+        y: drag.y + event.clientY - drag.startY,
+      });
+    };
+    const stopDrag = () => {
+      draggingButton = null;
+      dragRef.current = null;
+      delete viewport.dataset.panning;
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    const onUp = (event: MouseEvent) => {
+      if (draggingButton === null || event.button !== draggingButton) return;
+      stopDrag();
+    };
+    const onMouseDown = (event: MouseEvent) => {
+      if (!isViewerPanPointerButton(event.button)) return;
+      // Touch/pen already started via pointer handlers.
+      if (dragRef.current) return;
+      event.preventDefault();
+      draggingButton = event.button;
+      dragRef.current = {
+        pointerId: event.button,
+        startX: event.clientX,
+        startY: event.clientY,
+        x: viewRef.current.x,
+        y: viewRef.current.y,
+      };
+      viewport.dataset.panning = "true";
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    };
+    const onAuxClick = (event: MouseEvent) => {
+      if (event.button === 1) event.preventDefault();
+    };
+
+    viewport.addEventListener("mousedown", onMouseDown, true);
+    viewport.addEventListener("auxclick", onAuxClick, true);
+    return () => {
+      viewport.removeEventListener("mousedown", onMouseDown, true);
+      viewport.removeEventListener("auxclick", onAuxClick, true);
+      stopDrag();
+    };
+  }, [commitView]);
+
   const viewportPointerHandlers = {
     onPointerDown: (event: React.PointerEvent<HTMLDivElement>) => {
+      // Mouse buttons (incl. middle) go through mousedown above.
+      if (event.pointerType === "mouse") return;
       if (event.button !== 0) return;
       event.preventDefault();
-      event.currentTarget.setPointerCapture(event.pointerId);
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      } catch {
+        // Capture is optional; window-level mouse fallback still pans.
+      }
       dragRef.current = {
         pointerId: event.pointerId,
         startX: event.clientX,
@@ -291,6 +358,7 @@ export function useViewerZoomPan({
       };
     },
     onPointerMove: (event: React.PointerEvent<HTMLDivElement>) => {
+      if (event.pointerType === "mouse") return;
       const drag = dragRef.current;
       if (!drag || drag.pointerId !== event.pointerId) return;
       commitView({
@@ -300,10 +368,12 @@ export function useViewerZoomPan({
       });
     },
     onPointerUp: (event: React.PointerEvent<HTMLDivElement>) => {
+      if (event.pointerType === "mouse") return;
       if (dragRef.current?.pointerId === event.pointerId)
         dragRef.current = null;
     },
     onPointerCancel: (event: React.PointerEvent<HTMLDivElement>) => {
+      if (event.pointerType === "mouse") return;
       if (dragRef.current?.pointerId === event.pointerId)
         dragRef.current = null;
     },
@@ -320,3 +390,5 @@ export function useViewerZoomPan({
     zoomAt,
   };
 }
+
+export type UseViewerZoomPanApi = ReturnType<typeof useViewerZoomPan>;
