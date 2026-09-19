@@ -70,6 +70,7 @@ import { ImportDialog } from "./ImportDialog";
 import { ImportLibraryChooserDialog, OpenLibraryChooserDialog } from "./ImportLibraryChooserDialog";
 import {
   NavigationSidebar,
+  type FolderTreeExpandActions,
 } from "./NavigationSidebar";
 import { LibrarySwitcher, buildRecentLibraryMenuEntries, type RecentLibraryMenuEntry } from "./LibrarySwitcher";
 import {
@@ -164,6 +165,7 @@ import type { HistoryStatus } from "../shared/protocol/responses";
 import { isEditableTextTarget } from "../shared/edit-context-menu";
 import type { SearchQuery } from "../shared/asset-types";
 import {
+  browseEntryUnderPreview,
   type WorkspaceNavLocation,
   type WorkspaceNavViewport,
   workspaceNavLocationsEqual,
@@ -462,6 +464,8 @@ import type {
 } from "../shared/asset-types";
 import type { LibraryNavigationSummary } from "../shared/library-navigation";
 import { LIBRARY_ROOT_FOLDER_ID, isLibraryRootFolderId } from "../shared/library-root-folder";
+import { DEFAULT_COLOR_SIMILARITY } from "../shared/color-filter-presets";
+import { loadColorFilterPreferences } from "./color-filter-preferences";
 import { hasMeaningfulSmartCollectionCondition } from "../shared/smart-collection-query";
 import { expandFormatFilterTokens, formatFilterHasUnknownToken, FORMAT_UNKNOWN_TOKEN } from "../shared/text-media";
 import type {
@@ -1233,6 +1237,10 @@ function AppInner() {
   const [formatFilter, setFormatFilter] = useState("");
   const [excludeFormatFilter, setExcludeFormatFilter] = useState(false);
   const [colorFilter, setColorFilter] = useState("");
+  const [colorSimilarity, setColorSimilarity] = useState(
+    () => loadColorFilterPreferences().similarity,
+  );
+  const [colorFilterPrefs, setColorFilterPrefs] = useState(loadColorFilterPreferences);
   const [excludeColorFilter, setExcludeColorFilter] = useState(false);
   const [tagFilter, setTagFilter] = useState("");
   const [excludeTagFilter, setExcludeTagFilter] = useState(false);
@@ -1759,6 +1767,7 @@ function AppInner() {
     selectedAssetId: string | null;
     isCurrent: () => boolean;
   } | null>(null);
+  const folderTreeActionsRef = useRef<FolderTreeExpandActions | null>(null);
   const cancelWorkspaceViewportRestoreRef = useRef<(() => void) | null>(null);
   // True while a Back/Forward replay is being applied. Suppresses viewport
   // saving and tab-context capture so the replay neither records a new history
@@ -4918,6 +4927,7 @@ function AppInner() {
         excludeFormatFilter,
         colorFilter,
         excludeColorFilter,
+        colorSimilarity,
         tagFilter,
         excludeTagFilter,
         includeAiTagFilter,
@@ -5124,6 +5134,7 @@ function AppInner() {
     setFormatFilter(state.filters.formatFilter);
     setExcludeFormatFilter(state.filters.excludeFormatFilter);
     setColorFilter(state.filters.colorFilter);
+    setColorSimilarity(state.filters.colorSimilarity ?? DEFAULT_COLOR_SIMILARITY);
     setExcludeColorFilter(state.filters.excludeColorFilter);
     setTagFilter(state.filters.tagFilter);
     setExcludeTagFilter(state.filters.excludeTagFilter);
@@ -5253,14 +5264,12 @@ function AppInner() {
     isCurrent: () => boolean,
   ) {
     const current = tab.location;
-    const firstLocation =
+    const previewBrowse =
       current.kind === "preview"
-        ? (navHistoryRef.current.peek(-1) ?? { kind: "all" as const })
-        : current;
-    const targetViewport =
-      current.kind === "preview"
-        ? (navHistoryRef.current.peekViewport(-1) ?? tab.viewport)
-        : tab.viewport;
+        ? browseEntryUnderPreview(navHistoryRef.current, tab.id)
+        : null;
+    const firstLocation = previewBrowse?.location ?? current;
+    const targetViewport = previewBrowse?.viewport ?? tab.viewport;
     const pendingSelection = tab.browseState &&
       workspaceTabBrowseStateHasDiscoveryInput(tab.browseState)
       ? {
@@ -7098,6 +7107,7 @@ function AppInner() {
       searchValue?: string | null;
       colorFilter?: string | null;
       excludeColorFilter?: boolean;
+      colorSimilarity?: number;
       sortField?: SortDefinition["field"];
       sortOrder?: SortDefinition["order"];
       filtersSnapshot?: QueryFilterSnapshot;
@@ -7153,6 +7163,7 @@ function AppInner() {
         field: "color",
         values: colors,
         exclude: overrides.excludeColorFilter ?? excludeColorFilter,
+        similarity: overrides.colorSimilarity ?? colorSimilarity,
       });
     if (formatValues.length > 0)
       filters.push({
@@ -7282,6 +7293,7 @@ function AppInner() {
       searchValue: state.searchValue,
       colorFilter: state.filters.colorFilter,
       excludeColorFilter: state.filters.excludeColorFilter,
+      colorSimilarity: state.filters.colorSimilarity,
       sortField: state.sortField,
       sortOrder: state.sortOrder,
       filtersSnapshot: {
@@ -8311,6 +8323,7 @@ function AppInner() {
     searchValue,
     colorFilter,
     excludeColorFilter,
+    colorSimilarity,
     formatFilter,
     excludeFormatFilter,
     tagFilter,
@@ -12735,6 +12748,7 @@ function AppInner() {
         }
         getManagedAssetDragIds={getManagedAssetDragIds}
         getManagedFolderDragIds={getManagedFolderDragIds}
+        folderTreeActionsRef={folderTreeActionsRef}
         onOpenRootFolderContextMenu={({ x, y }) =>
           // Serpent-a6c516: the folder panel's blank area and the 「资源库根目录」
           // row are both the library root, so they share this menu.
@@ -13098,6 +13112,8 @@ function AppInner() {
             aspectRatioRange={aspectRatioRange}
             aspectRatioRanges={aspectRatioRanges}
             colorFilter={colorFilter}
+            colorFilterPrefs={colorFilterPrefs}
+            colorSimilarity={colorSimilarity}
             disabled={!library}
             interactionsLocked={dialogFocusTrapActive}
             durationRange={durationRange}
@@ -13126,6 +13142,8 @@ function AppInner() {
             setAspectRatioRanges={setAspectRatioRanges}
             setAvailabilityFilter={setAvailabilityFilter}
             setColorFilter={setColorFilter}
+            setColorSimilarity={setColorSimilarity}
+            onColorFilterPrefsChange={setColorFilterPrefs}
             setDurationRange={setDurationRange}
             setExcludeAvailabilityFilter={setExcludeAvailabilityFilter}
             setExcludeColorFilter={setExcludeColorFilter}
@@ -14971,6 +14989,12 @@ function AppInner() {
         onCreateSubfolder={(folderId) => {
           cancelInlineSmartCollectionEdit();
           openInlineFolderCreate(isLibraryRootFolderId(folderId) ? null : folderId);
+        }}
+        onExpandFolderTree={(folderId) => {
+          folderTreeActionsRef.current?.expandSubtree(folderId);
+        }}
+        onCollapseFolderTree={(folderId) => {
+          folderTreeActionsRef.current?.collapseSubtree(folderId);
         }}
         onImportLinkedFolderInto={(folderId) => {
           // Serpent-316493: 导入链接文件夹 under the right-clicked folder (or at

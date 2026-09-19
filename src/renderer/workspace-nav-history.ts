@@ -285,3 +285,39 @@ export function createWorkspaceNavHistory(
 
   return history;
 }
+
+/**
+ * Browse scope under a tab's open viewer. The shared timeline can have another
+ * tab's folder immediately before the current preview, so peek(-1) is not
+ * the folder that belongs to this tab.
+ */
+export function browseLocationUnderPreview(
+  history: WorkspaceNavHistory,
+  tabId: string,
+): WorkspaceNavLocation {
+  return browseEntryUnderPreview(history, tabId).location;
+}
+
+export function browseEntryUnderPreview(
+  history: WorkspaceNavHistory,
+  tabId: string,
+): { location: WorkspaceNavLocation; viewport: WorkspaceNavViewport } {
+  for (let delta = -1; ; delta -= 1) {
+    const owner = history.peekTabId(delta);
+    if (owner === null) {
+      return { location: { kind: "all" }, viewport: { ...DEFAULT_VIEWPORT } };
+    }
+    if (owner !== tabId) continue;
+    const location = history.peek(delta);
+    const viewport = history.peekViewport(delta);
+    if (!location) {
+      return { location: { kind: "all" }, viewport: { ...DEFAULT_VIEWPORT } };
+    }
+    if (location.kind !== "preview") {
+      return {
+        location,
+        viewport: viewport ?? { ...DEFAULT_VIEWPORT },
+      };
+    }
+  }
+}

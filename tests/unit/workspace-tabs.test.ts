@@ -82,6 +82,7 @@ describe("workspace tabs", () => {
         excludeFormatFilter: false,
         colorFilter: "",
         excludeColorFilter: false,
+        colorSimilarity: 70,
         tagFilter: "",
         excludeTagFilter: false,
         includeAiTagFilter: true,

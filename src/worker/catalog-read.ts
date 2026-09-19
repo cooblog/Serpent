@@ -2,7 +2,7 @@ import path from 'node:path';
 
 import type { AssetSummary, BrowseLayoutEntry, FilterClause, SearchScope, SortDefinition } from '../shared/asset-types';
 import { parseLinkedVirtualFolderId } from '../shared/linked-folder-tree';
-import { colorFilterSql, parseColorFilterIds } from '../shared/color-filter-presets';
+import { colorFilterSql, parseColorFilterValues } from '../shared/color-filter-presets';
 import { knownProductFormatExtensionsDotless } from '../shared/product-format-extensions';
 import {
   expandFormatFilterTokens,
@@ -361,8 +361,16 @@ export function buildCatalogFilterWhere(
         break;
       }
       case 'color': {
-        const ids = parseColorFilterIds(filter.values.join(','));
-        const built = colorFilterSql('palette_meta.dominant_hue', ids, filter.exclude);
+        const values = parseColorFilterValues(filter.values.join(','));
+        const built = colorFilterSql({
+          hueColumn: 'palette_meta.dominant_hue',
+          saturationColumn: 'palette_meta.dominant_saturation',
+          lightnessColumn: 'palette_meta.dominant_lightness',
+          values,
+          exclude: filter.exclude,
+          similarity: filter.similarity,
+          swatches: filter.swatches,
+        });
         if (!built) {
           conditions.push('1 = 0');
           break;

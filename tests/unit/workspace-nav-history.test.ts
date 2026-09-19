@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  browseLocationUnderPreview,
   createWorkspaceNavHistory,
   seedRestoreLeafLocation,
   workspaceNavLocationsEqual,
@@ -372,5 +373,23 @@ describe("shared timeline across tabs (Serpent-b8a853)", () => {
     expect(history.peekTabId(-2)).toBe("tab-a");
     expect(history.peekTabId(1)).toBeNull();
     expect(history.currentTabId).toBe("tab-b");
+  });
+});
+
+describe("browseLocationUnderPreview", () => {
+  it("walks past another tab's folder to the same tab's browse scope", () => {
+    const history = createWorkspaceNavHistory({ kind: "all" }, "tab-a");
+    history.setActiveTab("tab-a");
+    history.push({ kind: "folder", folderId: "a" });
+    history.push({ kind: "preview", assetId: "c" });
+    history.setActiveTab("tab-b");
+    history.push({ kind: "folder", folderId: "b" });
+    history.setActiveTab("tab-a");
+    history.push({ kind: "preview", assetId: "c" });
+    expect(browseLocationUnderPreview(history, "tab-a")).toEqual({
+      kind: "folder",
+      folderId: "a",
+    });
+    expect(history.peek(-1)).toEqual({ kind: "folder", folderId: "b" });
   });
 });

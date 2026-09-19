@@ -304,6 +304,8 @@ interface AssetContextMenuProps {
   onEditCollectionDetails: (collectionId: string) => void;
   onDeleteOrganization: (id: string, name: string) => void;
   onCreateSubfolder: (folderId: string) => void;
+  onExpandFolderTree: (folderId: string) => void;
+  onCollapseFolderTree: (folderId: string) => void;
   /** Serpent-316493: 导入链接文件夹 as a child of this managed folder. */
   onImportLinkedFolderInto: (folderId: string) => void;
   onSetIgnore: (args: {
@@ -412,6 +414,8 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
     onEditCollectionDetails,
     onDeleteOrganization,
     onCreateSubfolder,
+    onExpandFolderTree,
+    onCollapseFolderTree,
     onImportLinkedFolderInto,
     onSetIgnore,
     onRenameFolder,
@@ -839,6 +843,8 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               copyFolder: onCopyFolder,
               pasteIntoFolder: onPasteIntoFolder,
               cloneFolder: onCloneFolder,
+              expandFolderTree: onExpandFolderTree,
+              collapseFolderTree: onCollapseFolderTree,
               moveFolder: onMoveFolder,
               trashManagedFolder: onTrashManagedFolder,
               deleteFolderFromDisk: (folderId, name) =>
@@ -947,6 +953,8 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               copyFolder: onCopyFolder,
               pasteIntoFolder: onPasteIntoFolder,
               cloneFolder: onCloneFolder,
+              expandFolderTree: onExpandFolderTree,
+              collapseFolderTree: onCollapseFolderTree,
               moveFolder: onMoveFolder,
               trashManagedFolder: onTrashManagedFolder,
               deleteFolderFromDisk: (folderId, name) =>
@@ -1093,6 +1101,8 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               copyFolder: onCopyFolder,
               pasteIntoFolder: onPasteIntoFolder,
               cloneFolder: onCloneFolder,
+              expandFolderTree: onExpandFolderTree,
+              collapseFolderTree: onCollapseFolderTree,
               moveFolder: onMoveFolder,
               trashManagedFolder: onTrashManagedFolder,
               deleteFolderFromDisk: (_folderId, name) =>
@@ -1128,6 +1138,8 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
           const createSubfolderItem = resolvedById.get(
             "folder.create-subfolder",
           );
+          const expandAllItem = resolvedById.get("folder.expand-all");
+          const collapseAllItem = resolvedById.get("folder.collapse-all");
           const importLinkedItem = resolvedById.get("folder.import-linked");
           const renameItem = resolvedById.get("folder.rename");
           const linkedRulesItem = resolvedById.get("folder.linked-rules");
@@ -1199,6 +1211,20 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                     onAction={() =>
                       runSidebarCommand("folder.create-subfolder")
                     }
+                  />
+                )}
+                {expandAllItem && (
+                  <ContextMenuItem
+                    icon={<Icon name="folders" size={14} />}
+                    label={expandAllItem.label}
+                    onAction={() => runSidebarCommand("folder.expand-all")}
+                  />
+                )}
+                {collapseAllItem && (
+                  <ContextMenuItem
+                    icon={<Icon name="folder-tree" size={14} />}
+                    label={collapseAllItem.label}
+                    onAction={() => runSidebarCommand("folder.collapse-all")}
                   />
                 )}
                 {importLinkedItem && (

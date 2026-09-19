@@ -1,3 +1,4 @@
+import { DEFAULT_COLOR_SIMILARITY } from "../shared/color-filter-presets";
 import {
   type WorkspaceNavLocation,
   type WorkspaceNavViewport,
@@ -8,6 +9,7 @@ export interface WorkspaceTabBrowseFilters {
   excludeFormatFilter: boolean;
   colorFilter: string;
   excludeColorFilter: boolean;
+  colorSimilarity: number;
   tagFilter: string;
   excludeTagFilter: boolean;
   includeAiTagFilter: boolean;
@@ -104,6 +106,7 @@ export function createDefaultWorkspaceTabBrowseState(
       excludeFormatFilter: false,
       colorFilter: "",
       excludeColorFilter: false,
+      colorSimilarity: DEFAULT_COLOR_SIMILARITY,
       tagFilter: "",
       excludeTagFilter: false,
       includeAiTagFilter: true,

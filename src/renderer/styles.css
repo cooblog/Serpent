@@ -1696,6 +1696,23 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   cursor: not-allowed;
 }
 
+.dimension-filter-popover.is-color-filter {
+  width: min(380px, 90vw);
+  max-height: min(560px, 72vh);
+}
+
+.dimension-color-presets {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 12px;
+  padding: 2px 2px 4px;
+}
+
+.dimension-color-presets .dimension-color-swatch {
+  flex: 0 0 22px;
+}
+
 .dimension-color-row {
   display: flex;
   flex-wrap: wrap;
@@ -1751,6 +1768,174 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
 .dimension-color-swatch:disabled {
   opacity: 0.48;
   cursor: not-allowed;
+}
+
+.dimension-color-custom {
+  position: relative;
+  display: inline-flex;
+}
+
+.dimension-color-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: var(--raised-2);
+  color: var(--text);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.dimension-color-add {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px dashed color-mix(in srgb, var(--ink) 28%, transparent);
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: var(--secondary);
+  cursor: pointer;
+}
+
+.dimension-color-add:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+}
+
+.dimension-color-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--divider);
+  border-radius: 8px;
+  background: var(--raised-2);
+  user-select: none;
+}
+
+.dimension-color-picker:focus {
+  outline: none;
+}
+
+.dimension-color-picker-sv {
+  position: relative;
+  width: 100%;
+  height: 148px;
+  overflow: hidden;
+  border-radius: 6px;
+  cursor: crosshair;
+}
+
+.dimension-color-picker-hue-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dimension-color-picker-preview {
+  flex: 0 0 22px;
+  width: 22px;
+  height: 22px;
+  border: 1px solid color-mix(in srgb, var(--ink) 22%, transparent);
+  border-radius: 999px;
+}
+
+.dimension-color-picker-hue {
+  position: relative;
+  flex: 1 1 auto;
+  height: 14px;
+  border-radius: 999px;
+  background: linear-gradient(
+    to right,
+    #f00,
+    #ff0,
+    #0f0,
+    #0ff,
+    #00f,
+    #f0f,
+    #f00
+  );
+  cursor: pointer;
+}
+
+.dimension-color-picker-thumb {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--canvas);
+  border-radius: 999px;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--ink) 40%, transparent);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.dimension-color-picker-rgb {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dimension-color-picker-channel {
+  display: flex;
+  flex-direction: row !important;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  flex: 1 1 0;
+}
+
+.dimension-color-picker-channel input {
+  width: 100%;
+  min-width: 0;
+  height: var(--ui-size-control-sm);
+  padding: 0 6px;
+  border: 1px solid var(--ui-border-control);
+  border-radius: var(--ui-radius-control);
+  background: var(--ui-surface-raised);
+  color: var(--ui-content-primary);
+  font: inherit;
+  font-size: var(--ui-font-size-micro);
+}
+
+.dimension-color-picker-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.dimension-color-similarity > .ui-field {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.dimension-color-similarity .ui-field__label {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.dimension-color-similarity .ui-slider {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 0;
+}
+
+.dimension-color-similarity .ui-slider__control {
+  flex: 0 0 100px;
+  width: 100px;
+}
+
+.dimension-color-similarity .ui-slider__value {
+  min-width: 4ch;
 }
 
 .dimension-folder-option {

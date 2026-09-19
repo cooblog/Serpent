@@ -2903,6 +2903,14 @@ const ENTITY_APPEARANCE_SCHEMA_CHECKSUM = createHash('sha256')
   .update(ENTITY_APPEARANCE_SCHEMA_SQL)
   .digest('hex');
 
+const PALETTE_SATURATION_SCHEMA_SQL = `
+  ALTER TABLE revision_artifacts ADD COLUMN dominant_saturation REAL
+    CHECK (dominant_saturation IS NULL OR (dominant_saturation >= 0 AND dominant_saturation <= 1));
+`;
+const PALETTE_SATURATION_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(PALETTE_SATURATION_SCHEMA_SQL)
+  .digest('hex');
+
 const ENTITY_APPEARANCE_TABLES = [
   'managed_folders',
   'linked_folders',
@@ -3628,6 +3636,11 @@ export const MIGRATIONS = [
     version: 55,
     sql: ENTITY_APPEARANCE_SCHEMA_SQL,
     checksum: ENTITY_APPEARANCE_SCHEMA_CHECKSUM,
+  },
+  {
+    version: 56,
+    sql: PALETTE_SATURATION_SCHEMA_SQL,
+    checksum: PALETTE_SATURATION_SCHEMA_CHECKSUM,
   },
 ] as const;
 export const SUPPORTED_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
@@ -6276,6 +6289,65 @@ function buildContextualSearchWhere(
  */
 export interface SchemaTooNewSignal {
   readonly libraryVersion: number;
+}
+
+/**
+ * Fill dominant_saturation for palettes extracted before v56. Greyscale
+ * sources stored hue=0; without saturation, a red filter would match them.
+ */
+function backfillDominantSaturation(
+  connection: DatabaseConnection,
+  artifactsDir: string,
+): void {
+  const columns = columnsFor(connection, 'revision_artifacts');
+  if (
+    !['artifact_id', 'file_path', 'kind', 'status', 'invalidated_at', 'dominant_saturation']
+      .every((column) => columns.has(column))
+  ) {
+    return;
+  }
+  const rows = connection.prepare(
+    `SELECT artifact_id, file_path, dominant_hue, dominant_lightness
+       FROM revision_artifacts
+      WHERE kind = 'extracted_palette'
+        AND status = 'ready'
+        AND invalidated_at IS NULL
+        AND dominant_saturation IS NULL`,
+  ).all() as Array<{
+    artifact_id: string;
+    file_path: string;
+    dominant_hue: number | null;
+    dominant_lightness: number | null;
+  }>;
+  if (rows.length === 0) return;
+  const update = connection.prepare(
+    `UPDATE revision_artifacts
+        SET dominant_saturation = ?, dominant_hue = ?, dominant_lightness = ?
+      WHERE artifact_id = ?`,
+  );
+  const apply = connection.transaction(() => {
+    for (const row of rows) {
+      let saturation = 0;
+      let hue = row.dominant_hue;
+      let lightness = row.dominant_lightness;
+      try {
+        const parsed = JSON.parse(
+          readFileSync(path.join(artifactsDir, row.file_path), 'utf8'),
+        ) as Array<{ hex?: string }>;
+        const hex = parsed[0]?.hex;
+        if (typeof hex === 'string') {
+          const metrics = dominantColorMetrics(hex);
+          saturation = metrics.saturation;
+          hue = metrics.hue;
+          lightness = metrics.lightness;
+        }
+      } catch {
+        saturation = 0;
+      }
+      update.run(saturation, hue, lightness, row.artifact_id);
+    }
+  });
+  apply();
 }
 
 function migrateDatabase(
@@ -26039,8 +26111,8 @@ export class LibraryService {
       openLibrary.connection.prepare(
         `INSERT INTO revision_artifacts
            (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
-            generator_version, status, generated_at, dominant_hue, dominant_lightness)
-         VALUES (?, ?, 'extracted_palette', 'application/json', ?, ?, ?, 'ready', ?, ?, ?)`,
+            generator_version, status, generated_at, dominant_hue, dominant_lightness, dominant_saturation)
+         VALUES (?, ?, 'extracted_palette', 'application/json', ?, ?, ?, 'ready', ?, ?, ?, ?)`,
       ).run(
         artifactId,
         queuedRevisionId,
@@ -26050,6 +26122,7 @@ export class LibraryService {
         new Date().toISOString(),
         dominant.hue,
         dominant.lightness,
+        dominant.saturation,
       );
       return true;
     } catch (error) {
@@ -45451,6 +45524,10 @@ export class LibraryService {
     this.assertNetworkLinkedFoldersAvailable(
       input.connection,
       input.networkStorage === true,
+    );
+    backfillDominantSaturation(
+      input.connection,
+      path.join(input.canonicalPath, '.serpent', 'artifacts'),
     );
 
     const networkReadThrough = input.networkStorage

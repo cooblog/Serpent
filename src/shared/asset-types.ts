@@ -444,6 +444,15 @@ const categoricalFilterClauseSchema = z.strictObject({
   exclude: z.boolean(),
   /** Include AI-derived values alongside human-authored values (default on). */
   includeAi: z.boolean().optional(),
+  /**
+   * Color filter only: 0–100 similarity. Higher is a tighter HSL box.
+   * Ignored for non-color clauses.
+   */
+  similarity: z.number().int().min(0).max(100).optional(),
+  /**
+   * Color filter only: preset-id → hex overlay for customized standard chips.
+   */
+  swatches: z.record(z.string().min(1).max(32), z.string().regex(/^#[0-9A-Fa-f]{6}$/u)).optional(),
 });
 
 const numericRangeSchema = z.strictObject({

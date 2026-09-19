@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type MutableRefObject,
   type ReactNode,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
@@ -56,12 +57,15 @@ import {
   resolveSelectionPlatform,
 } from "./selection-modifiers";
 import type { InlineSmartCollectionEditState } from "./inline-smart-collection-edit";
+import { isLibraryRootFolderId } from "../shared/library-root-folder";
 import {
   buildUnifiedDirectoryNavEntries,
   filterCollapsedDirectoryEntries,
+  folderIdsInSubtree,
   managedFolderIdsWithChildren,
   sortCollectionTree,
   sortManagedTreeEntries,
+  withFolderSubtreeCollapsed,
   type FolderTreeSortMode,
 } from "./unified-directory-nav";
 import {
@@ -771,6 +775,11 @@ function SidebarSortTrigger({
   );
 }
 
+export type FolderTreeExpandActions = {
+  collapseSubtree: (folderId: string) => void;
+  expandSubtree: (folderId: string) => void;
+};
+
 // ---------------------------------------------------------------------------
 // NavigationSidebar — props
 // ---------------------------------------------------------------------------
@@ -849,6 +858,7 @@ export interface NavigationSidebarProps {
    * i.e. on the library root.
    */
   onOpenRootFolderContextMenu?: (position: { x: number; y: number }) => void;
+  folderTreeActionsRef?: MutableRefObject<FolderTreeExpandActions | null>;
   /** Resolve an Electron native file drop back to managed asset ids. */
   onResolveManagedAssetDrop?: (files: File[]) => Promise<string[]>;
 
@@ -1003,6 +1013,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     getManagedAssetDragIds,
     getManagedFolderDragIds,
     onOpenRootFolderContextMenu,
+    folderTreeActionsRef,
     onResolveManagedAssetDrop,
     onAssetsDroppedOnFolder,
     onFoldersDroppedOnFolder,
@@ -1140,6 +1151,30 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     const next = withCollapsedFolderIds(navTreePrefs, nextIds);
     setNavTreePrefs(next);
     saveNavTreePreferences(next);
+  }
+
+  const unifiedDirectoryEntries = buildUnifiedDirectoryNavEntries(folders, linkedFolders);
+
+  function applyFolderSubtree(folderId: string, collapse: boolean) {
+    const rootId = isLibraryRootFolderId(folderId) || folderId === "root"
+      ? null
+      : folderId;
+    const subtree = folderIdsInSubtree(unifiedDirectoryEntries, rootId);
+    const nextIds = withFolderSubtreeCollapsed(
+      navTreePrefs.collapsedFolderIds,
+      subtree.length > 0 || rootId === null ? subtree : [folderId],
+      collapse,
+    );
+    const next = withCollapsedFolderIds(navTreePrefs, nextIds);
+    setNavTreePrefs(next);
+    saveNavTreePreferences(next);
+  }
+
+  if (folderTreeActionsRef) {
+    folderTreeActionsRef.current = {
+      collapseSubtree: (folderId) => applyFolderSubtree(folderId, true),
+      expandSubtree: (folderId) => applyFolderSubtree(folderId, false),
+    };
   }
 
   // Serpent-c42eb1: collection subtree collapse, mirroring folder collapse.
@@ -1595,14 +1630,14 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
 
   const directoryEntries = filterCollapsedDirectoryEntries(
     sortManagedTreeEntries(
-      buildUnifiedDirectoryNavEntries(folders, linkedFolders),
+      unifiedDirectoryEntries,
       folderSortPrefs.mode,
       folderSortPrefs.order,
     ),
     collapsedFolderIds,
   );
   const foldersWithChildren = managedFolderIdsWithChildren(
-    buildUnifiedDirectoryNavEntries(folders, linkedFolders),
+    unifiedDirectoryEntries,
   );
   const sortedCollectionTree = sortCollectionTree(
     collectionTree,

@@ -48,6 +48,8 @@ function makeActions(calls: RecordedCall[]): SidebarCommandActions {
     copyFolder: record('copyFolder'),
     pasteIntoFolder: record('pasteIntoFolder'),
     cloneFolder: record('cloneFolder'),
+    expandFolderTree: record('expandFolderTree'),
+    collapseFolderTree: record('collapseFolderTree'),
     moveFolder: record('moveFolder'),
     trashManagedFolder: record('trashManagedFolder'),
     deleteFolderFromDisk: record('deleteFolderFromDisk'),
@@ -109,6 +111,8 @@ describe('文件夹分支：可见性矩阵（与历史内联 JSX 条件一致�
     expect(resolveIds(ctx)).toEqual([
       'folder.open-in-file-manager',
       'folder.create-subfolder',
+      'folder.expand-all',
+      'folder.collapse-all',
       'folder.import-linked',
       'folder.rename',
       'folder.copy-path',
@@ -127,6 +131,8 @@ describe('文件夹分支：可见性矩阵（与历史内联 JSX 条件一致�
     expect(resolveIds(ctx)).toEqual([
       'folder.open-in-file-manager',
       'folder.create-subfolder',
+      'folder.expand-all',
+      'folder.collapse-all',
       'folder.import-linked',
       'folder.copy-path',
       'folder.paste',
@@ -174,6 +180,8 @@ describe('文件夹分支：可见性矩阵（与历史内联 JSX 条件一致�
     expect(resolveIds(ctx)).toEqual([
       'folder.open-in-file-manager',
       'folder.create-subfolder',
+      'folder.expand-all',
+      'folder.collapse-all',
       'folder.rename',
       'folder.linked-rules',
       'folder.copy-path',
@@ -196,6 +204,8 @@ describe('文件夹分支：可见性矩阵（与历史内联 JSX 条件一致�
     expect(resolveIds(ctx)).toEqual([
       'folder.open-in-file-manager',
       'folder.create-subfolder',
+      'folder.expand-all',
+      'folder.collapse-all',
       'folder.rename',
       'folder.linked-rules',
       'folder.copy-path',
@@ -215,6 +225,8 @@ describe('文件夹分支：可见性矩阵（与历史内联 JSX 条件一致�
     expect(resolveIds(ctx)).toEqual([
       'folder.open-in-file-manager',
       'folder.create-subfolder',
+      'folder.expand-all',
+      'folder.collapse-all',
       'folder.rename',
       'folder.copy-path',
       'folder.copy',
@@ -236,6 +248,8 @@ describe('文件夹分支：可见性矩阵（与历史内联 JSX 条件一致�
     expect(resolveIds(ctx)).toEqual([
       'folder.open-in-file-manager',
       'folder.create-subfolder',
+      'folder.expand-all',
+      'folder.collapse-all',
       'folder.rename',
       'folder.linked-rules',
       'folder.copy-path',
@@ -351,6 +365,8 @@ describe('文件夹分支：平台条件标题', () => {
 
   it.each([
     ['folder.create-subfolder', '新建子文件夹'],
+    ['folder.expand-all', '展开所有'],
+    ['folder.collapse-all', '收起所有'],
     ['folder.rename', '重命名…'],
     ['folder.copy-path', '复制文件夹路径'],
     ['folder.copy', '复制'],
@@ -466,6 +482,8 @@ describe('run 委托到 actions 回调包', () => {
       ['folder-1'],
     ],
     ['folder.create-subfolder', {}, 'createSubfolder', ['folder-1']],
+    ['folder.expand-all', {}, 'expandFolderTree', ['folder-1']],
+    ['folder.collapse-all', {}, 'collapseFolderTree', ['folder-1']],
     ['folder.rename', {}, 'renameFolder', ['folder-1', '素材']],
     ['folder.copy-path', {}, 'copyFolderPath', ['folder-1']],
     ['folder.copy', {}, 'copyFolder', ['folder-1']],
@@ -629,10 +647,12 @@ describe('删除命令的确认由界面动作统一处理', () => {
 });
 
 describe('注册表完整性', () => {
-  it('20 条定义全部注册且 id 唯一（createCommandRegistry 未抛错）', () => {
+  it('22 条定义全部注册且 id 唯一（createCommandRegistry 未抛错）', () => {
     expect(registry.list().map((def) => def.id)).toEqual([
       'folder.open-in-file-manager',
       'folder.create-subfolder',
+      'folder.expand-all',
+      'folder.collapse-all',
       'folder.import-linked',
       'folder.rename',
       'folder.linked-rules',
@@ -659,6 +679,8 @@ describe('注册表完整性', () => {
     const groups = registry.resolveMenu(ctx).map((item) => item.group);
     expect(groups).toEqual([
       'open',
+      'organize',
+      'organize',
       'organize',
       'organize',
       'organize',

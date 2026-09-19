@@ -420,6 +420,9 @@ export const zhCN = {
     exclude: "排除",
     ai: "AI",
     shiftMultiSelectHint: "按住 Shift 可多选",
+    addCustomColor: "添加自定义颜色",
+    removeCustomColor: "移除自定义颜色",
+    colorSimilarity: "相似度",
     widthPx: "宽度",
     heightPx: "高度",
     aspectRatio: "宽高比",
@@ -558,6 +561,8 @@ export const zhCN = {
       forceDeleteFromDisk: "强制从硬盘删除…",
       removeLinkedFolder: "移除链接文件夹…",
       removeLinkedFolderConfirm: "从资源库移除链接文件夹「{name}」？\n只删除链接记录，外部源目录及其中的文件不会被删除。",
+      collapseAll: "收起所有",
+      expandAll: "展开所有",
       appearance: "图标与颜色",
     },
   collection: {

@@ -142,6 +142,56 @@ export function managedFolderIdsWithChildren(
 }
 
 /**
+ * Folder ids in the subtree of `rootId` (inclusive). `null` / library-root
+ * sentinel means every row in the unified tree.
+ */
+export function folderIdsInSubtree(
+  entries: readonly UnifiedDirectoryNavEntry[],
+  rootId: string | null,
+): string[] {
+  if (rootId === null) {
+    return entries.map((entry) => entry.folderId);
+  }
+  const children = new Map<string, string[]>();
+  const present = new Set<string>();
+  for (const entry of entries) {
+    present.add(entry.folderId);
+    const parentId = entry.parentFolderId;
+    if (!parentId) continue;
+    const list = children.get(parentId) ?? [];
+    list.push(entry.folderId);
+    children.set(parentId, list);
+  }
+  const result: string[] = [];
+  const stack = [rootId];
+  const seen = new Set<string>();
+  while (stack.length > 0) {
+    const id = stack.pop()!;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    if (present.has(id) || id === rootId) result.push(id);
+    const nested = children.get(id);
+    if (nested) stack.push(...nested);
+  }
+  return result;
+}
+
+export function withFolderSubtreeCollapsed(
+  collapsedFolderIds: readonly string[],
+  subtreeIds: readonly string[],
+  collapse: boolean,
+  limit = 2000,
+): string[] {
+  const next = new Set(collapsedFolderIds);
+  if (collapse) {
+    for (const id of subtreeIds) next.add(id);
+  } else {
+    for (const id of subtreeIds) next.delete(id);
+  }
+  return [...next].slice(0, limit);
+}
+
+/**
  * Hide rows whose ancestor is collapsed. Applies to both managed and linked
  * virtual children.
  */

@@ -38,6 +38,8 @@ export interface SidebarCommandActions {
   readonly pasteIntoFolder: (folderId: string) => void;
   /** Duplicate a managed folder as sibling. */
   readonly cloneFolder: (folderId: string) => void;
+  readonly expandFolderTree: (folderId: string) => void;
+  readonly collapseFolderTree: (folderId: string) => void;
   /** Open move-target dialog for managed folder(s). */
   readonly moveFolder: (folderIds: string[]) => void;
   /** 托管文件夹 → Serpent 回收站。 */
@@ -127,6 +129,20 @@ export const sidebarCommandDefinitions: readonly SidebarCommandDefinition[] = [
       ctx.menuKind === 'folder' &&
       (ctx.locationKind === 'managed' || ctx.locationKind === 'linked'),
     run: (ctx) => ctx.actions.createSubfolder(ctx.subjectId),
+  },
+  {
+    id: 'folder.expand-all',
+    title: (ctx) => translateForLocale(ctx.locale, 'command.folder.expandAll'),
+    group: 'organize',
+    visible: (ctx) => ctx.menuKind === 'folder',
+    run: (ctx) => ctx.actions.expandFolderTree(ctx.subjectId),
+  },
+  {
+    id: 'folder.collapse-all',
+    title: (ctx) => translateForLocale(ctx.locale, 'command.folder.collapseAll'),
+    group: 'organize',
+    visible: (ctx) => ctx.menuKind === 'folder',
+    run: (ctx) => ctx.actions.collapseFolderTree(ctx.subjectId),
   },
   {
     id: 'folder.import-linked',

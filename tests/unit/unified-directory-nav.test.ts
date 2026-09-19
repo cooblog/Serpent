@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildUnifiedDirectoryNavEntries,
   filterCollapsedDirectoryEntries,
+  folderIdsInSubtree,
   managedFolderIdsWithChildren,
   sortCollectionTree,
   sortManagedTreeEntries,
@@ -737,5 +738,40 @@ describe("sortCollectionTree", () => {
         .get(parent.collectionId)
         ?.map((item) => item.collectionId),
     ).toEqual(["child-a", "child-b"]);
+  });
+});
+
+describe("folderIdsInSubtree", () => {
+  it("includes the node and every recursive child", () => {
+    const entries = buildUnifiedDirectoryNavEntries(
+      [
+        managed({ folderId: "a", name: "A", relativePath: "a" }),
+        managed({
+          folderId: "a-1",
+          name: "A1",
+          relativePath: "a/a1",
+          parentFolderId: "a",
+        }),
+        managed({
+          folderId: "a-1-1",
+          name: "A11",
+          relativePath: "a/a1/a11",
+          parentFolderId: "a-1",
+        }),
+        managed({ folderId: "b", name: "B", relativePath: "b" }),
+      ],
+      [],
+    );
+    expect(folderIdsInSubtree(entries, "a").sort()).toEqual([
+      "a",
+      "a-1",
+      "a-1-1",
+    ]);
+    expect(folderIdsInSubtree(entries, null).sort()).toEqual([
+      "a",
+      "a-1",
+      "a-1-1",
+      "b",
+    ]);
   });
 });

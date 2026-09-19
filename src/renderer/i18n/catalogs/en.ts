@@ -433,6 +433,9 @@ export const en = {
     exclude: "Exclude",
     ai: "AI",
     shiftMultiSelectHint: "Hold Shift to multi-select",
+    addCustomColor: "Add a custom color",
+    removeCustomColor: "Remove custom color",
+    colorSimilarity: "Similarity",
     widthPx: "Width",
     heightPx: "Height",
     aspectRatio: "Aspect ratio",
@@ -572,6 +575,8 @@ export const en = {
       forceDeleteFromDisk: "Force delete from disk…",
       removeLinkedFolder: "Remove linked folder…",
       removeLinkedFolderConfirm: "Remove linked folder \"{name}\" from the library?\nOnly the link record is removed; the external source folder and the files inside it are left untouched.",
+      collapseAll: "Collapse all",
+      expandAll: "Expand all",
       appearance: "Icon & color",
     },
   collection: {

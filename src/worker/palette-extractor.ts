@@ -1,3 +1,5 @@
+import { hexToHsl } from '../shared/color-hsl';
+
 export interface RepresentativeColor {
   hex: string;
   ratio: number;
@@ -5,6 +7,7 @@ export interface RepresentativeColor {
 
 export interface DominantColorMetrics {
   hue: number;
+  saturation: number;
   lightness: number;
 }
 
@@ -41,24 +44,7 @@ function byteHex(value: number): string {
 }
 
 export function dominantColorMetrics(hex: string): DominantColorMetrics {
-  if (!/^#[0-9A-Fa-f]{6}$/u.test(hex)) throw new Error('Dominant colour must be a six-digit hex value.');
-  const red = Number.parseInt(hex.slice(1, 3), 16) / 255;
-  const green = Number.parseInt(hex.slice(3, 5), 16) / 255;
-  const blue = Number.parseInt(hex.slice(5, 7), 16) / 255;
-  const maximum = Math.max(red, green, blue);
-  const minimum = Math.min(red, green, blue);
-  const delta = maximum - minimum;
-  let hue = 0;
-  if (delta > 0) {
-    if (maximum === red) hue = 60 * (((green - blue) / delta) % 6);
-    else if (maximum === green) hue = 60 * ((blue - red) / delta + 2);
-    else hue = 60 * ((red - green) / delta + 4);
-  }
-  if (hue < 0) hue += 360;
-  return {
-    hue: Number(hue.toFixed(6)),
-    lightness: Number(((maximum + minimum) / 2).toFixed(6)),
-  };
+  return hexToHsl(hex);
 }
 
 /**
