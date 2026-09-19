@@ -29,6 +29,7 @@ import {
   FORMAT_FILTER_GROUPS,
   OTHER_FORMAT_EXTENSIONS,
   FORMAT_TEXT_TOKEN,
+  FORMAT_UNKNOWN_TOKEN,
 } from "./format-filter-presets";
 import { DimensionEnableToggle } from "./dimension-enable-toggle";
 import {
@@ -42,10 +43,10 @@ import {
   type ClearableFilterId,
   type DiscoveryFilterSnapshot,
 } from "./active-discovery-filters";
+import { ColorFilterPopover } from "./ColorFilterPopover";
+import type { ColorFilterPreferences } from "./color-filter-preferences";
 import {
-  COLOR_PRESETS,
-  parseColorFilterIds,
-  type ColorPresetId,
+  parseColorFilterValues,
 } from "../shared/color-filter-presets";
 import { TechnicalRangeFilter } from "./TechnicalRangeFilter";
 import { SortModeControl, type SortFieldOption } from "./SortModeControl";
@@ -97,6 +98,10 @@ export type DimensionFilterBarProps = {
   setColorFilter: (value: string) => void;
   excludeColorFilter: boolean;
   setExcludeColorFilter: (value: boolean) => void;
+  colorSimilarity: number;
+  setColorSimilarity: (value: number) => void;
+  colorFilterPrefs: ColorFilterPreferences;
+  onColorFilterPrefsChange: (prefs: ColorFilterPreferences) => void;
   formatFilter: string;
   setFormatFilter: (value: string) => void;
   excludeFormatFilter: boolean;
@@ -222,6 +227,10 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
     setColorFilter,
     excludeColorFilter,
     setExcludeColorFilter,
+    colorSimilarity,
+    setColorSimilarity,
+    colorFilterPrefs,
+    onColorFilterPrefsChange,
     formatFilter,
     setFormatFilter,
     excludeFormatFilter,
@@ -395,6 +404,13 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
     const onPointerOut = (event: PointerEvent) => {
       if (!isFilterChrome(event.target)) return;
       if (isFilterChrome(event.relatedTarget)) return;
+      if (
+        event.buttons !== 0 &&
+        event.target instanceof Element &&
+        event.target.closest("[data-color-add-draft]")
+      ) {
+        return;
+      }
       // Leaving the filter chrome invalidates any delayed open, including
       // pointer transitions whose relatedTarget is outside the document.
       // Otherwise the close timer can run first and the stale open timer can
@@ -466,6 +482,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
 
   const chips = buildActiveFilterChips(snapshot, {
     textFormatLabel: t("filter.formatText"),
+    unknownFormatLabel: t("filter.formatUnrecognized"),
   });
   const controlsDisabled = Boolean(disabled || interactionsLocked);
   const selectedTagNames = tagFilter
@@ -488,7 +505,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
     setRatingFilter(next.sort().join(", "));
   };
 
-  const selectedColors = new Set(parseColorFilterIds(colorFilter));
+  const selectedColors = new Set(parseColorFilterValues(colorFilter));
   const tagActive = selectedTagNames.length > 0;
   const colorActive = selectedColors.size > 0;
   const shapeActive =
@@ -538,15 +555,6 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
     heightRange.max !== "" ||
     durationRange.min !== "" ||
     durationRange.max !== "";
-
-  const toggleColor = (id: ColorPresetId, shiftKey: boolean) => {
-    const next = applyDimensionSelectionClick(
-      [...selectedColors],
-      id,
-      shiftKey,
-    );
-    setColorFilter(next.join(", "));
-  };
 
   // REQ-FILTER-021: click toggles a dimension's filter on/off, remembering
   // the cleared value so a second click restores it (hover, wired via the
@@ -682,37 +690,21 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
           {openDimension === "color" && (
             <PortaledPopover
               anchorRef={colorDimRef}
-              className="dimension-filter-popover"
+              className="dimension-filter-popover is-color-filter"
               data-dimension="color"
               role="dialog"
             >
-              <div className="dimension-color-row" role="listbox" aria-label={t("filter.dimColor")}>
-                {COLOR_PRESETS.map((preset) => (
-                  <button
-                    aria-label={t(`filter.color.${preset.id}`)}
-                    aria-selected={selectedColors.has(preset.id)}
-                    className={`dimension-color-swatch${selectedColors.has(preset.id) ? " is-active" : ""}${preset.kind === "neutral" ? " is-neutral" : ""}`}
-                    data-color={preset.id}
-                    disabled={controlsDisabled}
-                    key={preset.id}
-                    onClick={(event) => toggleColor(preset.id, event.shiftKey)}
-                    style={{ background: preset.swatch }}
-                    type="button"
-                  />
-                ))}
-              </div>
-              <label className="dimension-filter-check">
-                <input
-                  checked={excludeColorFilter}
-                  disabled={disabled || selectedColors.size === 0}
-                  onChange={(event) =>
-                    setExcludeColorFilter(event.target.checked)
-                  }
-                  type="checkbox"
-                />
-                {t("filter.exclude")}
-              </label>
-              <p className="dimension-filter-hint">{t("filter.shiftMultiSelectHint")}</p>
+              <ColorFilterPopover
+                colorFilter={colorFilter}
+                colorFilterPrefs={colorFilterPrefs}
+                colorSimilarity={colorSimilarity}
+                disabled={controlsDisabled}
+                excludeColorFilter={excludeColorFilter}
+                onColorFilterPrefsChange={onColorFilterPrefsChange}
+                setColorFilter={setColorFilter}
+                setColorSimilarity={setColorSimilarity}
+                setExcludeColorFilter={setExcludeColorFilter}
+              />
             </PortaledPopover>
           )}
         </div>
@@ -971,7 +963,7 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
                   checked={otherGroupState === "all"}
                   disabled={controlsDisabled}
                   indeterminate={otherGroupState === "partial"}
-                  label={t("filter.formatGroupOther")}
+                  label={t("filter.formatGroupMisc")}
                   onToggle={() =>
                     setFormatFilter(
                       toggleFormatGroup(formatFilter, otherFormatTokens),
@@ -1005,6 +997,19 @@ export function DimensionFilterBar(props: DimensionFilterBarProps) {
                     );
                   })}
                 </div>
+              </div>
+              <div className="format-filter-group">
+                <FormatGroupCheckbox
+                  checked={formatTokensHas(formatFilter, FORMAT_UNKNOWN_TOKEN)}
+                  disabled={controlsDisabled}
+                  indeterminate={false}
+                  label={t("filter.formatUnrecognized")}
+                  onToggle={() =>
+                    setFormatFilter(
+                      toggleFormatGroup(formatFilter, [FORMAT_UNKNOWN_TOKEN]),
+                    )
+                  }
+                />
               </div>
               <label className="dimension-filter-check">
                 <input

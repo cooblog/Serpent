@@ -251,6 +251,75 @@ describe('thumbnail queue DB-write batching (Serpent-xoaz)', () => {
     expect(statuses.find((job) => job.assetId === outside!.assetId && job.kind === 'generate_thumbnail')?.status).toBe('queued');
     service.closeAll();
   });
+
+  it('claims overlay-ranked ids before later ids that share the same persistent priority', async () => {
+    const root = temporaryRoot();
+    const service = new LibraryService({ sharpFn: instantSharp() });
+    const created = service.createLibrary({
+      displayName: 'RankedViewportClaim',
+      selectedParentPath: root,
+    });
+    const sourceDir = path.join(root, 'sources');
+    createDistinctPngs(sourceDir, 3);
+    importFolderNoConflict(service, created.libraryId, sourceDir);
+    const assets = service.listAssets({ libraryId: created.libraryId, recursive: true });
+    expect(assets).toHaveLength(3);
+    const first = assets[0]!;
+    const last = assets[2]!;
+    expect(service.enqueueThumbnailJobs(created.libraryId, {
+      assetIds: assets.map((asset) => asset.assetId),
+      priority: 50,
+    })).toBe(3);
+
+    const ranked = [last.assetId, first.assetId];
+    expect(await service.processThumbnailQueue(created.libraryId, {
+      maxJobs: 1,
+      jobKinds: ['generate_thumbnail'],
+      assetIds: ranked,
+      claimAssetIdsRef: { current: ranked },
+    })).toBe(1);
+
+    const statuses = service.listMediaJobs(created.libraryId).jobs;
+    expect(statuses.find((job) => job.assetId === last.assetId && job.kind === 'generate_thumbnail')?.status)
+      .toBe('succeeded');
+    expect(statuses.find((job) => job.assetId === first.assetId && job.kind === 'generate_thumbnail')?.status)
+      .toBe('queued');
+    service.closeAll();
+  });
+
+  it('claims jobs outside the overlay after foreground bands have no queued work', async () => {
+    const root = temporaryRoot();
+    const service = new LibraryService({ sharpFn: instantSharp() });
+    const created = service.createLibrary({
+      displayName: 'OverlayThenPersist',
+      selectedParentPath: root,
+    });
+    const sourceDir = path.join(root, 'sources');
+    createDistinctPngs(sourceDir, 6);
+    importFolderNoConflict(service, created.libraryId, sourceDir);
+    const assets = service.listAssets({ libraryId: created.libraryId, recursive: true });
+    expect(assets).toHaveLength(6);
+    const overlayIds = assets.slice(0, 2).map((asset) => asset.assetId);
+    const outsideIds = new Set(assets.slice(2).map((asset) => asset.assetId));
+    expect(service.enqueueThumbnailJobs(created.libraryId, {
+      assetIds: assets.map((asset) => asset.assetId),
+      priority: 50,
+    })).toBe(6);
+
+    const claimAssetIdsRef = { current: overlayIds as readonly string[] | undefined };
+    expect(await service.processThumbnailQueue(created.libraryId, {
+      maxJobs: 4,
+      jobKinds: ['generate_thumbnail'],
+      claimAssetIdsRef,
+    })).toBe(4);
+
+    const statuses = service.listMediaJobs(created.libraryId).jobs
+      .filter((job) => job.kind === 'generate_thumbnail' && job.status === 'succeeded')
+      .map((job) => job.assetId);
+    expect(overlayIds.every((assetId) => statuses.includes(assetId))).toBe(true);
+    expect(statuses.some((assetId) => outsideIds.has(assetId))).toBe(true);
+    service.closeAll();
+  });
 });
 
 describe('thumbnail fill order (Serpent-xoaz)', () => {

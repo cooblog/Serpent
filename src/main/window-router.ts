@@ -103,8 +103,12 @@ export class WindowRouter<TWindow extends RoutedWindow = RoutedWindow> {
   publishToWindow(windowId: number, channel: string, payload: unknown): boolean {
     const window = this.#windows.get(windowId);
     if (!window || window.isDestroyed()) return false;
-    window.webContents.send(channel, payload);
-    return true;
+    try {
+      window.webContents.send(channel, payload);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   publishToLibrary(libraryId: string, channel: string, payload: unknown): number {
@@ -118,8 +122,12 @@ export class WindowRouter<TWindow extends RoutedWindow = RoutedWindow> {
   broadcast(channel: string, payload: unknown): number {
     let published = 0;
     for (const window of this.windows()) {
-      window.webContents.send(channel, payload);
-      published += 1;
+      try {
+        window.webContents.send(channel, payload);
+        published += 1;
+      } catch {
+        // Render frame can already be gone while the BrowserWindow still exists.
+      }
     }
     return published;
   }

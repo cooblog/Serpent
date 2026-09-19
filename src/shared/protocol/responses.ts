@@ -440,6 +440,22 @@ export function parseExtensionSaveCompletedEvent(
   return extensionSaveCompletedEventSchema.parse(input);
 }
 
+const thumbnailReadyItemSchema = z.strictObject({
+  assetId: nonBlankString,
+  artifactId: nonBlankString,
+  width: z.number().int().positive().optional(),
+  height: z.number().int().positive().optional(),
+  durationMs: z.number().int().nonnegative().optional(),
+});
+
+const thumbnailFailedItemSchema = z.strictObject({
+  assetId: nonBlankString,
+  errorCode: nonBlankString,
+  reason: nonBlankString,
+  width: z.number().int().positive().optional(),
+  height: z.number().int().positive().optional(),
+});
+
 export const thumbnailEventSchema = z.discriminatedUnion('type', [
   z.strictObject({
     type: z.literal('asset.thumbnail.ready'),
@@ -461,6 +477,13 @@ export const thumbnailEventSchema = z.discriminatedUnion('type', [
     reason: nonBlankString,
     width: z.number().int().positive().optional(),
     height: z.number().int().positive().optional(),
+  }),
+  z.strictObject({
+    type: z.literal('asset.thumbnail.batch-ready'),
+    libraryId: nonBlankString,
+    ready: z.array(thumbnailReadyItemSchema).max(100),
+    failed: z.array(thumbnailFailedItemSchema).max(100),
+    completedCount: z.number().int().nonnegative(),
   }),
   z.strictObject({
     type: z.literal('asset.dimensions.ready'),
@@ -1506,7 +1529,7 @@ const assetOperationSuccessSchemas = [
     ok: z.literal(true),
     type: z.literal('asset.preview.resolved'),
     assetId: nonBlankString,
-    mediaType: z.enum(['image', 'video', 'audio', 'text', 'model', 'document', 'other']),
+    mediaType: z.enum(['image', 'video', 'audio', 'text', 'model', 'document', 'font', 'other']),
     status: z.enum(['ready', 'pending', 'failed', 'missing']),
     kind: z.enum(['thumbnail', 'webm_proxy', 'audio_proxy']),
     url: nonBlankString.optional(),
@@ -1855,7 +1878,7 @@ const workerSuccessResultSchema = z.discriminatedUnion('type', [
     ok: z.literal(true),
     type: z.literal('media.preview-artifact'),
     assetId: nonBlankString,
-    mediaType: z.enum(['image', 'video', 'audio', 'text', 'model', 'document', 'other']),
+    mediaType: z.enum(['image', 'video', 'audio', 'text', 'model', 'document', 'font', 'other']),
     status: z.enum(['ready', 'pending', 'failed', 'missing']),
     kind: z.enum(['thumbnail', 'webm_proxy', 'audio_proxy']),
     artifactId: nonBlankString.optional(),

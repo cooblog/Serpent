@@ -28,6 +28,7 @@ export type AssetActionKeyboardCommand =
   | "asset.copy-file-path"
   | "asset.paste"
   | "asset.reveal-in-folder"
+  | "asset.show-in-library-folder"
   | "asset.delete-from-disk";
 
 export function matchAssetActionKeyboardCommand(

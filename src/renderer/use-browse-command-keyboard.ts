@@ -49,6 +49,7 @@ export type UseBrowseCommandKeyboardArgs = {
   readonly onCopyFilePath: (assetId: string) => void;
   readonly onPasteIntoFolder: (folderId: string | null) => void;
   readonly onRevealInFolder: (assetId: string) => void;
+  readonly onShowInLibraryFolder: (assetId: string) => void;
   readonly onDiskDelete: (
     assetIds: readonly string[],
     folderIds: readonly string[],
@@ -82,6 +83,7 @@ export function useBrowseCommandKeyboard(
     onCopyFilePath,
     onPasteIntoFolder,
     onRevealInFolder,
+    onShowInLibraryFolder,
     onDiskDelete,
     onPermanentDelete,
     onRemoveFromCurrentCollection,
@@ -130,6 +132,21 @@ export function useBrowseCommandKeyboard(
       ) {
         event.preventDefault();
         onPasteIntoFolder(pasteDestinationFolderId);
+        return;
+      }
+
+      if (
+        matchAssetActionKeyboardCommand(
+          "asset.show-in-library-folder",
+          event,
+          platform,
+        ) &&
+        !showTrash &&
+        selectedAsset &&
+        !selectedAsset.deletedAt
+      ) {
+        event.preventDefault();
+        onShowInLibraryFolder(selectedAsset.assetId);
         return;
       }
 
@@ -275,6 +292,7 @@ export function useBrowseCommandKeyboard(
     onCopyFilePath,
     onPasteIntoFolder,
     onRevealInFolder,
+    onShowInLibraryFolder,
     onDiskDelete,
     onPermanentDelete,
     onRemoveFromCurrentCollection,

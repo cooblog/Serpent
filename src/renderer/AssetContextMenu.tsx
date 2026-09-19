@@ -17,6 +17,7 @@ type RendererWindow = Window & {
 };
 import type { EntityAppearance, EntityAppearanceTarget } from "../shared/entity-appearance";
 import { EntityAppearancePicker } from "./EntityAppearancePicker";
+import { planFolderBatch } from "./folder-batch-actions";
 import {
   ContextMenu,
   ContextMenuBackdrop,
@@ -53,7 +54,9 @@ import {
 import {
   buildMultiAssetMenuSkipReport,
   formatMultiAssetMenuSkipFooter,
+  type MenuSkipScopeOptions,
 } from "./menu-skip-report";
+import { canCreateImageSequenceFromSelection } from "./image-sequence-selection";
 import type { SerpentPluginManagerApi } from "../shared/plugin-manager-api";
 import type { PluginContributionContext } from "../plugins/plugin-context";
 import {
@@ -186,6 +189,7 @@ const HOST_MENU_ANCHORS: Record<PluginHostMenuGroup, readonly string[]> = {
     "asset.view",
     "asset.open-external",
     "asset.reveal-in-folder",
+    "asset.show-in-library-folder",
     "folder.open-in-file-manager",
   ],
   organize: [
@@ -294,6 +298,8 @@ interface AssetContextMenuProps {
   smartCollections: SmartCollectionSummary[];
   activeCollectionId: string | null;
   assets: AssetSummary[];
+  /** Current browse-scope IDs so select-all is not treated as "out of scope". */
+  menuSkipScope?: MenuSkipScopeOptions;
   onRenameSmartCollection: (id: string, name: string) => void;
   onUpdateSmartCollection: (id: string) => void;
   onDeleteSmartCollection: (id: string, name: string) => void;
@@ -302,6 +308,8 @@ interface AssetContextMenuProps {
   onEditCollectionDetails: (collectionId: string) => void;
   onDeleteOrganization: (id: string, name: string) => void;
   onCreateSubfolder: (folderId: string) => void;
+  onExpandFolderTree: (folderId: string) => void;
+  onCollapseFolderTree: (folderId: string) => void;
   /** Serpent-316493: 导入链接文件夹 as a child of this managed folder. */
   onImportLinkedFolderInto: (folderId: string) => void;
   onSetIgnore: (args: {
@@ -361,6 +369,7 @@ interface AssetContextMenuProps {
   onDissolveImageSequence: (sequenceId: string) => void;
   onDissolveImageSequences: (sequenceIds: string[]) => void;
   onRevealInFolder: (assetId: string) => void;
+  onShowInLibraryFolder: (assetId: string) => void;
   onCopyFilePath: (assetId: string) => void;
   /** OS file clipboard copy (Finder/Explorer interoperable). */
   onCopyAssetFiles: (assetIds: string[]) => void;
@@ -401,6 +410,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
     smartCollections,
     activeCollectionId,
     assets,
+    menuSkipScope,
     onRenameSmartCollection,
     onUpdateSmartCollection,
     onDeleteSmartCollection,
@@ -409,6 +419,8 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
     onEditCollectionDetails,
     onDeleteOrganization,
     onCreateSubfolder,
+    onExpandFolderTree,
+    onCollapseFolderTree,
     onImportLinkedFolderInto,
     onSetIgnore,
     onRenameFolder,
@@ -441,6 +453,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
     onOpenExternal,
     onViewAsset,
     onRevealInFolder,
+    onShowInLibraryFolder,
     onCopyFilePath,
     onCopyAssetFiles,
     pasteTargetFolderId,
@@ -835,6 +848,8 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               copyFolder: onCopyFolder,
               pasteIntoFolder: onPasteIntoFolder,
               cloneFolder: onCloneFolder,
+              expandFolderTree: onExpandFolderTree,
+              collapseFolderTree: onCollapseFolderTree,
               moveFolder: onMoveFolder,
               trashManagedFolder: onTrashManagedFolder,
               deleteFolderFromDisk: (folderId, name) =>
@@ -943,6 +958,8 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               copyFolder: onCopyFolder,
               pasteIntoFolder: onPasteIntoFolder,
               cloneFolder: onCloneFolder,
+              expandFolderTree: onExpandFolderTree,
+              collapseFolderTree: onCollapseFolderTree,
               moveFolder: onMoveFolder,
               trashManagedFolder: onTrashManagedFolder,
               deleteFolderFromDisk: (folderId, name) =>
@@ -1089,6 +1106,8 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               copyFolder: onCopyFolder,
               pasteIntoFolder: onPasteIntoFolder,
               cloneFolder: onCloneFolder,
+              expandFolderTree: onExpandFolderTree,
+              collapseFolderTree: onCollapseFolderTree,
               moveFolder: onMoveFolder,
               trashManagedFolder: onTrashManagedFolder,
               deleteFolderFromDisk: (_folderId, name) =>
@@ -1124,6 +1143,8 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
           const createSubfolderItem = resolvedById.get(
             "folder.create-subfolder",
           );
+          const expandAllItem = resolvedById.get("folder.expand-all");
+          const collapseAllItem = resolvedById.get("folder.collapse-all");
           const importLinkedItem = resolvedById.get("folder.import-linked");
           const renameItem = resolvedById.get("folder.rename");
           const linkedRulesItem = resolvedById.get("folder.linked-rules");
@@ -1195,6 +1216,20 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                     onAction={() =>
                       runSidebarCommand("folder.create-subfolder")
                     }
+                  />
+                )}
+                {expandAllItem && (
+                  <ContextMenuItem
+                    icon={<Icon name="folders" size={14} />}
+                    label={expandAllItem.label}
+                    onAction={() => runSidebarCommand("folder.expand-all")}
+                  />
+                )}
+                {collapseAllItem && (
+                  <ContextMenuItem
+                    icon={<Icon name="folder-tree" size={14} />}
+                    label={collapseAllItem.label}
+                    onAction={() => runSidebarCommand("folder.collapse-all")}
                   />
                 )}
                 {importLinkedItem && (
@@ -1402,40 +1437,59 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               targetAssetIds,
               targetAssets,
               targetFolderIds,
+              menuSkipScope,
             );
             const trashAssetIds = [...skipReport.trash.processAssetIds];
-            const managedAssetIds = targetAssets
-              .filter(
-                (asset) =>
-                  trashAssetIds.includes(asset.assetId) &&
-                  asset.locationKind === "managed",
-              )
-              .map((asset) => asset.assetId);
-            const linkedAssetIds = targetAssets
-              .filter(
-                (asset) =>
-                  trashAssetIds.includes(asset.assetId) &&
-                  asset.locationKind === "linked",
-              )
-              .map((asset) => asset.assetId);
+            const linkedIdSet = new Set(
+              targetAssets
+                .filter((asset) => asset.locationKind === "linked")
+                .map((asset) => asset.assetId),
+            );
+            const linkedAssetIds = trashAssetIds.filter((assetId) =>
+              linkedIdSet.has(assetId),
+            );
+            const managedAssetIds = trashAssetIds.filter(
+              (assetId) => !linkedIdSet.has(assetId),
+            );
             const availableManagedAssetIds = [
               ...skipReport.move.processAssetIds,
             ];
-            const availableAssetIds = targetAssets
+            const loadedAvailableIds = targetAssets
               .filter((asset) => asset.availability === "available")
               .map((asset) => asset.assetId);
+            const loadedAvailableSet = new Set(loadedAvailableIds);
+            const availableAssetIds = [
+              ...loadedAvailableIds,
+              ...availableManagedAssetIds.filter(
+                (assetId) => !loadedAvailableSet.has(assetId),
+              ),
+            ];
             const processFolderIds = [...skipReport.trash.processFolderIds];
             const moveFolderIds = [...skipReport.move.processFolderIds];
+            // Serpent-d7acfa：多选文件夹的「设置图标 / 忽略」资格与跳过原因由
+            // folder-batch-actions 统一计算（链接子目录、资源库根等会被跳过）。
+            const linkedRootFolders = linkedFolders.map((folder) => ({
+              folderId: folder.folderId,
+              name: folder.displayName,
+              relativePath: folder.relativePath ?? "",
+            }));
+            const appearancePlan = planFolderBatch({
+              folderIds: targetFolderIds,
+              managedFolders,
+              linkedFolders: linkedRootFolders,
+              action: "appearance",
+            });
+            const ignorePlan = planFolderBatch({
+              folderIds: targetFolderIds,
+              managedFolders,
+              linkedFolders: linkedRootFolders,
+              action: "ignore",
+            });
             const allTrashed = skipReport.allTrashed;
-            const canCreateImageSequence =
-              targetAssets.length >= 3 &&
-              targetAssets.length === targetAssetIds.length &&
-              targetAssets.every(
-                (asset) =>
-                  asset.mediaType === "image" &&
-                  asset.availability === "available" &&
-                  !asset.sequence,
-              );
+            const canCreateImageSequence = canCreateImageSequenceFromSelection({
+              selectedCount: targetAssetIds.length,
+              loadedSelectedAssets: targetAssets,
+            });
             const sequenceIdsToDissolve = targetAssets
               .map((asset) => asset.sequence?.sequenceId)
               .filter((sequenceId): sequenceId is string => sequenceId !== undefined);
@@ -1476,6 +1530,8 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               availableManagedAssetIds,
               availableAssetIds,
               pasteTargetFolderId,
+              appearanceFolderTargets: appearancePlan.targets,
+              ignoreFolderTargets: ignorePlan.targets,
               actions: {
                 openAssignTagPicker: (assetIds) =>
                   setTagPicker({ mode: "assign", assetIds, single: false }),
@@ -1497,6 +1553,43 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   onAnalyze(primary, assetIds);
                 },
                 clearAiContent: onClearAiContent,
+                setFolderAppearance: (targets, appearance) => {
+                  for (const target of targets) {
+                    onSetEntityAppearance(
+                      { kind: target.kind, id: target.folderId },
+                      appearance,
+                    );
+                  }
+                },
+                ignoreSelection: ({ assetIds, folderTargets }) => {
+                  const assetById = new Map(
+                    assets.map((asset) => [asset.assetId, asset]),
+                  );
+                  for (const assetId of assetIds) {
+                    const asset = assetById.get(assetId);
+                    if (!asset) continue;
+                    onSetIgnore({
+                      locationKind: asset.locationKind,
+                      linkedFolderId: asset.linkedFolderId ?? null,
+                      relativePath: asset.relativeFilePath,
+                      pathKind: "asset",
+                      ignored: true,
+                      name: asset.displayName,
+                    });
+                  }
+                  for (const target of folderTargets) {
+                    onSetIgnore({
+                      locationKind:
+                        target.kind === "linked-folder" ? "linked" : "managed",
+                      linkedFolderId:
+                        target.kind === "linked-folder" ? target.folderId : null,
+                      relativePath: target.relativePath,
+                      pathKind: "folder",
+                      ignored: true,
+                      name: target.name,
+                    });
+                  }
+                },
               },
             };
             const resolvedById = new Map(
@@ -1519,6 +1612,8 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
             const aiAnalyzeItem = resolvedById.get("assets.ai-analyze");
             const clearAiContentItem = resolvedById.get("assets.clear-ai-content");
             const moveToFolderItem = resolvedById.get("assets.move-to-folder");
+            const appearanceItem = resolvedById.get("assets.appearance");
+            const ignoreItem = resolvedById.get("assets.ignore");
             const copyItem = resolvedById.get("assets.copy");
             const pasteItem = resolvedById.get("assets.paste");
             const moveToTrashItem = resolvedById.get("assets.move-to-trash");
@@ -1651,7 +1746,10 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                 onRun={(item) => runPluginCommand(item, { assetIds: targetAssetIds })}
               />
             )}
-            {targetAssetIds.length > 0 && (
+            {/* Serpent-d7acfa：只选文件夹卡片时同样要有组织区（移动到文件夹 /
+                设置图标 / 忽略）；资产专属项（复制、粘贴、标签、合集、AI）各自
+                另有闸门，不会因为放宽这一层而冒出来。 */}
+            {(targetAssetIds.length > 0 || targetFolderIds.length > 0) && (
             <ContextMenuSection label={t("command.group.organize")}>
               <PluginMenuItems
                 items={multiAssetPluginPlacement.organizeBefore}
@@ -1757,36 +1855,34 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   onAction={() => runMultiCommand("assets.move-to-folder")}
                 />
               )}
+              {appearanceItem && (
+                <ContextMenuSubmenu
+                  icon={<Icon name="palette" size={14} />}
+                  label={appearanceItem.label}
+                >
+                  <EntityAppearancePicker
+                    value={null}
+                    onChange={(appearance) =>
+                      commandContext.actions.setFolderAppearance?.(
+                        commandContext.appearanceFolderTargets,
+                        appearance,
+                      )
+                    }
+                  />
+                </ContextMenuSubmenu>
+              )}
               <PluginMenuItems
                 items={multiAssetPluginPlacement.organizeAfter}
                 onRun={(item) => runPluginCommand(item, { assetIds: targetAssetIds })}
               />
               <ContextMenuItem
                 icon={<Icon name="close" size={14} />}
-                label={t("menu.ignore")}
-                onAction={() => {
-                  targetAssets.forEach((asset) => onSetIgnore({
-                    locationKind: asset.locationKind,
-                    linkedFolderId: asset.linkedFolderId ?? null,
-                    relativePath: asset.relativeFilePath,
-                    pathKind: "asset",
-                    ignored: true,
-                    name: asset.displayName,
-                  }));
-                  targetFolderIds.forEach((folderId) => {
-                    const folder = managedFolders.find((item) => item.folderId === folderId);
-                    if (folder) onSetIgnore({
-                      locationKind: "managed",
-                      linkedFolderId: null,
-                      relativePath: folder.relativePath,
-                      pathKind: "folder",
-                      ignored: true,
-                      name: folder.name,
-                    });
-                  });
-                }}
+                label={ignoreItem?.label ?? t("menu.ignore")}
+                disabled={ignoreItem?.disabled ?? false}
+                disabledReason={ignoreItem?.disabledReason ?? undefined}
+                onAction={() => runMultiCommand("assets.ignore")}
               />
-                  {copyItem && (
+                  {copyItem && targetAssetIds.length > 0 && (
                     <ContextMenuItem
                       icon={<Icon name="clipboard" size={14} />}
                       label={copyItem.label}
@@ -1796,7 +1892,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                       onAction={() => runMultiCommand("assets.copy")}
                     />
                   )}
-                  {pasteItem && (
+                  {pasteItem && targetAssetIds.length > 0 && (
                     <ContextMenuItem
                       icon={<Icon name="clipboard" size={14} />}
                       label={pasteItem.label}
@@ -1879,6 +1975,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                 view: onViewAsset,
                 openExternal: onOpenExternal,
                 revealInFolder: onRevealInFolder,
+                showInLibraryFolder: onShowInLibraryFolder,
                 copyFiles: onCopyAssetFiles,
                 pasteIntoFolder: onPasteIntoFolder,
                 copyFilePath: onCopyFilePath,
@@ -1912,6 +2009,9 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
             const viewItem = resolvedById.get("asset.view");
             const revealInFolderItem = resolvedById.get(
               "asset.reveal-in-folder",
+            );
+            const showInLibraryFolderItem = resolvedById.get(
+              "asset.show-in-library-folder",
             );
             const removeFromCurrentCollectionItem = resolvedById.get(
               "asset.remove-from-current-collection",
@@ -2033,6 +2133,20 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                       }
                       onAction={() =>
                         runAssetCommand("asset.reveal-in-folder")
+                      }
+                    />
+                  )}
+                  {showInLibraryFolderItem && (
+                    <ContextMenuItem
+                      icon={<Icon name="folder-tree" size={14} />}
+                      label={showInLibraryFolderItem.label}
+                      shortcut={showInLibraryFolderItem.shortcutLabel ?? undefined}
+                      disabled={showInLibraryFolderItem.disabled}
+                      disabledReason={
+                        showInLibraryFolderItem.disabledReason ?? undefined
+                      }
+                      onAction={() =>
+                        runAssetCommand("asset.show-in-library-folder")
                       }
                     />
                   )}

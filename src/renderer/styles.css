@@ -1696,6 +1696,23 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   cursor: not-allowed;
 }
 
+.dimension-filter-popover.is-color-filter {
+  width: min(380px, 90vw);
+  max-height: min(560px, 72vh);
+}
+
+.dimension-color-presets {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 12px;
+  padding: 2px 2px 4px;
+}
+
+.dimension-color-presets .dimension-color-swatch {
+  flex: 0 0 22px;
+}
+
 .dimension-color-row {
   display: flex;
   flex-wrap: wrap;
@@ -1751,6 +1768,174 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
 .dimension-color-swatch:disabled {
   opacity: 0.48;
   cursor: not-allowed;
+}
+
+.dimension-color-custom {
+  position: relative;
+  display: inline-flex;
+}
+
+.dimension-color-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: var(--raised-2);
+  color: var(--text);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.dimension-color-add {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px dashed color-mix(in srgb, var(--ink) 28%, transparent);
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: var(--secondary);
+  cursor: pointer;
+}
+
+.dimension-color-add:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+}
+
+.dimension-color-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--divider);
+  border-radius: 8px;
+  background: var(--raised-2);
+  user-select: none;
+}
+
+.dimension-color-picker:focus {
+  outline: none;
+}
+
+.dimension-color-picker-sv {
+  position: relative;
+  width: 100%;
+  height: 148px;
+  overflow: hidden;
+  border-radius: 6px;
+  cursor: crosshair;
+}
+
+.dimension-color-picker-hue-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dimension-color-picker-preview {
+  flex: 0 0 22px;
+  width: 22px;
+  height: 22px;
+  border: 1px solid color-mix(in srgb, var(--ink) 22%, transparent);
+  border-radius: 999px;
+}
+
+.dimension-color-picker-hue {
+  position: relative;
+  flex: 1 1 auto;
+  height: 14px;
+  border-radius: 999px;
+  background: linear-gradient(
+    to right,
+    #f00,
+    #ff0,
+    #0f0,
+    #0ff,
+    #00f,
+    #f0f,
+    #f00
+  );
+  cursor: pointer;
+}
+
+.dimension-color-picker-thumb {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--canvas);
+  border-radius: 999px;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--ink) 40%, transparent);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.dimension-color-picker-rgb {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dimension-color-picker-channel {
+  display: flex;
+  flex-direction: row !important;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  flex: 1 1 0;
+}
+
+.dimension-color-picker-channel input {
+  width: 100%;
+  min-width: 0;
+  height: var(--ui-size-control-sm);
+  padding: 0 6px;
+  border: 1px solid var(--ui-border-control);
+  border-radius: var(--ui-radius-control);
+  background: var(--ui-surface-raised);
+  color: var(--ui-content-primary);
+  font: inherit;
+  font-size: var(--ui-font-size-micro);
+}
+
+.dimension-color-picker-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.dimension-color-similarity > .ui-field {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.dimension-color-similarity .ui-field__label {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.dimension-color-similarity .ui-slider {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 0;
+}
+
+.dimension-color-similarity .ui-slider__control {
+  flex: 0 0 100px;
+  width: 100px;
+}
+
+.dimension-color-similarity .ui-slider__value {
+  min-width: 4ch;
 }
 
 .dimension-folder-option {
@@ -2039,6 +2224,14 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
    border stays so rows don't shift between states. */
 .nav-row.is-active {
   background: var(--active);
+  color: var(--text);
+}
+
+/* Serpent-d7acfa：侧栏 Ctrl/⌘ 多选的行。沿用与拖放目标相同的「accent 轻染 +
+   inset 细环」语言，但更轻，避免与当前浏览范围的 is-active 混淆。 */
+.nav-row.is-multi-selected {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 32%, transparent);
   color: var(--text);
 }
 
@@ -4710,27 +4903,36 @@ body.serpent-modal-open .app-shell {
   align-items: center;
   gap: 4px;
 }
-.preview-text-action-chip {
-  padding: 6px 12px;
+.preview-text-action {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  place-items: center;
   border: 0;
   border-radius: 8px;
   background: transparent;
   color: var(--text);
-  font-size: calc(12px * var(--ui-font-scale));
   cursor: pointer;
   opacity: 0.85;
 }
-.preview-text-action-chip:hover,
-.preview-text-action-chip:focus-visible {
+.preview-text-action:hover,
+.preview-text-action:focus-visible {
   opacity: 1;
+  background: var(--menu-item-hover-background);
   outline: none;
 }
-.preview-text-action-chip:focus-visible {
+.preview-text-action:focus-visible {
   box-shadow: 0 0 0 2px var(--accent);
 }
-.preview-text-action-chip:disabled {
+.preview-text-action:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+.preview-text-action.is-active {
+  background: var(--accent-soft);
+  color: var(--accent-soft-fg);
+  opacity: 1;
 }
 .preview-text-scroll {
   flex: 1;
@@ -4744,6 +4946,17 @@ body.serpent-modal-open .app-shell {
   min-height: 100%;
   width: max-content;
   min-width: 100%;
+}
+.preview-text-line-layer.is-wrap {
+  width: 100%;
+  grid-template-columns: 1fr;
+}
+.preview-text-line-layer.is-wrap .preview-text-gutter {
+  display: none;
+}
+.preview-text-line-layer.is-wrap .preview-text-input {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .preview-text-gutter {
   margin: 0;
@@ -5055,7 +5268,9 @@ body.serpent-modal-open .app-shell {
   cursor: grab;
 }
 .preview-image-viewport.is-pannable:active,
-.preview-video-viewport.is-pannable:active {
+.preview-video-viewport.is-pannable:active,
+.preview-image-viewport[data-panning="true"],
+.preview-video-viewport[data-panning="true"] {
   cursor: grabbing;
 }
 .preview-image-viewport:active,
@@ -5271,6 +5486,147 @@ body.serpent-modal-open .app-shell {
   width: 100%;
   border: 0;
   background: white;
+}
+
+/* Serpent-485aeb：字体查看器。字形由 Renderer 自己用 FontFace 渲染（不是
+   iframe），设置面板沿用图片查看器底部 toolbar 的 chrome（可换行的浮动条）。 */
+.font-viewer {
+  position: relative;
+}
+
+.font-viewer-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 24px 32px 16px;
+}
+
+.font-viewer-specimen {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  color: var(--text);
+  word-break: break-word;
+}
+
+.font-viewer-specimen-row {
+  line-height: 1.25;
+  white-space: pre-wrap;
+}
+
+/* 复合选择器提高优先级：本块在 .preview-zoom-controls 之前，单类会被它的
+   position:absolute 覆盖。字体查看器控件多，改为在流内居中并允许换行，
+   否则窄窗口下 B/I/U 会被挤出可视区而点不到。 */
+.preview-zoom-controls.font-viewer-controls {
+  position: static;
+  align-self: center;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin: 0 16px 12px;
+  max-width: min(760px, calc(100% - 24px));
+  padding: 5px 12px;
+  transform: none;
+}
+
+.font-viewer-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--secondary);
+  font-size: calc(11px * var(--ui-font-scale));
+  white-space: nowrap;
+}
+
+/* 工具条上图标、输入框、下拉、滑杆、按钮的行高/内边距各不相同，曾出现看起来
+   没对齐（2026-09-19 反馈）。这里统一 24px 高并显式居中，让所有控件共用同一条
+   中心线；E2E 会量各控件的竖直中心并要求偏差 <= 1px。 */
+.preview-zoom-controls.font-viewer-controls {
+  align-items: center;
+}
+
+.font-viewer-control {
+  min-height: 24px;
+  line-height: 1.2;
+}
+
+.font-viewer-control > .icon,
+.font-viewer-control > .font-viewer-control-value,
+.font-viewer-control > input,
+.font-viewer-control > select {
+  align-self: center;
+  margin-block: 0;
+}
+
+.font-viewer-controls .font-viewer-text-input,
+.font-viewer-controls select {
+  height: 24px;
+  box-sizing: border-box;
+}
+
+.font-viewer-controls select {
+  padding: 0 3px;
+  line-height: 22px;
+}
+
+.font-viewer-control .icon {
+  color: var(--secondary);
+}
+
+.font-viewer-control-value {
+  min-width: 2.2em;
+  text-align: right;
+}
+
+.font-viewer-text-input {
+  width: min(200px, 28vw);
+  padding: 3px 6px;
+  border: 1px solid var(--divider);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+}
+
+.font-viewer-text-input:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.font-viewer-controls button.is-active {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  color: var(--text);
+}
+
+/* 预览文字撤回：只在有自定义文字时可点。 */
+.font-viewer-controls .font-viewer-text-reset:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.font-viewer-controls .font-viewer-text-reset:disabled:hover {
+  background: transparent;
+}
+
+.font-viewer-style-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(12px * var(--ui-font-scale));
+  line-height: 1;
+}
+
+.font-viewer-style-glyph[data-style="bold"] {
+  font-weight: 700;
+}
+
+.font-viewer-style-glyph[data-style="italic"] {
+  font-style: italic;
+}
+
+.font-viewer-style-glyph[data-style="underline"] {
+  text-decoration: underline;
 }
 
 .html-viewer-loading {
@@ -5836,8 +6192,8 @@ body.serpent-modal-open .app-shell {
 }
 
 /* Serpent-cljb: the fallback explanation is intentionally quiet. It stays
-   in the viewer rather than becoming a blocking error, and the restore
-   control remains available after the user hides it. */
+   in the viewer rather than becoming a blocking error. Hiding it is final
+   for the current asset; looping must not bring it back. */
 .preview-proxy-notice {
   position: absolute;
   z-index: 3;
@@ -5856,8 +6212,7 @@ body.serpent-modal-open .app-shell {
   transform: translateX(-50%);
 }
 
-.preview-proxy-notice button,
-.preview-proxy-notice-restore {
+.preview-proxy-notice button {
   padding: 2px 4px;
   border: 0;
   background: transparent;
@@ -5866,16 +6221,8 @@ body.serpent-modal-open .app-shell {
   cursor: pointer;
 }
 
-.preview-proxy-notice button:hover,
-.preview-proxy-notice-restore:hover {
+.preview-proxy-notice button:hover {
   color: var(--text);
-}
-
-.preview-proxy-notice-restore {
-  position: absolute;
-  z-index: 3;
-  top: 12px;
-  left: 12px;
 }
 
 /* Serpent-e56a1f: 代理生成中/加载中的状态提示（非警告样式）。 */
@@ -7398,6 +7745,10 @@ select.ai-config-input.ai-config-languages {
   height: 1px;
   margin: 15px 0;
   background: var(--divider);
+}
+
+.app-settings-card > .app-settings-toggle-row + .app-settings-toggle-row {
+  margin-top: var(--ui-space-5);
 }
 
 .app-settings-disclosure-header {
@@ -10626,10 +10977,15 @@ select.ai-config-input.ai-config-languages {
   color: var(--tertiary);
 }
 
+/* Serpent-485aeb：字体卡片封面是 16:9 的样张（不是 4:3），卡片框跟着一起变成
+   16:9，否则 contain 会在上下留出与样张底色不同的横条。 */
+.asset-card[data-media-type="font"] .asset-preview {
+  aspect-ratio: 16 / 9;
+}
+
 .asset-thumbnail {
   display: block;
-  width: 100%;
-  height: 100%;
+  width: 100%;  height: 100%;
   object-fit: contain;
   border-radius: inherit;
 }
@@ -10700,6 +11056,27 @@ select.ai-config-input.ai-config-languages {
 }
 
 .image-sequence-range-caption {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Serpent-866c20：序列帧确认面板的播放预览（只用主题 token，亮/暗一致）。 */
+.image-sequence-preview {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.image-sequence-preview-frame {
+  width: 100%;
+  max-height: 220px;
+  object-fit: contain;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--raised-2);
+}
+
+.image-sequence-preview-caption {
   font-variant-numeric: tabular-nums;
 }
 
@@ -11351,6 +11728,36 @@ select.ai-config-input.ai-config-languages {
   box-shadow: var(--shadow-card);
 }
 
+.inspector-hero-sequence-preview {
+  position: relative;
+  width: 100%;
+  height: min(360px, 45vh);
+  min-height: 112px;
+  overflow: hidden;
+  border-radius: 8px;
+}
+
+.inspector-hero-sequence-preview .inspector-hero-face {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 112px;
+  border-radius: 8px;
+}
+
+.inspector-hero-sequence-preview .sequence-frame-canvas {
+  position: relative;
+  inset: auto;
+  width: 100%;
+  height: 100%;
+  min-height: 112px;
+}
+
+:root:not([data-elevation="0"]) .inspector-hero-sequence-preview .inspector-hero-face {
+  box-shadow: var(--shadow-card);
+}
+
 .inspector-hero-image.is-loading {
   position: absolute;
   opacity: 0;
@@ -11373,6 +11780,15 @@ select.ai-config-input.ai-config-languages {
   /* Shrink-wrap the contain-fit media so the face box == visible card. */
   width: fit-content;
   height: fit-content;
+}
+
+.inspector-pane[data-inspector-card-feel="on"] .inspector-hero-sequence-preview .inspector-hero-face {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 112px;
+  max-width: none;
+  max-height: none;
 }
 
 .inspector-pane[data-inspector-card-feel="on"] .inspector-hero-face > .inspector-hero-image {

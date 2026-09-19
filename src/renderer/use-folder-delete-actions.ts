@@ -4,6 +4,10 @@ import type { SerpentLibraryApi } from "../shared/library-api";
 import { LibraryOperationError, toMessage } from "./error-utils";
 import { translateForLocale, type AppLocale } from "./i18n";
 import {
+  isUserCancellation,
+  userCancellationNoticeKey,
+} from "./user-cancellation";
+import {
   isBrowseScopeAffectedByFolderTrash,
   type FolderParentNode,
 } from "./folder-trash-scope";
@@ -152,6 +156,16 @@ export function useFolderDeleteActions({
         );
         await afterFolderMutation([target.folderId]);
       } catch (caught) {
+        // 危险操作确认窗里点「取消」是用户主动停下：走 info 通知，不进红色错误条。
+        if (isUserCancellation(caught)) {
+          setNotice(
+            translateForLocale(
+              locale,
+              userCancellationNoticeKey("diskDelete"),
+            ),
+          );
+          return;
+        }
         setError(
           toMessage(
             caught,

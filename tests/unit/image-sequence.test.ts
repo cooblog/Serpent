@@ -134,6 +134,62 @@ describe("detectImageSequences", () => {
     expect(sequences[0]!.frames.at(-1)!.frameNumber).toBe(35);
   });
 
+  it("keeps two-digit padded runs together after 09 (01 … 12)", () => {
+    const values = Array.from(
+      { length: 12 },
+      (_, index) => `shot_${String(index + 1).padStart(2, "0")}.png`,
+    );
+    const sequences = detectImageSequences(values);
+    expect(sequences).toHaveLength(1);
+    expect(sequences[0]).toMatchObject({
+      prefix: "shot_",
+      numberStyle: "trailing",
+      numericWidth: 2,
+    });
+    expect(sequences[0]!.frames.map((frame) => frame.frameNumber)).toEqual(
+      Array.from({ length: 12 }, (_, index) => index + 1),
+    );
+    expect(
+      formatImageSequenceDisplayName({
+        prefix: "shot_",
+        firstFrame: 1,
+        lastFrame: 12,
+        numberStyle: "trailing",
+        numericWidth: 2,
+      }),
+    ).toBe("shot_01~12");
+  });
+
+  it("keeps five-digit padded runs together after the leading zeros run out", () => {
+    const values = [1, 2, 3, 9, 10, 11, 9999, 10000, 10001].map(
+      (frame) => `clip_${String(frame).padStart(5, "0")}.png`,
+    );
+    const sequences = detectImageSequences(values);
+    expect(sequences.map((sequence) =>
+      sequence.frames.map((frame) => frame.frameNumber),
+    )).toEqual([
+      [1, 2, 3],
+      [9, 10, 11],
+      [9999, 10000, 10001],
+    ]);
+    expect(sequences.every((sequence) => sequence.numericWidth === 5)).toBe(true);
+  });
+
+  it("keeps two-digit parentheses padding together after (09)", () => {
+    const values = Array.from(
+      { length: 12 },
+      (_, index) => `photo(${String(index + 1).padStart(2, "0")}).jpg`,
+    );
+    const sequences = detectImageSequences(values);
+    expect(sequences).toHaveLength(1);
+    expect(sequences[0]).toMatchObject({
+      prefix: "photo",
+      numberStyle: "parens",
+      numericWidth: 2,
+    });
+    expect(sequences[0]!.frames).toHaveLength(12);
+  });
+
   it("detects parentheses numbering without merging into trailing style", () => {
     const sequences = detectImageSequences([
       "shot(1).png",
@@ -168,6 +224,76 @@ describe("detectImageSequences", () => {
           { frameNumber: 3 },
         ],
       },
+    ]);
+  });
+
+  it("assigns unpadded two-digit frames to width 2 before width 3", () => {
+    const sequences = detectImageSequences([
+      "a_01.png",
+      "a_02.png",
+      "a_03.png",
+      "a_001.png",
+      "a_002.png",
+      "a_003.png",
+      "a_10.png",
+    ]);
+    expect(sequences).toHaveLength(2);
+    const byWidth = new Map(
+      sequences.map((sequence) => [sequence.numericWidth, sequence]),
+    );
+    expect(byWidth.get(2)?.frames.map((frame) => frame.frameNumber)).toEqual([1, 2, 3]);
+    expect(byWidth.get(3)?.frames.map((frame) => frame.frameNumber)).toEqual([1, 2, 3]);
+  });
+
+  it("keeps a two-digit padded run beside an unpadded run with the same prefix", () => {
+    const padded = Array.from(
+      { length: 12 },
+      (_, index) => `shot_${String(index + 1).padStart(2, "0")}.png`,
+    );
+    const sequences = detectImageSequences([
+      ...padded,
+      "shot_1.png",
+      "shot_2.png",
+      "shot_3.png",
+    ]);
+    expect(sequences).toHaveLength(2);
+    expect(
+      sequences.map((sequence) => ({
+        numericWidth: sequence.numericWidth,
+        frames: sequence.frames.map((frame) => frame.frameNumber),
+      })),
+    ).toEqual([
+      { numericWidth: 2, frames: Array.from({ length: 12 }, (_, index) => index + 1) },
+      { numericWidth: 0, frames: [1, 2, 3] },
+    ]);
+  });
+
+  it("treats 09–11 as a two-digit padded run when a leading-zero frame is present", () => {
+    const sequences = detectImageSequences([
+      "clip_09.png",
+      "clip_10.png",
+      "clip_11.png",
+    ]);
+    expect(sequences).toHaveLength(1);
+    expect(sequences[0]).toMatchObject({ numericWidth: 2, prefix: "clip_" });
+    expect(sequences[0]!.frames.map((frame) => frame.frameNumber)).toEqual([9, 10, 11]);
+  });
+
+  it("splits a padded-width bucket on frame-number gaps", () => {
+    const sequences = detectImageSequences([
+      "clip_01.png",
+      "clip_02.png",
+      "clip_03.png",
+      "clip_15.png",
+      "clip_16.png",
+      "clip_17.png",
+    ]);
+    expect(sequences.map((sequence) => ({
+      numericWidth: sequence.numericWidth,
+      frames: sequence.frames.map((frame) => frame.frameNumber),
+    }))).toEqual([
+      { numericWidth: 2, frames: [1, 2, 3] },
+      { numericWidth: 2, frames: [15, 16, 17] },
     ]);
   });
 

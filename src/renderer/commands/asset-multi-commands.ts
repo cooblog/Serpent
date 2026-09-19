@@ -10,6 +10,8 @@
 // ---------------------------------------------------------------------------
 
 import { translateForLocale } from '../i18n';
+import type { EntityAppearance } from '../../shared/entity-appearance';
+import type { FolderBatchTarget } from '../folder-batch-actions';
 import type { CommandContext, CommandDefinition } from './command-types';
 
 /**
@@ -41,6 +43,19 @@ export interface AssetMultiCommandActions {
   readonly clearSelection: () => void;
   readonly aiAnalyze?: (assetIds: string[]) => void;
   readonly clearAiContent?: (assetIds: string[]) => void;
+  /**
+   * Serpent-d7acfa：多选里的文件夹「设置图标」与「忽略」。外观由菜单里的
+   * 取色/图标面板给出，注册表只决定可见性、计数与禁用原因。
+   */
+  readonly setFolderAppearance?: (
+    targets: readonly FolderBatchTarget[],
+    appearance: EntityAppearance | null,
+  ) => void;
+  /** 忽略：一次写入选中的资产 + 有资格的文件夹规则。 */
+  readonly ignoreSelection?: (input: {
+    readonly assetIds: readonly string[];
+    readonly folderTargets: readonly FolderBatchTarget[];
+  }) => void;
 }
 
 /**
@@ -74,6 +89,12 @@ export interface AssetMultiCommandContext extends CommandContext {
    * Managed folder that receives OS clipboard paste. Null hides paste.
    */
   readonly pasteTargetFolderId: string | null | undefined;
+  /**
+   * Serpent-d7acfa：本次选中里「能设置图标 / 能忽略」的文件夹（托管文件夹与
+   * 链接根；链接子目录与失效 id 已被跳过）。计数与禁用原因取这里的长度。
+   */
+  readonly appearanceFolderTargets: readonly FolderBatchTarget[];
+  readonly ignoreFolderTargets: readonly FolderBatchTarget[];
   readonly actions: AssetMultiCommandActions;
 }
 
@@ -206,6 +227,52 @@ export const assetMultiCommandDefinitions: readonly AssetMultiCommandDefinition[
           [...ctx.availableManagedAssetIds],
           [...ctx.processFolderIds],
         ),
+    },
+    // Serpent-d7acfa：多选文件夹的「设置图标」与「忽略」。计数只算真正能做的
+    // 文件夹（链接子目录、资源库根等由 folder-batch-actions 跳过并给出原因）。
+    {
+      id: 'assets.appearance',
+      title: (ctx) =>
+        t(ctx, 'command.assets.appearance', {
+          count: ctx.appearanceFolderTargets.length,
+        }),
+      group: 'organize',
+      visible: (ctx) => !ctx.trashedAll && ctx.appearanceFolderTargets.length > 0,
+      disabledReason: (ctx) =>
+        ctx.appearanceFolderTargets.length === 0
+          ? t(ctx, 'command.reason.unresolved')
+          : null,
+      // 真正的书写由菜单里的外观面板触发（选图标/颜色后一次应用到所有目标）。
+      run: () => undefined,
+    },
+    {
+      id: 'assets.ignore',
+      title: (ctx) =>
+        t(ctx, 'command.assets.ignore', {
+          count:
+            ctx.ignoreFolderTargets.length +
+            ctx.managedAssetIds.length +
+            ctx.linkedAssetIds.length,
+        }),
+      group: 'organize',
+      visible: (ctx) =>
+        !ctx.trashedAll &&
+        ctx.ignoreFolderTargets.length +
+          ctx.managedAssetIds.length +
+          ctx.linkedAssetIds.length >
+          0,
+      disabledReason: (ctx) =>
+        ctx.ignoreFolderTargets.length +
+          ctx.managedAssetIds.length +
+          ctx.linkedAssetIds.length ===
+        0
+          ? t(ctx, 'command.reason.unresolved')
+          : null,
+      run: (ctx) =>
+        ctx.actions.ignoreSelection?.({
+          assetIds: [...ctx.managedAssetIds, ...ctx.linkedAssetIds],
+          folderTargets: [...ctx.ignoreFolderTargets],
+        }),
     },
     // ---- 删除 ----
     {

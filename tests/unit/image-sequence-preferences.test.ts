@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_IMAGE_SEQUENCE_PREFERENCES,
   IMAGE_SEQUENCE_PREFERENCES_KEY,
+  imageSequenceImportFlags,
   loadImageSequencePreferences,
   saveImageSequencePreferences,
 } from "../../src/renderer/image-sequence-preferences";
@@ -24,16 +25,52 @@ function storage(initial?: string): Map<string, string> & {
 }
 
 describe("image sequence preferences", () => {
-  it("defaults to detecting sequences", () => {
+  it("defaults to detecting sequences and asking before grouping", () => {
     expect(loadImageSequencePreferences(storage())).toEqual(
       DEFAULT_IMAGE_SEQUENCE_PREFERENCES,
     );
+    expect(DEFAULT_IMAGE_SEQUENCE_PREFERENCES).toEqual({
+      version: 2,
+      detectionEnabled: true,
+      autoDetectOnImport: false,
+    });
   });
 
-  it("persists the import detection toggle", () => {
+  it("migrates v1 storage with detection left on", () => {
+    const store = storage(
+      JSON.stringify({ version: 1, autoDetectOnImport: false }),
+    );
+    expect(loadImageSequencePreferences(store)).toEqual({
+      version: 2,
+      detectionEnabled: true,
+      autoDetectOnImport: false,
+    });
+  });
+
+  it("persists both detection toggles", () => {
     const store = storage();
-    saveImageSequencePreferences({ version: 1, autoDetectOnImport: false }, store);
-    expect(loadImageSequencePreferences(store).autoDetectOnImport).toBe(false);
+    saveImageSequencePreferences(
+      { version: 2, detectionEnabled: true, autoDetectOnImport: false },
+      store,
+    );
+    expect(loadImageSequencePreferences(store)).toEqual({
+      version: 2,
+      detectionEnabled: true,
+      autoDetectOnImport: false,
+    });
+  });
+
+  it("turns auto-create off when detection is off", () => {
+    expect(
+      imageSequenceImportFlags({
+        version: 2,
+        detectionEnabled: false,
+        autoDetectOnImport: true,
+      }),
+    ).toEqual({
+      detectImageSequences: false,
+      autoDetectImageSequences: false,
+    });
   });
 
   it("ignores malformed or unsupported values", () => {

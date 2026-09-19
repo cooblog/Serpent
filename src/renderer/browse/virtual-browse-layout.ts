@@ -32,6 +32,20 @@ export function isGeometryPlaceholder(
   return entry.assetId.startsWith(GEOMETRY_PLACEHOLDER_PREFIX);
 }
 
+export function geometryPlaceholderIndex(assetId: string): number | undefined {
+  if (!assetId.startsWith(GEOMETRY_PLACEHOLDER_PREFIX)) return undefined;
+  const index = Number(assetId.slice(GEOMETRY_PLACEHOLDER_PREFIX.length));
+  return Number.isSafeInteger(index) && index >= 0 ? index : undefined;
+}
+
+/** Slot id for the published canvas index: real asset, or a stable placeholder. */
+export function virtualLayoutPublishedId(
+  layout: Pick<VirtualBrowseLayout, "assetIdsByIndex">,
+  index: number,
+): string {
+  return layout.assetIdsByIndex.get(index) ?? geometryPlaceholderId(index);
+}
+
 function layoutEntryFromAsset(asset: AssetSummary): BrowseLayoutEntry {
   return {
     assetId: asset.assetId,

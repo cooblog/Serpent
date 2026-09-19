@@ -28,6 +28,7 @@ function makeActions(calls: RecordedCall[]): AssetCommandActions {
     view: record('view'),
     openExternal: record('openExternal'),
     revealInFolder: record('revealInFolder'),
+    showInLibraryFolder: record('showInLibraryFolder'),
     copyFiles: record('copyFiles'),
     pasteIntoFolder: record('pasteIntoFolder'),
     copyFilePath: record('copyFilePath'),
@@ -87,6 +88,7 @@ describe('可见性（与历史内联 JSX 条件一致）', () => {
       'asset.view',
       'asset.open-external',
       'asset.reveal-in-folder',
+      'asset.show-in-library-folder',
       'asset.move-to-folder',
       'asset.copy',
       'asset.paste',
@@ -105,6 +107,7 @@ describe('可见性（与历史内联 JSX 条件一致）', () => {
       'asset.view',
       'asset.open-external',
       'asset.reveal-in-folder',
+      'asset.show-in-library-folder',
       'asset.relink',
       'asset.copy',
       'asset.paste',
@@ -123,6 +126,7 @@ describe('可见性（与历史内联 JSX 条件一致）', () => {
       'asset.view',
       'asset.open-external',
       'asset.reveal-in-folder',
+      'asset.show-in-library-folder',
       'asset.copy',
       'asset.paste',
       'asset.copy-file-path',
@@ -139,6 +143,7 @@ describe('可见性（与历史内联 JSX 条件一致）', () => {
       'asset.view',
       'asset.open-external',
       'asset.reveal-in-folder',
+      'asset.show-in-library-folder',
       'asset.relink',
       'asset.copy',
       'asset.paste',
@@ -167,6 +172,7 @@ describe('可见性（与历史内联 JSX 条件一致）', () => {
       'asset.view',
       'asset.open-external',
       'asset.reveal-in-folder',
+      'asset.show-in-library-folder',
       'asset.remove-from-current-collection',
       'asset.move-to-folder',
       'asset.copy',
@@ -334,10 +340,20 @@ describe('标题与快捷键标签', () => {
     ).toBe('在文件浏览器中显示');
   });
 
+  it('show-in-library-folder 标题为「在所在文件夹中显示」', () => {
+    expect(
+      findItem(
+        registry.resolveMenu(makeCtx().ctx),
+        'asset.show-in-library-folder',
+      ).label,
+    ).toBe('在所在文件夹中显示');
+  });
+
   it('快捷键标签按平台解析，未声明快捷键的项为 null', () => {
     const mac = registry.resolveMenu(makeCtx({ platform: 'mac' }).ctx);
     expect(findItem(mac, 'asset.view').shortcutLabel).toBe('↵');
     expect(findItem(mac, 'asset.open-external').shortcutLabel).toBe('⌘O');
+    expect(findItem(mac, 'asset.show-in-library-folder').shortcutLabel).toBe('⌘B');
     expect(findItem(mac, 'asset.move-to-trash').shortcutLabel).toBe('⌘⌫');
     expect(findItem(mac, 'asset.copy-file-path').shortcutLabel).toBe('⌥⌘C');
 
@@ -346,6 +362,9 @@ describe('标题与快捷键标签', () => {
     );
     expect(findItem(windows, 'asset.open-external').shortcutLabel).toBe(
       'Ctrl+O',
+    );
+    expect(findItem(windows, 'asset.show-in-library-folder').shortcutLabel).toBe(
+      'Ctrl+B',
     );
     expect(findItem(windows, 'asset.move-to-trash').shortcutLabel).toBe(
       'Delete',
@@ -361,6 +380,7 @@ describe('run 委托到 actions 回调包', () => {
     ['asset.view', {}, 'view', ['asset-1']],
     ['asset.open-external', {}, 'openExternal', ['asset-1']],
     ['asset.reveal-in-folder', {}, 'revealInFolder', ['asset-1']],
+    ['asset.show-in-library-folder', {}, 'showInLibraryFolder', ['asset-1']],
     ['asset.copy', {}, 'copyFiles', [['asset-1']]],
     ['asset.paste', {}, 'pasteIntoFolder', ['folder-1']],
     ['asset.paste', { pasteTargetFolderId: null }, 'pasteIntoFolder', [null]],
@@ -428,13 +448,14 @@ describe('run 委托到 actions 回调包', () => {
 });
 
 describe('注册表完整性', () => {
-  it('16 条定义全部注册且 id 唯一（createCommandRegistry 未抛错）', () => {
+  it('17 条定义全部注册且 id 唯一（createCommandRegistry 未抛错）', () => {
     expect(registry.list().map((def) => def.id)).toEqual([
       'asset.restore',
       'asset.delete-permanent',
       'asset.view',
       'asset.open-external',
       'asset.reveal-in-folder',
+      'asset.show-in-library-folder',
       'asset.remove-from-current-collection',
       'asset.relink',
       'asset.move-to-folder',
@@ -453,6 +474,7 @@ describe('注册表完整性', () => {
     const { ctx } = makeCtx({ activeCollectionId: 'col-1' });
     const groups = registry.resolveMenu(ctx).map((item) => item.group);
     expect(groups).toEqual([
+      'open',
       'open',
       'open',
       'open',

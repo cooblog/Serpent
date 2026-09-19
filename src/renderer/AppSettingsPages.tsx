@@ -75,6 +75,7 @@ const FONT_SIZE_LABEL_KEYS: Record<FontSizePreference, string> = {
 
 type SettingsToggleRowProps = {
   checked: boolean;
+  disabled?: boolean;
   hint: string;
   label: string;
   onChange: () => void;
@@ -82,6 +83,7 @@ type SettingsToggleRowProps = {
 
 function SettingsToggleRow({
   checked,
+  disabled = false,
   hint,
   label,
   onChange,
@@ -95,6 +97,7 @@ function SettingsToggleRow({
       <Switch
         aria-label={label}
         checked={checked}
+        disabled={disabled}
         onCheckedChange={onChange}
       />
     </label>
@@ -255,11 +258,15 @@ function rememberedImportConflictEntries(
 }
 
 export function AssetsSettingsPage({
-  autoDetectImageSequences = true,
+  autoDetectImageSequences = false,
+  imageSequenceDetectionEnabled = true,
   onToggleAutoDetectImageSequences,
+  onToggleImageSequenceDetection,
 }: {
   autoDetectImageSequences?: boolean;
+  imageSequenceDetectionEnabled?: boolean;
   onToggleAutoDetectImageSequences?: () => void;
+  onToggleImageSequenceDetection?: () => void;
 } = {}): ReactNode {
   const t = useT();
   const [importConflictPreferences, setImportConflictPreferences] = useState(() =>
@@ -283,7 +290,25 @@ export function AssetsSettingsPage({
 
   return (
     <>
-      {onToggleAutoDetectImageSequences ? (
+      {onToggleImageSequenceDetection ? (
+        <SettingsCard>
+          <SettingsToggleRow
+            checked={imageSequenceDetectionEnabled}
+            hint={t("settings.imageSequenceDetectionHint")}
+            label={t("settings.imageSequenceDetection")}
+            onChange={onToggleImageSequenceDetection}
+          />
+          {onToggleAutoDetectImageSequences ? (
+            <SettingsToggleRow
+              checked={autoDetectImageSequences}
+              disabled={!imageSequenceDetectionEnabled}
+              hint={t("settings.imageSequenceAutoDetectHint")}
+              label={t("settings.imageSequenceAutoDetect")}
+              onChange={onToggleAutoDetectImageSequences}
+            />
+          ) : null}
+        </SettingsCard>
+      ) : onToggleAutoDetectImageSequences ? (
         <SettingsCard>
           <SettingsToggleRow
             checked={autoDetectImageSequences}

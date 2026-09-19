@@ -107,7 +107,7 @@ describe("resolveFolderShortcutAction (Serpent-vf8x)", () => {
     });
   });
 
-  it("rename/trash fall back to a single managed folder card", () => {
+  it("rename/trash fall back to managed folder cards", () => {
     expect(
       resolveFolderShortcutAction({
         commandId: "folder.rename",
@@ -123,6 +123,8 @@ describe("resolveFolderShortcutAction (Serpent-vf8x)", () => {
       currentName: "Beta",
     });
 
+    // 2026-09-19（Serpent-d7acfa）：多选文件夹卡片的回收站不再被忽略，
+    // 而是返回批量目标（旧行为是 none）。
     expect(
       resolveFolderShortcutAction({
         commandId: "folder.move-to-trash",
@@ -132,7 +134,7 @@ describe("resolveFolderShortcutAction (Serpent-vf8x)", () => {
         selectedAssetCount: 0,
         resolveManagedFolderName: resolveName,
       }),
-    ).toEqual({ type: "none" });
+    ).toEqual({ type: "trash-folders", folderIds: ["folder-a", "folder-b"] });
   });
 
   it("rename falls back to the open browse folder when focus was stolen", () => {
@@ -181,6 +183,49 @@ describe("resolveFolderShortcutAction (Serpent-vf8x)", () => {
         canRenameFolder: () => false,
       }),
     ).toEqual({ type: "none" });
+  });
+
+  // Serpent-d7acfa：多选文件夹卡片时，回收站 / 硬盘删除对全部选中项生效；
+  // 重命名仍然只对单个目标生效（不猜改哪个名字）。
+  it("targets every selected folder card for trash and disk delete", () => {
+    const base = {
+      focusedNav: null,
+      browseManagedFolderId: null,
+      selectedFolderCardIds: ["folder-a", "folder-b"],
+      selectedAssetCount: 0,
+      resolveManagedFolderName: resolveName,
+    } as const;
+    expect(
+      resolveFolderShortcutAction({ ...base, commandId: "folder.move-to-trash" }),
+    ).toEqual({ type: "trash-folders", folderIds: ["folder-a", "folder-b"] });
+    expect(
+      resolveFolderShortcutAction({ ...base, commandId: "folder.delete-from-disk" }),
+    ).toEqual({ type: "delete-folders", folderIds: ["folder-a", "folder-b"] });
+    // 单目标时保持旧行为（确认窗/提示能显示名字）
+    expect(
+      resolveFolderShortcutAction({
+        ...base,
+        commandId: "folder.move-to-trash",
+        selectedFolderCardIds: ["folder-a"],
+      }),
+    ).toEqual({ type: "move-to-trash", folderId: "folder-a", name: "Alpha" });
+    // 多选重命名不猜目标
+    expect(
+      resolveFolderShortcutAction({ ...base, commandId: "folder.rename" }),
+    ).toEqual({ type: "none" });
+  });
+
+  it("ignores unresolved folder card ids when batching", () => {
+    expect(
+      resolveFolderShortcutAction({
+        commandId: "folder.move-to-trash",
+        focusedNav: null,
+        browseManagedFolderId: null,
+        selectedFolderCardIds: ["folder-a", "ghost-folder"],
+        selectedAssetCount: 0,
+        resolveManagedFolderName: resolveName,
+      }),
+    ).toEqual({ type: "move-to-trash", folderId: "folder-a", name: "Alpha" });
   });
 });
 

@@ -39,6 +39,8 @@ function makeActions(calls: RecordedCall[]): AssetMultiCommandActions {
     aiAnalyze: record('aiAnalyze'),
     clearAiContent: record('clearAiContent'),
     clearSelection: record('clearSelection'),
+    setFolderAppearance: record('setFolderAppearance'),
+    ignoreSelection: record('ignoreSelection'),
   };
 }
 
@@ -68,6 +70,8 @@ function makeCtx(
     availableAssetIds: ['a-1', 'a-3'],
     aiPendingAssetIds: [],
     pasteTargetFolderId: 'folder-1',
+    appearanceFolderTargets: [],
+    ignoreFolderTargets: [],
     actions: makeActions(calls),
     ...overrides,
   };
@@ -100,6 +104,7 @@ describe('可见性（与历史内联 JSX 条件一致）', () => {
       'assets.copy',
       'assets.paste',
       'assets.move-to-folder',
+      'assets.ignore',
       'assets.assign-tag',
       'assets.remove-tag',
       'assets.ai-analyze',
@@ -108,6 +113,44 @@ describe('可见性（与历史内联 JSX 条件一致）', () => {
       'assets.delete-from-disk',
       'assets.clear-selection',
     ]);
+  });
+
+  // Serpent-d7acfa：多选里的文件夹「设置图标 / 忽略」只在真有可做的文件夹时可见，
+  // 计数与禁用原因由 folder-batch-actions 的资格判定驱动。
+  it('多选文件夹：有可设置图标的文件夹时显示带计数的设置图标项', () => {
+    const { ctx } = makeCtx({
+      appearanceFolderTargets: [
+        {
+          folderId: 'f-1',
+          kind: 'managed-folder',
+          name: 'Alpha',
+          relativePath: 'Alpha',
+          linkedRelativePath: null,
+        },
+      ],
+      ignoreFolderTargets: [
+        {
+          folderId: 'f-1',
+          kind: 'managed-folder',
+          name: 'Alpha',
+          relativePath: 'Alpha',
+          linkedRelativePath: null,
+        },
+      ],
+    });
+    const ids = resolveIds(ctx);
+    expect(ids).toContain('assets.appearance');
+    expect(ids).toContain('assets.ignore');
+    const appearance = registry.resolveMenu(ctx).find((item) => item.id === 'assets.appearance');
+    expect(appearance?.label).toBe('设置图标与颜色…（1 项）');
+    const ignore = registry.resolveMenu(ctx).find((item) => item.id === 'assets.ignore');
+    // 1 个可忽略文件夹 + 夹具里的 2 托管资产 + 1 链接资产
+    expect(ignore?.label).toBe('忽略（4 项）');
+  });
+
+  it('多选文件夹：只有链接子目录等不可设项时隐藏设置图标项', () => {
+    const { ctx } = makeCtx();
+    expect(resolveIds(ctx)).not.toContain('assets.appearance');
   });
 
   it('回收站分支（trashedAll）：仅恢复/永久删除/清除选择可见', () => {
@@ -370,7 +413,7 @@ describe('run 委托到 actions 回调包', () => {
 });
 
 describe('注册表完整性', () => {
-  it('12 条定义全部注册且 id 唯一（createCommandRegistry 未抛错）', () => {
+  it('14 条定义全部注册且 id 唯一（createCommandRegistry 未抛错）', () => {
     expect(registry.list().map((def) => def.id)).toEqual([
       'assets.restore',
       'assets.delete-permanent',
@@ -382,6 +425,8 @@ describe('注册表完整性', () => {
       'assets.copy',
       'assets.paste',
       'assets.move-to-folder',
+      'assets.appearance',
+      'assets.ignore',
       'assets.move-to-trash',
       'assets.delete-from-disk',
       'assets.clear-selection',
@@ -392,6 +437,7 @@ describe('注册表完整性', () => {
     const { ctx } = makeCtx();
     const groups = registry.resolveMenu(ctx).map((item) => item.group);
     expect(groups).toEqual([
+      'organize',
       'organize',
       'organize',
       'organize',

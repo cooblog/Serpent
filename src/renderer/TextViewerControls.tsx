@@ -11,7 +11,10 @@ import {
 import type { SerpentLibraryApi } from "../shared/library-api";
 import { TEXT_VIEWER_MAX_BYTES, countTextLines } from "../shared/text-media";
 import { LibraryOperationError, messageForPublicError, toMessage } from "./error-utils";
+import { Icon } from "./Icons";
+import { iconActionAttrs } from "./icon-action-attrs";
 import { useLocale, useT } from "./i18n";
+import { applyTextViewerTextareaLayout } from "./text-viewer-layout";
 import { invalidateTextAssetPreviewCache } from "./TextAssetPreviewTile";
 
 export type TextViewerControlsProps = {
@@ -33,6 +36,8 @@ export type TextViewerControlsHandle = {
  * Numbered text viewer/editor (Serpent-sh7). Content is loaded via capped Worker
  * IPC — never via unbounded serpent://source fetch.
  */
+let persistTextViewerWrap = true;
+
 export const TextViewerControls = forwardRef<
   TextViewerControlsHandle,
   TextViewerControlsProps
@@ -58,6 +63,7 @@ export const TextViewerControls = forwardRef<
   const [truncated, setTruncated] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [wrap, setWrap] = useState(persistTextViewerWrap);
   const [actionError, setActionError] = useState<string | null>(null);
   const onSavedRef = useRef(onSaved);
   const contentRef = useRef(content);
@@ -93,13 +99,8 @@ export const TextViewerControls = forwardRef<
   const resizeTextarea = useCallback(() => {
     const textarea = textareaRef.current;
     if (!textarea) return;
-    textarea.style.height = "0px";
-    textarea.style.height = `${textarea.scrollHeight}px`;
-    const layer = textarea.parentElement;
-    const minWidth = layer?.clientWidth ?? 0;
-    textarea.style.width = "0px";
-    textarea.style.width = `${Math.max(textarea.scrollWidth, minWidth)}px`;
-  }, []);
+    applyTextViewerTextareaLayout(textarea, wrap);
+  }, [wrap]);
 
   // Parent remounts with key=`${libraryId}:${assetId}` so loading starts true.
   useEffect(() => {
@@ -147,7 +148,19 @@ export const TextViewerControls = forwardRef<
 
   useEffect(() => {
     resizeTextarea();
-  }, [content, lineCount, loading, resizeTextarea]);
+  }, [content, lineCount, loading, wrap, resizeTextarea]);
+
+  useEffect(() => {
+    if (loading) return;
+    const textarea = textareaRef.current;
+    const stage = textarea?.closest(".preview-text-scroll");
+    if (!textarea || !(stage instanceof HTMLElement)) return;
+    const observer = new ResizeObserver(() => {
+      resizeTextarea();
+    });
+    observer.observe(stage);
+    return () => observer.disconnect();
+  }, [loading, resizeTextarea]);
 
   useEffect(() => {
     if (!loading) onPresentationReady?.();
@@ -274,27 +287,43 @@ export const TextViewerControls = forwardRef<
           ) : null}
         </div>
         <div className="preview-text-actions">
+          <button
+            aria-pressed={wrap}
+            className={`preview-text-action${wrap ? " is-active" : ""}`}
+            onClick={() => {
+              persistTextViewerWrap = !persistTextViewerWrap;
+              setWrap(persistTextViewerWrap);
+            }}
+            type="button"
+            {...iconActionAttrs(t("preview.textWrap"))}
+          >
+            <Icon name="wrap-text" size={14} />
+          </button>
           {editable ? (
             <button
-              className="preview-text-action-chip"
+              className="preview-text-action"
               disabled={!dirty || saving}
               onClick={() => void save({ createRevision: false })}
               type="button"
+              {...iconActionAttrs(
+                saving ? t("preview.textSaving") : t("preview.textSave"),
+              )}
             >
-              {saving ? t("preview.textSaving") : t("preview.textSave")}
+              <Icon name="save" size={14} />
             </button>
           ) : null}
           <button
-            className="preview-text-action-chip"
+            className="preview-text-action"
             onClick={() => void handleClose()}
             type="button"
+            {...iconActionAttrs(t("common.close"))}
           >
-            {t("common.close")}
+            <Icon name="close" size={14} />
           </button>
         </div>
       </div>
       <div className="preview-text-scroll">
-        <div className="preview-text-line-layer">
+        <div className={`preview-text-line-layer${wrap ? " is-wrap" : ""}`}>
           <pre aria-hidden="true" className="preview-text-gutter">
             {gutter}
           </pre>

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { shouldShowApplyToRest } from "../../src/renderer/image-sequence-import-dialog";
+import {
+  imageSequenceConfirmPrimaryKey,
+  imageSequenceConfirmSummaryKey,
+  imageSequenceConfirmTitleKey,
+  shouldShowApplyToRest,
+} from "../../src/renderer/image-sequence-import-dialog";
 import { en } from "../../src/renderer/i18n/catalogs/en";
 import { zhCN } from "../../src/renderer/i18n/catalogs/zh-CN";
 
@@ -24,5 +29,25 @@ describe("image sequence import dialog", () => {
     expect(zhCN.dialog.imageSequenceImport.importSequence).toBe("导入序列帧");
     expect(en.dialog.imageSequenceImport.importSelected).toBe("Import individual file");
     expect(en.dialog.imageSequenceImport.importSequence).toBe("Import image sequence");
+  });
+
+  it("reuses the import form with create copy for manual grouping", () => {
+    expect(imageSequenceConfirmTitleKey("create", true)).toBe(
+      "dialog.imageSequence.title",
+    );
+    expect(imageSequenceConfirmSummaryKey("create", false)).toBe(
+      "dialog.imageSequence.detail",
+    );
+    expect(imageSequenceConfirmPrimaryKey("create", true, false)).toBe(
+      "dialog.imageSequence.create",
+    );
+    expect(zhCN.dialog.imageSequence.detail).toContain("请确认范围与帧率");
+    expect(en.dialog.imageSequence.detail).toContain("Confirm the frame range");
+    expect(imageSequenceConfirmTitleKey("import", false)).toBe(
+      "dialog.imageSequenceImport.title",
+    );
+    expect(imageSequenceConfirmPrimaryKey("import", true, false)).toBe(
+      "dialog.imageSequenceImport.makeSequence",
+    );
   });
 });

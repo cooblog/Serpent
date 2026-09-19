@@ -188,6 +188,12 @@ import type { LibraryNavigationSummary } from '../shared/library-navigation';
 import { isLibraryRootFolderId } from '../shared/library-root-folder';
 import { BROWSE_SCOPE_MAX_ASSETS } from '../shared/browse-scope';
 import {
+  VIEWPORT_CLAIM_ID_LIMIT,
+  shouldFallbackViewportClaimToPersistentQueue,
+  uniqueAssetIdsInOrder,
+  viewportClaimRankOrderSql,
+} from '../shared/viewport-priority';
+import {
   createAutomationFilePlanHash,
   createAutomationImportPlanHash,
 } from '../shared/automation-file-plan';
@@ -715,6 +721,7 @@ import {
   VIDEO_EXTENSIONS,
   MODEL_EXTENSIONS,
   DOCUMENT_EXTENSIONS,
+  FONT_EXTENSIONS,
   directImageMimeForExtension,
   imageDecoderForExtension,
   imageViewerDecoderForExtension,
@@ -722,6 +729,8 @@ import {
   isSupportedImageExtension,
   isSupportedModelExtension,
   isSupportedDocumentExtension,
+  isSupportedFontExtension,
+  fontMimeForExtension,
   isSupportedVideoExtension,
   modelMimeForExtension,
   isRawImageExtension,
@@ -759,6 +768,17 @@ import {
 } from '../shared/model-thumbnail-protocol';
 import { DOCUMENT_THUMBNAIL_GENERATOR_VERSION } from '../shared/document-thumbnail-protocol';
 import {
+  DOCUMENT_THUMBNAIL_WIDTH,
+  FONT_THUMBNAIL_GENERATOR_VERSION,
+  FONT_THUMBNAIL_HEIGHT,
+} from '../shared/document-thumbnail-protocol';
+import type { FontMetadata } from '../shared/font-metadata';
+import {
+  fontMetadataToExtractedFields,
+  fontSampleQuerySuffix,
+  readFontMetadata,
+} from './font-file-metadata';
+import {
   COMMON_IMAGE_COLOR_SPACE_OPTIONS,
   colorSpaceInfoFromName,
   defaultImageColorSpace,
@@ -774,6 +794,7 @@ import {
   TEXT_VIEWER_MAX_BYTES,
   textMimeForExtension,
 } from '../shared/text-media';
+import { decodeTextBytes } from '../shared/text-encoding';
 import { canOverrideImageColorSpace } from '../shared/image-color-space';
 import { inferRelinkBatchRoot } from '../shared/infer-relink-batch-root';
 import {
@@ -2883,6 +2904,14 @@ const ENTITY_APPEARANCE_SCHEMA_CHECKSUM = createHash('sha256')
   .update(ENTITY_APPEARANCE_SCHEMA_SQL)
   .digest('hex');
 
+const PALETTE_SATURATION_SCHEMA_SQL = `
+  ALTER TABLE revision_artifacts ADD COLUMN dominant_saturation REAL
+    CHECK (dominant_saturation IS NULL OR (dominant_saturation >= 0 AND dominant_saturation <= 1));
+`;
+const PALETTE_SATURATION_SCHEMA_CHECKSUM = createHash('sha256')
+  .update(PALETTE_SATURATION_SCHEMA_SQL)
+  .digest('hex');
+
 const ENTITY_APPEARANCE_TABLES = [
   'managed_folders',
   'linked_folders',
@@ -3608,6 +3637,11 @@ export const MIGRATIONS = [
     version: 55,
     sql: ENTITY_APPEARANCE_SCHEMA_SQL,
     checksum: ENTITY_APPEARANCE_SCHEMA_CHECKSUM,
+  },
+  {
+    version: 56,
+    sql: PALETTE_SATURATION_SCHEMA_SQL,
+    checksum: PALETTE_SATURATION_SCHEMA_CHECKSUM,
   },
 ] as const;
 export const SUPPORTED_SCHEMA_VERSION = MIGRATIONS.at(-1)!.version;
@@ -4505,6 +4539,10 @@ class AsyncSemaphore {
 
   constructor(private readonly limit: number) {}
 
+  hasIdleCapacity(): boolean {
+    return this.active < this.limit;
+  }
+
   async run<T>(signal: AbortSignal | undefined, task: () => Promise<T>): Promise<T> {
     const release = await this.acquire(signal);
     try {
@@ -4581,6 +4619,12 @@ const interactiveSharpDecoderSemaphore = new AsyncSemaphore(MEDIA_INTERACTIVE_DE
 // a time is the intentional safety limit even on high-core machines.
 const ffmpegDecoderSemaphore = new AsyncSemaphore(1);
 const oiioDecoderSemaphore = new AsyncSemaphore(1);
+
+/** True when a visible/viewer Sharp job can start without aborting a running background decode. */
+export function hasIdleForegroundImageSlot(): boolean {
+  return interactiveSharpDecoderSemaphore.hasIdleCapacity()
+    && sharpNativeDecoderSemaphore.hasIdleCapacity();
+}
 
 type MediaDecodeLane = 'background' | 'interactive';
 
@@ -4798,6 +4842,9 @@ export interface LibraryServiceOptions {
     assetId: string;
     revisionId: string;
     url: string;
+    /** Capture viewport (px); height omitted → the document default. */
+    width: number;
+    height?: number;
     signal?: AbortSignal;
   }) => Promise<{ png: Uint8Array; width: number; height: number } | null>;
   /** Test-only override for deterministic SQLite writer-contention tests. */
@@ -6243,6 +6290,65 @@ function buildContextualSearchWhere(
  */
 export interface SchemaTooNewSignal {
   readonly libraryVersion: number;
+}
+
+/**
+ * Fill dominant_saturation for palettes extracted before v56. Greyscale
+ * sources stored hue=0; without saturation, a red filter would match them.
+ */
+function backfillDominantSaturation(
+  connection: DatabaseConnection,
+  artifactsDir: string,
+): void {
+  const columns = columnsFor(connection, 'revision_artifacts');
+  if (
+    !['artifact_id', 'file_path', 'kind', 'status', 'invalidated_at', 'dominant_saturation']
+      .every((column) => columns.has(column))
+  ) {
+    return;
+  }
+  const rows = connection.prepare(
+    `SELECT artifact_id, file_path, dominant_hue, dominant_lightness
+       FROM revision_artifacts
+      WHERE kind = 'extracted_palette'
+        AND status = 'ready'
+        AND invalidated_at IS NULL
+        AND dominant_saturation IS NULL`,
+  ).all() as Array<{
+    artifact_id: string;
+    file_path: string;
+    dominant_hue: number | null;
+    dominant_lightness: number | null;
+  }>;
+  if (rows.length === 0) return;
+  const update = connection.prepare(
+    `UPDATE revision_artifacts
+        SET dominant_saturation = ?, dominant_hue = ?, dominant_lightness = ?
+      WHERE artifact_id = ?`,
+  );
+  const apply = connection.transaction(() => {
+    for (const row of rows) {
+      let saturation = 0;
+      let hue = row.dominant_hue;
+      let lightness = row.dominant_lightness;
+      try {
+        const parsed = JSON.parse(
+          readFileSync(path.join(artifactsDir, row.file_path), 'utf8'),
+        ) as Array<{ hex?: string }>;
+        const hex = parsed[0]?.hex;
+        if (typeof hex === 'string') {
+          const metrics = dominantColorMetrics(hex);
+          saturation = metrics.saturation;
+          hue = metrics.hue;
+          lightness = metrics.lightness;
+        }
+      } catch {
+        saturation = 0;
+      }
+      update.run(saturation, hue, lightness, row.artifact_id);
+    }
+  });
+  apply();
 }
 
 function migrateDatabase(
@@ -17190,7 +17296,73 @@ export class LibraryService {
     frames.forEach((frame, position) => {
       insertFrame.run(sequenceId, frame.assetId, frame.frameNumber, position);
     });
+    this.cancelHiddenSequenceMemberMediaJobs(
+      openLibrary,
+      frames.slice(1).map((frame) => frame.assetId),
+    );
     return sequenceId;
+  }
+
+  /**
+   * Hidden sequence frames are not browse cards. Cancel leftover primary and
+   * palette jobs so they cannot occupy the background queue.
+   */
+  private cancelHiddenSequenceMemberMediaJobs(
+    openLibrary: OpenLibrary,
+    hiddenAssetIds: readonly string[],
+  ): void {
+    const uniqueIds = [...new Set(hiddenAssetIds.filter(Boolean))];
+    if (uniqueIds.length === 0) return;
+    const jobIds = sqliteAllInChunks<string, { job_id: string }>({
+      connection: openLibrary.connection,
+      values: uniqueIds,
+      buildSql: (placeholders) =>
+        `SELECT job_id
+           FROM jobs
+          WHERE library_id = ?
+            AND kind IN ('generate_thumbnail', 'extract_palette')
+            AND status IN ('queued', 'paused', 'running')
+            AND asset_id IN (${placeholders})`,
+      bind: (chunk) => [openLibrary.summary.libraryId, ...chunk],
+    }).map((row) => row.job_id);
+    if (jobIds.length === 0) return;
+    const now = new Date().toISOString();
+    sqliteRunInChunks({
+      connection: openLibrary.connection,
+      values: jobIds,
+      buildSql: (placeholders) =>
+        `UPDATE jobs
+            SET status = 'cancelled', error_code = 'SEQUENCE_MEMBER', updated_at = ?
+          WHERE library_id = ?
+            AND status IN ('queued', 'paused', 'running')
+            AND job_id IN (${placeholders})`,
+      bind: (chunk) => [now, openLibrary.summary.libraryId, ...chunk],
+    });
+    this.abortActiveMediaJobs(openLibrary.summary.libraryId, jobIds);
+    this.mediaJobSummaryCache.invalidate(openLibrary.summary.libraryId);
+  }
+
+  private cancelQueuedHiddenSequenceMemberJobs(openLibrary: OpenLibrary): void {
+    if (!hasTable(openLibrary.connection, 'asset_sequence_frames')) return;
+    const now = new Date().toISOString();
+    const result = openLibrary.connection
+      .prepare(
+        `UPDATE jobs
+            SET status = 'cancelled', error_code = 'SEQUENCE_MEMBER', updated_at = ?
+          WHERE library_id = ?
+            AND kind IN ('generate_thumbnail', 'extract_palette')
+            AND status IN ('queued', 'paused')
+            AND EXISTS (
+              SELECT 1
+                FROM asset_sequence_frames hidden_sequence_frame
+               WHERE hidden_sequence_frame.asset_id = jobs.asset_id
+                 AND hidden_sequence_frame.position > 0
+            )`,
+      )
+      .run(now, openLibrary.summary.libraryId);
+    if (result.changes > 0) {
+      this.mediaJobSummaryCache.invalidate(openLibrary.summary.libraryId);
+    }
   }
 
   private dissolveImageSequencesForAssets(
@@ -17875,6 +18047,7 @@ export class LibraryService {
       emitLinkedProgress('copy', 0, entries.length, 0, totalBytes, true);
       const now = new Date().toISOString();
       const sourceDeviceHintValue = sourceDeviceHint(rootStat.dev, rootStat.ino);
+      const importedAssetIds: string[] = [];
 
       openLibrary.connection.transaction(() => {
         openLibrary.connection
@@ -17944,6 +18117,7 @@ export class LibraryService {
           );
           setCurrentRevision.run(revisionId, now, assetId);
           this.syncAssetSearchContent(openLibrary.connection, assetId);
+          importedAssetIds.push(assetId);
           filesProcessed += 1;
           bytesProcessed += entry.byteSize;
           emitLinkedProgress(
@@ -17967,6 +18141,7 @@ export class LibraryService {
         totalBytes,
         true,
       );
+      this.createDetectedImageSequences(openLibrary, importedAssetIds);
       // Header probes stay on the visible-window / dimension-backfill lanes.
       // Watcher reconcile is optional here so the Worker RPC can return as soon
       // as the catalog is committed (GitHub #45): overlay and later commands
@@ -19485,6 +19660,35 @@ export class LibraryService {
       .prepare('SELECT asset_id FROM assets WHERE asset_id = ?')
       .get(input.assetId) as { asset_id: string } | undefined;
     if (!assetRow) throw new LibraryServiceError('ASSET_NOT_FOUND');
+
+    // Serpent-485aeb: fonts have no `extracted_metadata` artifact — the facts
+    // live in the font file's own `name`/`head`/`OS-2`/`maxp` tables, so they
+    // are read on demand (a header parse, not a full decode).
+    const absolutePath = this.resolveAssetPath(input.libraryId, input.assetId);
+    if (LibraryService.detectMediaType(absolutePath) === 'font') {
+      const fontMetadata = this.readAssetFontMetadata(absolutePath);
+      if (!fontMetadata) {
+        return {
+          assetId: input.assetId,
+          status: 'failed',
+          metadata: null,
+          metadataCompleteness: 'complete',
+          errorCode: 'FONT_METADATA_UNREADABLE',
+        };
+      }
+      // Run the partial font facts through the shared schema so the result has
+      // exactly the same shape as every other extracted-metadata payload.
+      const parsedFont = extractedVideoMetadataSchema.safeParse(
+        fontMetadataToExtractedFields(fontMetadata),
+      );
+      return {
+        assetId: input.assetId,
+        status: parsedFont.success ? 'ready' : 'failed',
+        metadata: parsedFont.success ? parsedFont.data : null,
+        metadataCompleteness: 'complete',
+        errorCode: parsedFont.success ? null : 'EXTRACTED_METADATA_INVALID',
+      };
+    }
 
     const artifact = this.getCurrentArtifact(
       input.libraryId,
@@ -21477,7 +21681,7 @@ export class LibraryService {
     // were cancelled by the claim-time guard) in the task panel.  The rows
     // stay in SQLite for diagnostics, but they are not actionable media work.
     const visibleJobFilter = `
-          AND (j.error_code IS NULL OR j.error_code <> 'ASSET_IGNORED')
+          AND (j.error_code IS NULL OR j.error_code NOT IN ('ASSET_IGNORED', 'SEQUENCE_MEMBER'))
           AND (j.asset_id IS NULL OR ${this.explicitIgnoreSql(openLibrary.connection, 'a')})`;
     const summaryToken = this.mediaJobSummaryToken(openLibrary);
     const tableCounts = JOB_SUMMARY_CACHE_ENABLED && this.hasMediaJobStatusCountsTable(openLibrary)
@@ -21499,7 +21703,7 @@ export class LibraryService {
           `SELECT status, COUNT(*) AS count FROM jobs
             LEFT JOIN assets a ON a.asset_id = jobs.asset_id
             WHERE jobs.library_id = ? AND jobs.kind IN (${kindPlaceholders})
-              AND (jobs.error_code IS NULL OR jobs.error_code <> 'ASSET_IGNORED')
+              AND (jobs.error_code IS NULL OR jobs.error_code NOT IN ('ASSET_IGNORED', 'SEQUENCE_MEMBER'))
               AND (jobs.asset_id IS NULL OR ${this.explicitIgnoreSql(openLibrary.connection, 'a')})
             GROUP BY status`,
         ).all(openLibrary.summary.libraryId, ...MEDIA_JOB_KINDS) as Array<{
@@ -22057,7 +22261,7 @@ export class LibraryService {
    * `model` covers the T1 3D set. FBX/OBJ/glTF/GLB/STL preview and thumbnails
    * are renderer-side (slices C/E). `.blend` classifies as `other`.
    */
-  static detectMediaType(filenameOrMime: string): 'image' | 'video' | 'audio' | 'text' | 'model' | 'document' | 'other' {
+  static detectMediaType(filenameOrMime: string): 'image' | 'video' | 'audio' | 'text' | 'model' | 'document' | 'font' | 'other' {
     const lower = filenameOrMime.toLowerCase();
     if (isSupportedImageExtension(lower)) {
       return 'image';
@@ -22077,6 +22281,10 @@ export class LibraryService {
     if (isSupportedDocumentExtension(lower)) {
       return 'document';
     }
+    // Serpent-485aeb: fonts get their own media type (card sample + viewer).
+    if (isSupportedFontExtension(lower)) {
+      return 'font';
+    }
     if (isTextFileName(lower)) {
       return 'text';
     }
@@ -22091,13 +22299,14 @@ export class LibraryService {
    */
   static toSummaryMediaType(
     detected: ReturnType<typeof LibraryService.detectMediaType>,
-  ): 'image' | 'video' | 'audio' | 'text' | 'model' | 'document' | 'other' {
+  ): 'image' | 'video' | 'audio' | 'text' | 'model' | 'document' | 'font' | 'other' {
     return detected === 'image' ||
       detected === 'video' ||
       detected === 'audio' ||
       detected === 'text' ||
       detected === 'model' ||
-      detected === 'document'
+      detected === 'document' ||
+      detected === 'font'
       ? detected
       : 'other';
   }
@@ -22210,6 +22419,30 @@ export class LibraryService {
         revisionId,
         execution,
         renderer,
+      );
+    }
+
+    // Serpent-485aeb: font cards show a real sample line. Main serves a small
+    // sample sheet for the font (`sample=font`) and the existing offscreen
+    // capture turns it into an artifact, so the Renderer never touches paths.
+    // The sheet's label follows the script the font actually covers, which the
+    // Worker reads from the font's own `name`/`cmap` tables.
+    if (mediaType === 'font') {
+      const renderer = this.options.documentThumbnailRenderer;
+      if (!renderer) return null;
+      const fontMetadata = this.readAssetFontMetadata(assetPath);
+      return this.generateHtmlThumbnail(
+        input,
+        openLibrary,
+        assetPath,
+        revisionId,
+        execution,
+        renderer,
+        {
+          sample: 'font',
+          generatorVersion: FONT_THUMBNAIL_GENERATOR_VERSION,
+          fontMetadata,
+        },
       );
     }
 
@@ -22748,6 +22981,15 @@ export class LibraryService {
    * artifact; a null render or a failed record keeps the card on the generic
    * file icon (never `failed` for a benign missing renderer).
    */
+  /**
+   * Serpent-485aeb: font metadata for an asset path, or null when the file is
+   * unreadable/not a font. Never throws: an unparsable font only costs the
+   * sample sheet its label.
+   */
+  private readAssetFontMetadata(assetPath: string): FontMetadata | null {
+    return readFontMetadata(assetPath);
+  }
+
   private async generateHtmlThumbnail(
     input: { libraryId: string; assetId: string },
     openLibrary: OpenLibrary,
@@ -22755,8 +22997,17 @@ export class LibraryService {
     revisionId: string,
     execution: MediaExecutionContext,
     renderer: NonNullable<LibraryServiceOptions['documentThumbnailRenderer']>,
+    options?: {
+      readonly sample?: 'font';
+      readonly generatorVersion?: string;
+      readonly fontMetadata?: FontMetadata | null;
+    },
   ): Promise<{ artifactId: string } | null> {
-    const url = `serpent://source/${encodeURIComponent(input.libraryId)}/${encodeURIComponent(input.assetId)}?revision=${encodeURIComponent(revisionId)}`;
+    const sampleQuery =
+      options?.sample === 'font'
+        ? `&sample=font${fontSampleQuerySuffix(options.fontMetadata ?? null)}`
+        : '';
+    const url = `serpent://source/${encodeURIComponent(input.libraryId)}/${encodeURIComponent(input.assetId)}?revision=${encodeURIComponent(revisionId)}${sampleQuery}`;
     if (execution.signal?.aborted) {
       throw new DOMException('Media job cancelled before HTML render.', 'AbortError');
     }
@@ -22765,6 +23016,9 @@ export class LibraryService {
       assetId: input.assetId,
       revisionId,
       url,
+      width: DOCUMENT_THUMBNAIL_WIDTH,
+      // 字体样张按 16:9 采集（用户反馈：卡片封面不要 4:3）。
+      ...(options?.sample === 'font' ? { height: FONT_THUMBNAIL_HEIGHT } : {}),
       signal: execution.signal,
     });
     if (!rendered) return null;
@@ -22810,7 +23064,7 @@ export class LibraryService {
         artifactRelPath,
         rendered.width || null,
         rendered.height || null,
-        DOCUMENT_THUMBNAIL_GENERATOR_VERSION,
+        options?.generatorVersion ?? DOCUMENT_THUMBNAIL_GENERATOR_VERSION,
         new Date().toISOString(),
       );
     return { artifactId };
@@ -25861,8 +26115,8 @@ export class LibraryService {
       openLibrary.connection.prepare(
         `INSERT INTO revision_artifacts
            (artifact_id, revision_id, kind, mime_type, byte_size, file_path,
-            generator_version, status, generated_at, dominant_hue, dominant_lightness)
-         VALUES (?, ?, 'extracted_palette', 'application/json', ?, ?, ?, 'ready', ?, ?, ?)`,
+            generator_version, status, generated_at, dominant_hue, dominant_lightness, dominant_saturation)
+         VALUES (?, ?, 'extracted_palette', 'application/json', ?, ?, ?, 'ready', ?, ?, ?, ?)`,
       ).run(
         artifactId,
         queuedRevisionId,
@@ -25872,6 +26126,7 @@ export class LibraryService {
         new Date().toISOString(),
         dominant.hue,
         dominant.lightness,
+        dominant.saturation,
       );
       return true;
     } catch (error) {
@@ -27889,7 +28144,7 @@ export class LibraryService {
     assetId: string,
     intent: 'viewer' | 'hover' | 'proxy-fallback' = 'viewer',
   ): {
-    mediaType: 'image' | 'video' | 'audio' | 'text' | 'model' | 'document' | 'other';
+    mediaType: 'image' | 'video' | 'audio' | 'text' | 'model' | 'document' | 'font' | 'other';
     status: 'ready' | 'pending' | 'failed' | 'missing';
     kind: 'thumbnail' | 'webm_proxy' | 'audio_proxy';
     artifactId?: string;
@@ -27975,6 +28230,22 @@ export class LibraryService {
         playbackMode: 'source',
         sourceRevisionId: asset.current_revision_id,
         sourceMimeType: documentMime,
+      };
+    }
+
+    // Serpent-485aeb: fonts open from the original source; the renderer loads
+    // them with @font-face and renders the sample text itself.
+    if (mediaType === 'font' && asset.current_revision_id) {
+      const fontMime = fontMimeForExtension(asset.relative_file_path)
+        ?? 'application/octet-stream';
+      return {
+        mediaType,
+        status: 'ready',
+        kind,
+        mimeType: fontMime,
+        playbackMode: 'source',
+        sourceRevisionId: asset.current_revision_id,
+        sourceMimeType: fontMime,
       };
     }
 
@@ -30118,6 +30389,9 @@ export class LibraryService {
         // 造成「生成成功→立即失效→重生成」的封面 churn。两者都应视为当前。
         return generatorVersion === DOCUMENT_THUMBNAIL_GENERATOR_VERSION
           || generatorVersion.startsWith('pdfjs@');
+      case 'font':
+        // Serpent-485aeb：字体样张由 offscreen 样张页生成，版本标签独立。
+        return generatorVersion === FONT_THUMBNAIL_GENERATOR_VERSION;
       default:
         return true;
     }
@@ -30350,6 +30624,7 @@ export class LibraryService {
     if (!columnsFor(openLibrary.connection, 'revision_artifacts').has('status')) {
       return 0;
     }
+    this.cancelQueuedHiddenSequenceMemberJobs(openLibrary);
     const artifactColumns = columnsFor(openLibrary.connection, 'revision_artifacts');
     const selectedIds = [...new Set(options.assetIds ?? [])].slice(0, 500);
     const limit = options.limit === undefined
@@ -30426,6 +30701,8 @@ export class LibraryService {
       ...AUDIO_EXTENSION_NAMES,
       ...MODEL_EXTENSIONS.map((extension) => extension.slice(1)),
       ...DOCUMENT_EXTENSIONS.map((extension) => extension.slice(1)),
+      // Serpent-485aeb: font cards render a real sample line offscreen in Main.
+      ...FONT_EXTENSIONS.map((extension) => extension.slice(1)),
     ];
     const videoExtensions = ['mp4', 'webm', 'mov', 'avi', 'wmv', 'mkv', 'm4v'];
     const nowInvalidate = new Date().toISOString();
@@ -30619,6 +30896,15 @@ export class LibraryService {
                WHERE loff.folder_id = a.linked_folder_id
                  AND loff.status = 'offline'
             )`;
+    const hiddenSequenceMemberSql = hasTable(openLibrary.connection, 'asset_sequence_frames')
+      ? `
+            AND NOT EXISTS (
+              SELECT 1
+                FROM asset_sequence_frames hidden_sequence_frame
+               WHERE hidden_sequence_frame.asset_id = a.asset_id
+                 AND hidden_sequence_frame.position > 0
+            )`
+      : '';
     const extensionSql = supportedExtensions
       .map(() => 'LOWER(a.relative_file_path) LIKE ?')
       .join(' OR ');
@@ -30664,6 +30950,7 @@ export class LibraryService {
             AND a.availability = 'available'
             ${selectedSql}
             ${notOfflineLinkedFolderSql}
+            ${hiddenSequenceMemberSql}
             AND (${extensionSql})
             AND NOT EXISTS (
               SELECT 1 FROM revision_artifacts ra
@@ -30930,7 +31217,11 @@ export class LibraryService {
        * keeps the original queue-wide scope; an array limits future claims.
        */
       claimAssetIdsRef?: { current: readonly string[] | undefined };
-      /** Serpent-4bdd26 收编：Restrict a visible-window pump to the latest viewport asset ids. */
+      /**
+       * Restrict a visible-window pump to the latest viewport asset ids.
+       * Background pumps omit this so overlay `IN (...)` can fall back to the
+       * persistent queue once those ids have no queued work.
+       */
       assetIds?: readonly string[];
       /** Serpent-4bdd26 收编：Stop claiming more jobs when a newer queue scene supersedes this pump. */
       signal?: AbortSignal;
@@ -31256,7 +31547,17 @@ export class LibraryService {
           AND COALESCE(jobs.error_code, '') = '${IMPORTED_THUMBNAIL_NORMALIZATION_JOB}'
         )`
       : '';
-    const nextJobQuery = (claimAssetIds: readonly string[] | undefined) => openLibrary.connection.prepare(
+    const hiddenSequenceClaimGuard = hasTable(openLibrary.connection, 'asset_sequence_frames')
+      ? `AND NOT EXISTS (
+            SELECT 1
+              FROM asset_sequence_frames hidden_sequence_frame
+             WHERE hidden_sequence_frame.asset_id = jobs.asset_id
+               AND hidden_sequence_frame.position > 0
+          )`
+      : '';
+    const nextJobQuery = (claimAssetIds: readonly string[] | undefined) => {
+      const rankOrder = viewportClaimRankOrderSql(claimAssetIds);
+      return openLibrary.connection.prepare(
       `SELECT job_id, asset_id, revision_id, kind, priority, attempt_count, error_code
          FROM jobs
         WHERE library_id = ?
@@ -31265,38 +31566,63 @@ export class LibraryService {
           ${buildAssetClause(claimAssetIds)}
           ${primaryPreviewClaimGuard}
           ${interactiveImportedNormalizationGuard}
+          ${hiddenSequenceClaimGuard}
           ${deferSecondaryAfterPrimarySql}
           AND (
             error_code IS NULL
             OR error_code NOT IN ('JOB_LEASE_LOST', '${MEDIA_RESOURCE_EXHAUSTED_ERROR_CODE}')
             OR updated_at <= ?
           )
-        ORDER BY ${interactiveImageFirstOrder}priority DESC, created_at
+        ORDER BY ${interactiveImageFirstOrder}${rankOrder.sql}priority DESC, created_at
         LIMIT 1`,
     );
+    };
     const normalizedClaimAssetIds = (assetIds: readonly string[] | undefined): string[] | undefined =>
-      assetIds === undefined ? undefined : [...new Set(assetIds)].slice(0, 100);
+      assetIds === undefined ? undefined : uniqueAssetIdsInOrder(assetIds, VIEWPORT_CLAIM_ID_LIMIT);
     const claimAssetIdsKey = (assetIds: readonly string[] | undefined): string | undefined =>
       assetIds === undefined ? undefined : [...assetIds].toSorted().join('\u0000');
-    let nextJobAssetIds = pumpAssetIds;
+    let nextJobAssetIds: readonly string[] | undefined = pumpAssetIds;
     let nextJobAssetKey = claimAssetIdsKey(nextJobAssetIds);
     let nextJob = nextJobQuery(nextJobAssetIds);
-    const claimNextJob = (): unknown => {
-      const requestedAssetIds = options.claimAssetIdsRef?.current ?? pumpAssetIds;
-      const currentAssetIds = normalizedClaimAssetIds(requestedAssetIds);
-      const currentAssetKey = claimAssetIdsKey(currentAssetIds);
-      if (currentAssetKey !== nextJobAssetKey) {
-        nextJobAssetIds = currentAssetIds;
-        nextJobAssetKey = currentAssetKey;
-        nextJob = nextJobQuery(nextJobAssetIds);
-      }
+    const executeClaimQuery = (): unknown => {
+      const rankOrder = viewportClaimRankOrderSql(nextJobAssetIds);
       return nextJob.get(
         libraryId,
         ...jobKinds,
         ...(nextJobAssetIds ?? []),
         ...(deferSecondaryAfterPrimarySql === '' ? [] : [waveStartedAtIso]),
         new Date(Date.now() - MEDIA_RESOURCE_RETRY_DELAY_MS).toISOString(),
+        ...rankOrder.params,
       );
+    };
+    const adoptClaimAssetIds = (assetIds: readonly string[] | undefined): void => {
+      nextJobAssetIds = assetIds;
+      nextJobAssetKey = claimAssetIdsKey(assetIds);
+      nextJob = nextJobQuery(nextJobAssetIds);
+    };
+    const claimNextJob = (): unknown => {
+      const requestedAssetIds = options.claimAssetIdsRef?.current ?? pumpAssetIds;
+      const currentAssetIds = normalizedClaimAssetIds(requestedAssetIds);
+      const currentAssetKey = claimAssetIdsKey(currentAssetIds);
+      if (currentAssetKey !== nextJobAssetKey) {
+        adoptClaimAssetIds(currentAssetIds);
+      }
+      const scoped = executeClaimQuery();
+      if (
+        scoped !== undefined
+        || !shouldFallbackViewportClaimToPersistentQueue({
+          interactive: options.interactive === true,
+          restrictedByAssetIds: options.assetIds !== undefined,
+          scopedClaimIds: nextJobAssetIds,
+        })
+      ) {
+        return scoped;
+      }
+      if (options.claimAssetIdsRef) {
+        options.claimAssetIdsRef.current = undefined;
+      }
+      adoptClaimAssetIds(undefined);
+      return executeClaimQuery();
     };
 
     let processed = 0;
@@ -35072,13 +35398,20 @@ export class LibraryService {
       });
     }
 
-    if (buffer.includes(0)) {
-      throw new LibraryServiceError('ASSET_CONTENT_INVALID');
-    }
-
     const truncated = buffer.length > maxBytes;
     const slice = truncated ? buffer.subarray(0, maxBytes) : buffer;
-    const content = slice.toString('utf8');
+    const decoded = decodeTextBytes(slice);
+    if (
+      decoded.binary
+      || (
+        slice.includes(0)
+        && decoded.encoding !== 'utf-16le'
+        && decoded.encoding !== 'utf-16be'
+      )
+    ) {
+      throw new LibraryServiceError('ASSET_CONTENT_INVALID');
+    }
+    const content = decoded.text;
     const extension = path.extname(row.relative_file_path).toLowerCase();
     const value = {
       assetId: row.asset_id,
@@ -37276,14 +37609,9 @@ export class LibraryService {
         if (assetRow) restoredAssets.push(this.assetSummaryFromRow(assetRow));
       }
 
-      this.createDetectedImageSequences(
-        openLibrary,
-        restoredAssets.map((asset) => asset.assetId),
-      );
-
       // Restore changes the library-wide Trash count even when the caller is
-      // browsing another scope. Publish only after the committed operation
-      // and sequence reconstruction have completed.
+      // browsing another scope. Sequence membership is already on the restored
+      // rows; disk reconcile must not invent a new sequence.
       if (restoredAssets.length > 0) {
         this.options.onAssetsChanged?.({
           type: 'asset.changed',
@@ -44620,7 +44948,6 @@ export class LibraryService {
     })();
     markStage('transaction');
     this.persistSourceImageDimensionsForAssets(openLibrary, discoveredAssetIds);
-    this.createDetectedImageSequences(openLibrary, discoveredAssetIds);
     this.reconcileLinkedWatchers(openLibrary);
     markStage('post-phases');
 
@@ -45202,6 +45529,10 @@ export class LibraryService {
     this.assertNetworkLinkedFoldersAvailable(
       input.connection,
       input.networkStorage === true,
+    );
+    backfillDominantSaturation(
+      input.connection,
+      path.join(input.canonicalPath, '.serpent', 'artifacts'),
     );
 
     const networkReadThrough = input.networkStorage

@@ -46,6 +46,7 @@ export type IconName =
   | "refresh"
   | "undo"
   | "rotate-cw"
+  | "save"
   | "flip-horizontal"
   | "flip-vertical"
   | "flip-horizontal-2"
@@ -66,7 +67,10 @@ export type IconName =
   | "upload"
   | "warning"
   | "vault"
-  | "equal-approximately";
+  | "equal-approximately"
+  | "type"
+  | "text-size"
+  | "wrap-text";
 
 const iconPaths: Record<IconName, ReactNode> = {
   activity: <path d="M22 12h-4l-3 9L9 3l-3 9H2" />,
@@ -377,6 +381,14 @@ const iconPaths: Record<IconName, ReactNode> = {
       <path d="M22 12h-2" />
     </>
   ),
+  // Lucide `save` (https://lucide.dev/icons/save).
+  save: (
+    <>
+      <path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" />
+      <path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7" />
+      <path d="M7 3v4a1 1 0 0 0 1 1h7" />
+    </>
+  ),
   search: (
     <>
       <circle cx="10.5" cy="10.5" r="6.5" />
@@ -482,6 +494,34 @@ const iconPaths: Record<IconName, ReactNode> = {
     <>
       <path d="M5 15a6.5 6.5 0 0 1 7 0 6.5 6.5 0 0 0 7 0" />
       <path d="M5 9a6.5 6.5 0 0 1 7 0 6.5 6.5 0 0 0 7 0" />
+    </>
+  ),
+  // Lucide `type` (https://lucide.dev/icons/type): the font viewer's preview
+  // text control (Serpent-485aeb — labels there are icons, not words).
+  type: (
+    <>
+      <path d="M4 7V4h16v3" />
+      <path d="M9 20h6" />
+      <path d="M12 4v16" />
+    </>
+  ),
+  // Lucide `case-sensitive` (https://lucide.dev/icons/case-sensitive): the
+  // preview size (font size) control.
+  "text-size": (
+    <>
+      <path d="m3 15 4-8 4 8" />
+      <path d="M4.5 12h5" />
+      <circle cx="16" cy="12.5" r="3.5" />
+      <path d="M19.5 9.5v6" />
+    </>
+  ),
+  // Lucide `wrap-text` (https://lucide.dev/icons/wrap-text).
+  "wrap-text": (
+    <>
+      <path d="M3 6h18" />
+      <path d="M3 12h15a3 3 0 1 1 0 6h-4" />
+      <path d="m16 16-2 2 2 2" />
+      <path d="M3 18h7" />
     </>
   ),
 };

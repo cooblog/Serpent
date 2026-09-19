@@ -66,4 +66,18 @@ describe("buildActiveFilterChips", () => {
       },
     ]);
   });
+
+  it("localizes the unrecognized format token in chip detail", () => {
+    const chips = buildActiveFilterChips(
+      { ...empty, formatFilter: "unknown" },
+      { unknownFormatLabel: "其他" },
+    );
+    expect(chips).toEqual([
+      {
+        id: "format",
+        labelKey: "filter.formatField",
+        detail: "其他",
+      },
+    ]);
+  });
 });

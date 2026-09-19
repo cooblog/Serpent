@@ -92,6 +92,7 @@ import {
   bindWindowMaximizedEvents,
   registerWindowControls,
 } from "./window-controls";
+import { sendToLiveWebContents } from "./web-contents-send";
 import {
   bindRendererKeyboardFocusLogger,
   ensureRendererKeyboardFocus,
@@ -306,6 +307,8 @@ import {
   readPendingCleanupAsidePaths,
   writePendingCleanupAsidePaths,
 } from "./pending-cleanup-store";
+import { resolvePendingImportFrame } from "./pending-import-frame";
+import { createFontSamplePage, resolveFontSampleRequest } from "./font-sample-page";
 import {
   readExternalLibraryStagingRoots,
   writeExternalLibraryStagingRoots,
@@ -1570,14 +1573,15 @@ async function createMainWindow(): Promise<void> {
   // macOS three-finger swipe (requires Trackpad → Swipe between pages).
   // Event is on BrowserWindow, not webContents.
   window.on("swipe", (_event, direction) => {
-    window.webContents.send(SHELL_SWIPE_CHANNEL, direction);
+    sendToLiveWebContents(window.webContents, SHELL_SWIPE_CHANNEL, direction);
   });
 
   const publishWindowFocus = () => {
+    if (window.isDestroyed()) return;
     if (window.isFocused()) {
       lastExtensionTargetWindowId = window.id;
     }
-    window.webContents.send(WINDOW_FOCUS_CHANNEL, {
+    sendToLiveWebContents(window.webContents, WINDOW_FOCUS_CHANNEL, {
       focused: window.isFocused(),
     });
   };
@@ -2676,6 +2680,9 @@ async function commandFor(
         folderId: request.folderId,
         recursive: request.recursive,
         showIgnored: request.showIgnored,
+        ...(request.assetIds && request.assetIds.length > 0
+          ? { assetIds: request.assetIds }
+          : {}),
       };
     case "asset.import-files.request": {
       const sourcePaths = await selectImportSources("files");
@@ -2688,7 +2695,8 @@ async function commandFor(
             sourcePaths,
             expandImageSequences:
               !app.isPackaged && process.env.SERPENT_E2E === "1",
-            ...(request.autoDetectImageSequences === false
+            ...(request.detectImageSequences === false ||
+            request.autoDetectImageSequences === false
               ? { createImageSequence: false }
               : {}),
             imageSequenceFps:
@@ -2707,7 +2715,8 @@ async function commandFor(
             targetFolderId: request.targetFolderId,
             sourceKind: "folder",
             sourcePaths,
-            ...(request.autoDetectImageSequences === false
+            ...(request.detectImageSequences === false ||
+            request.autoDetectImageSequences === false
               ? { createImageSequence: false }
               : {}),
           }
@@ -3589,6 +3598,29 @@ async function commandFor(
         type: "asset.thumbnail.visible-window",
         libraryId: request.libraryId,
         assetIds: request.assetIds,
+        ...(request.consumerId === undefined ? {} : { consumerId: request.consumerId }),
+        ...(request.libraryGeneration === undefined
+          ? {}
+          : { libraryGeneration: request.libraryGeneration }),
+        ...(request.interactionGeneration === undefined
+          ? {}
+          : { interactionGeneration: request.interactionGeneration }),
+        ...(request.viewportGeneration === undefined
+          ? {}
+          : { viewportGeneration: request.viewportGeneration }),
+        ...(request.direction === undefined ? {} : { direction: request.direction }),
+        ...(request.focusedAssetIds === undefined
+          ? {}
+          : { focusedAssetIds: request.focusedAssetIds }),
+        ...(request.nearForwardAssetIds === undefined
+          ? {}
+          : { nearForwardAssetIds: request.nearForwardAssetIds }),
+        ...(request.nearBackwardAssetIds === undefined
+          ? {}
+          : { nearBackwardAssetIds: request.nearBackwardAssetIds }),
+        ...(request.scopeWarmAssetIds === undefined
+          ? {}
+          : { scopeWarmAssetIds: request.scopeWarmAssetIds }),
       };
     case "sync.asset-card-status.request":
       return {
@@ -4563,47 +4595,15 @@ async function handleLibraryRequest(
         } satisfies RendererResult;
       }
       const e2eAutoExpand =
-        !app.isPackaged && process.env.SERPENT_E2E === "1";
+        !app.isPackaged &&
+        process.env.SERPENT_E2E === "1" &&
+        // Serpent-866c20：序列帧确认面板（含导入前预览）只能在确认流程里跑，
+        // 需要一条 E2E 保持真实交互，而不是被 E2E 自动展开吞掉。
+        process.env.SERPENT_E2E_SEQUENCE_PROMPT !== "1";
+      const disableSequenceCreate =
+        request.detectImageSequences === false ||
+        request.autoDetectImageSequences === false;
       if (
-        sourceKind === "files" &&
-        request.autoDetectImageSequences !== false &&
-        !request.imageSequenceDecision &&
-        !e2eAutoExpand
-      ) {
-        if (!workerClient) throw new Error("Library Worker is unavailable.");
-        const probeResult = await workerClient.request({
-          type: "asset.import.probe-sequences",
-          libraryId: request.libraryId,
-          targetFolderId: request.targetFolderId,
-          targetCollectionId: request.targetCollectionId,
-          sourcePaths: request.sourcePaths,
-        });
-        if (!probeResult.ok) {
-          return {
-            ok: false,
-            error: probeResult.error,
-          } satisfies RendererResult;
-        }
-        if (
-          probeResult.type === "asset.import.sequence-offer" &&
-          probeResult.offer.sequences.length > 0
-        ) {
-          return {
-            ok: true,
-            type: "asset.import.sequence-offer",
-            offer: rememberImageSequenceOffer(probeResult.offer),
-          } satisfies RendererResult;
-        }
-        command = {
-          type: "asset.import.prepare",
-          libraryId: request.libraryId,
-          targetFolderId: request.targetFolderId,
-          sourceKind,
-          sourcePaths: request.sourcePaths,
-          expandImageSequences: false,
-          createImageSequence: false,
-        };
-      } else if (
         sourceKind === "files" &&
         request.imageSequenceDecision?.action === "import-sequence"
       ) {
@@ -4675,10 +4675,7 @@ async function handleLibraryRequest(
           sourceKind,
           sourcePaths: request.sourcePaths,
           expandImageSequences: e2eAutoExpand && sourceKind === "files",
-          ...(request.autoDetectImageSequences === false ||
-          (sourceKind === "files" && !e2eAutoExpand)
-            ? { createImageSequence: false }
-            : {}),
+          ...(disableSequenceCreate ? { createImageSequence: false } : {}),
           imageSequenceFps: e2eAutoExpand ? 30 : undefined,
         };
       }
@@ -4871,7 +4868,7 @@ async function handleLibraryRequest(
       command.sourceKind === "files" &&
       command.expandImageSequences !== true &&
       (request.type === "asset.import-files.request"
-        ? request.autoDetectImageSequences !== false
+        ? false
         : true) &&
       request.type !== "asset.import-drop.request" &&
       request.type !== "asset.import-sequence.confirm" &&
@@ -7782,8 +7779,7 @@ async function startApplication(): Promise<void> {
       // requests in a pure browse profile; the first screen is warmed by the
       // browse response itself and anything else resolves on demand.
     }
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-    mainWindow.webContents.send(THUMBNAIL_CHANNEL, event);
+    sendToLiveWebContents(mainWindow?.webContents, THUMBNAIL_CHANNEL, event);
   });
 
   // Register serpent:// custom protocol for serving thumbnail/preview artifacts.
@@ -7814,13 +7810,75 @@ async function startApplication(): Promise<void> {
       if (
         url.hostname !== "preview" &&
         url.hostname !== "proxy" &&
-        url.hostname !== "source"
+        url.hostname !== "source" &&
+        url.hostname !== "import-frame"
       ) {
         logger?.info(
           "serpent-protocol.invalid-host",
           "Rejected unsupported artifact protocol host.",
         );
         return new Response("Invalid serpent:// path", { status: 400 });
+      }
+      // Serpent-866c20：序列帧确认面板要在导入前预览候选帧。Renderer 只拿到
+      // Main 自己发出的不透明 offerId 与帧号，真实路径由这里从候选清单解析——
+      // 请求里永远不出现磁盘路径。
+      if (url.hostname === "import-frame") {
+        const frameParts = url.pathname.replace(/^\/+/, "").split("/");
+        if (frameParts.length !== 3) {
+          return new Response("Invalid frame path", { status: 400 });
+        }
+        const [rawOfferId, rawSequenceIndex, rawFrameNumber] = frameParts as [
+          string,
+          string,
+          string,
+        ];
+        const sequenceIndex = Number(rawSequenceIndex);
+        const frameNumber = Number(rawFrameNumber);
+        if (
+          !/^[A-Za-z0-9-]{1,64}$/.test(rawOfferId) ||
+          !Number.isInteger(sequenceIndex) ||
+          sequenceIndex < 0 ||
+          !Number.isInteger(frameNumber) ||
+          frameNumber < 0
+        ) {
+          return new Response("Invalid frame request", { status: 400 });
+        }
+        const pending = pendingImageSequenceOffers.get(rawOfferId);
+        if (!pending || pending.expiresAt <= Date.now()) {
+          return new Response("Import offer expired", { status: 404 });
+        }
+        const pendingFrame = resolvePendingImportFrame({
+          sequences: pending.offer.sequences,
+          sequenceIndex,
+          frameNumber,
+        });
+        if (!pendingFrame) {
+          return new Response("Frame not found", { status: 404 });
+        }
+        if (isLibraryMediaReadBlocked(pending.offer.libraryId)) {
+          return new Response("Library unavailable", { status: 410 });
+        }
+        try {
+          return await createArtifactResponse(
+            pendingFrame.absolutePath,
+            pendingFrame.mimeType,
+            {
+              rangeHeader: request.headers.get("range"),
+              signal: request.signal,
+              onStreamError: (error) =>
+                logger?.error("serpent-protocol.import-frame-stream", error, {
+                  sequenceIndex,
+                  frameNumber,
+                }),
+            },
+          );
+        } catch (error) {
+          logger?.error("serpent-protocol.import-frame-read", error, {
+            sequenceIndex,
+            frameNumber,
+          });
+          return new Response("Frame unreadable", { status: 404 });
+        }
       }
       const parts = url.pathname.replace(/^\/+/, "").split("/");
       if (parts.length !== 2) {
@@ -7866,6 +7924,29 @@ async function startApplication(): Promise<void> {
           "Resolving a source asset request.",
           { libraryId, assetId: artifactId },
         );
+        // Serpent-485aeb：字体卡片样张页。字体卡片的封面由 Main 的离屏捕获
+        // 渲染成 512px 缩略图，因此这里按同一个 source URL + `sample=font`
+        // 返回一张生成的 HTML 样张页；页面里的 @font-face 指向去掉该参数的
+        // 原始 URL，与页面同源（同 scheme + 同 host），不需要给字体请求放开
+        // CORS。样张文字随字体语言切换（`lang`/`family` 由 Worker 解析字体
+        // 文件后带上），避免给纯拉丁字体套中文标签渲染成豆腐块。
+        if (url.searchParams.get("sample") === "font") {
+          const sample = resolveFontSampleRequest(url);
+          return new Response(
+            createFontSamplePage({
+              fontUrl: sample.fontUrl,
+              family: sample.family,
+              language: sample.language,
+            }),
+            {
+              headers: {
+                "cache-control": "no-store",
+                "content-type": "text/html; charset=utf-8",
+                "x-content-type-options": "nosniff",
+              },
+            },
+          );
+        }
         const revisionId = url.searchParams.get("revision");
         if (!revisionId || !/^[A-Za-z0-9_-]{1,255}$/.test(revisionId)) {
           logger?.info(

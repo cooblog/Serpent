@@ -12,10 +12,12 @@ import {
   MODEL_EXTENSIONS,
   VIDEO_EXTENSIONS,
   DOCUMENT_EXTENSIONS,
+  FONT_EXTENSIONS,
 } from "../../src/shared/media-formats";
 import {
   FORMAT_FILTER_GROUPS,
   FORMAT_TEXT_TOKEN,
+  FORMAT_UNKNOWN_TOKEN,
   OTHER_FORMAT_EXTENSIONS,
 } from "../../src/renderer/format-filter-presets";
 
@@ -39,10 +41,21 @@ describe("format-filter-presets", () => {
       ...DOCUMENT_EXTENSIONS.map((extension) => extension.slice(1)).filter(
         (extension) => !otherFormatSet.has(extension),
       ),
+      // Serpent-485aeb: fonts have their own group, no longer 其他.
+      ...FONT_EXTENSIONS.map((extension) => extension.slice(1)),
       ...OTHER_FORMAT_EXTENSIONS,
     ];
     expect(new Set(chips)).toEqual(new Set(expected));
     expect(chips.length).toBe(new Set(chips).size);
+  });
+
+  it("keeps the font group aligned with the font registry", () => {
+    const fontGroup = FORMAT_FILTER_GROUPS.find(
+      (group) => group.labelKey === "filter.formatGroupFont",
+    );
+    expect(fontGroup?.extensions).toEqual(
+      FONT_EXTENSIONS.map((extension) => extension.slice(1)),
+    );
   });
 
   it("emits dotless tokens matching the comma-field format", () => {
@@ -74,11 +87,13 @@ describe("format-filter-presets", () => {
     expect(allChipTokens()).not.toContain(FORMAT_TEXT_TOKEN);
   });
 
-  it("keeps HTML, HDF, and HTM in the other-format group", () => {
+  it("keeps HTML, HDF, and HTM in the miscellaneous-format group", () => {
     const documentGroup = FORMAT_FILTER_GROUPS.find(
       (group) => group.labelKey === "filter.formatGroupDocument",
     );
     expect(documentGroup?.extensions).toEqual(["pdf"]);
     expect(OTHER_FORMAT_EXTENSIONS).toEqual(["html", "hdf", "htm"]);
+    expect(FORMAT_UNKNOWN_TOKEN).toBe("unknown");
+    expect(allChipTokens()).not.toContain(FORMAT_UNKNOWN_TOKEN);
   });
 });

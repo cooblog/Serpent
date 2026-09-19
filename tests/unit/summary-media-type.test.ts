@@ -44,4 +44,26 @@ describe("LibraryService.toSummaryMediaType (Serpent-671)", () => {
     expect(LibraryService.detectMediaType("project.blend")).toBe("other");
     expect(LibraryService.detectMediaType("readme.obj.txt")).toBe("text");
   });
+
+  // Serpent-485aeb：字体不再落到 other，也不再和纯文本抢分类。
+  it("classifies font formats as font", () => {
+    for (const filename of [
+      "Inter.ttf",
+      "SourceHanSans.OTF",
+      "webfont.woff",
+      "webfont.WOFF2",
+      "collection.ttc",
+    ]) {
+      expect(LibraryService.detectMediaType(filename)).toBe("font");
+      expect(
+        LibraryService.toSummaryMediaType(
+          LibraryService.detectMediaType(filename),
+        ),
+      ).toBe("font");
+    }
+    expect(LibraryService.toSummaryMediaType("font")).toBe("font");
+    // 未知/相邻扩展名不受影响
+    expect(LibraryService.detectMediaType("font.eot")).toBe("other");
+    expect(LibraryService.detectMediaType("font.pfb")).toBe("other");
+  });
 });

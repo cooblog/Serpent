@@ -16,6 +16,7 @@ export type ArtifactMediaType =
   | 'text'
   | 'model'
   | 'document'
+  | 'font'
   | 'other';
 
 export type ArtifactJobKind =
@@ -133,7 +134,7 @@ export function artifactRoleForJob(
   switch (jobKind) {
     case 'generate_thumbnail':
       return mediaType === 'video' ? 'video-poster' : [
-        'image', 'audio', 'model', 'document',
+        'image', 'audio', 'model', 'document', 'font',
       ].includes(mediaType)
         ? 'card-thumbnail'
         : null;
@@ -166,7 +167,7 @@ export function artifactKindForJob(
   switch (jobKind) {
     case 'generate_thumbnail':
       return mediaType === 'video' ? 'video_poster' : [
-        'image', 'audio', 'model', 'document',
+        'image', 'audio', 'model', 'document', 'font',
       ].includes(mediaType)
         ? 'thumbnail'
         : null;
@@ -302,6 +303,17 @@ export function artifactPolicyForMediaType(mediaType: ArtifactMediaType): Artifa
         primaryArtifactKind: 'thumbnail',
         sourceMode: 'direct',
         paletteEligible: true,
+      };
+    case 'font':
+      // Serpent-485aeb: the card sample is produced offscreen (like documents);
+      // the viewer reads the source font directly.
+      return {
+        mediaType,
+        primaryRole: 'card-thumbnail',
+        primaryJobKind: 'generate_thumbnail',
+        primaryArtifactKind: 'thumbnail',
+        sourceMode: 'direct',
+        paletteEligible: false,
       };
     case 'text':
       return {

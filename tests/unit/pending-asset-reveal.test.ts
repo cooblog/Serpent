@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { AssetSummary } from '../../src/shared/asset-types';
 import { encodeLinkedVirtualFolderId } from '../../src/shared/linked-folder-tree';
 import {
+  browseScopeForAsset,
   currentScopeShowsRevealAssets,
   pendingRevealFromAssets,
   presentIdsFromPendingReveal,
@@ -128,6 +129,12 @@ describe('pending asset reveal helpers', () => {
     expect(currentScopeShowsRevealAssets('folder-1', assets)).toBe(true);
     expect(currentScopeShowsRevealAssets('root', assets)).toBe(false);
     expect(currentScopeShowsRevealAssets('folder-2', assets)).toBe(false);
+  });
+
+  it('resolves a containing folder even when all-assets currently shows the card', () => {
+    const item = asset({ assetId: 'a', managedFolderId: 'folder-1' });
+    expect(browseScopeForAsset(item)).toBe('folder-1');
+    expect(currentScopeShowsRevealAssets('all', [item])).toBe(true);
   });
 
   it('filters pending ids to assets currently in the list', () => {

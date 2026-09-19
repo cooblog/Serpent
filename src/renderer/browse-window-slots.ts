@@ -1,7 +1,10 @@
 /** Serpent-sa65: page math and real-summary merging for virtualized browse. */
 
 import type { AssetSummary, BrowseLayoutEntry } from "../shared/asset-types";
-import { isGeometryPlaceholder } from "./browse/virtual-browse-layout";
+import {
+  geometryPlaceholderIndex,
+  isGeometryPlaceholder,
+} from "./browse/virtual-browse-layout";
 
 export function browsePageOffset(
   index: number,
@@ -9,6 +12,16 @@ export function browsePageOffset(
 ): number {
   if (index <= 0 || pageSize <= 0) return 0;
   return Math.floor(index / pageSize) * pageSize;
+}
+
+/** Map a published canvas slot id to its session index, including placeholders. */
+export function browseRankFromPublishedId(
+  id: string,
+  rankById: ReadonlyMap<string, number>,
+): number | undefined {
+  const ranked = rankById.get(id);
+  if (ranked !== undefined) return ranked;
+  return geometryPlaceholderIndex(id);
 }
 
 /** Group missing page offsets into runs that can be fetched in one request. */

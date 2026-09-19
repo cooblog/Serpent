@@ -11,6 +11,7 @@ import {
 } from "react";
 
 import type { AssetSummary } from "../shared/asset-types";
+import { thumbnailEventConcernsAsset } from "./thumbnail-completion-projection";
 import type {
   PreviewResolution,
   SerpentLibraryApi,
@@ -40,6 +41,7 @@ import { AudioPlayerControls } from "./AudioPlayerControls";
 import { TextViewerControls, type TextViewerControlsHandle } from "./TextViewerControls";
 import { PdfViewerSurface } from "./PdfViewerSurface";
 import { HtmlViewerSurface } from "./HtmlViewerSurface";
+import { FontViewerSurface } from "./FontViewerSurface";
 import { useViewerVolume } from "./use-viewer-volume";
 import { ZoomableImage } from "./zoomable-preview-image";
 import { useViewerChromeContrast } from "./use-viewer-chrome-contrast";
@@ -57,7 +59,10 @@ import {
 } from "./viewer-display-transform";
 import { PluginViewerActionButtons } from "./plugin-viewer-actions";
 import { PluginViewerOverlays } from "./plugin-viewer-overlays";
-import { ProxyPlaybackNotice } from "./ProxyPlaybackNotice";
+import {
+  ProxyPlaybackNotice,
+  shouldShowProxyPlaybackNotice,
+} from "./ProxyPlaybackNotice";
 import { shouldCopyAssetOnShortcut } from "./viewer-copy-shortcut";
 import {
   ViewerSessionController,
@@ -237,8 +242,8 @@ const AssetPreviewModalContent = forwardRef<
   const [selectedExrPlane, setSelectedExrPlane] = useState(0);
   const [selectedColorSpace, setSelectedColorSpace] = useState<string | undefined>();
   const [directApproved, setDirectApproved] = useState(false);
-  const [proxyNoticeAvailable, setProxyNoticeAvailable] = useState(false);
   const [proxyNoticeVisible, setProxyNoticeVisible] = useState(false);
+  const proxyNoticeDismissedRef = useRef(false);
   // Serpent-e56a1f: 代理回退的可见状态。生成中/加载中显示普通状态提示
   // （非警告），只有生成失败才显示警告。
   const [proxyFallbackState, setProxyFallbackState] = useState<
@@ -413,7 +418,7 @@ const AssetPreviewModalContent = forwardRef<
     directApprovedRef.current = false;
     directGateIdentityRef.current = null;
     setDirectApproved(false);
-    setProxyNoticeAvailable(false);
+    proxyNoticeDismissedRef.current = false;
     setProxyNoticeVisible(false);
     setProxyFallbackState("idle");
     setManualRetryError(null);
@@ -561,7 +566,10 @@ const AssetPreviewModalContent = forwardRef<
   useEffect(
     () =>
       api.onThumbnailEvent((event) => {
-        if (event.libraryId === libraryId && event.assetId === asset.assetId) {
+        if (
+          event.libraryId === libraryId
+          && thumbnailEventConcernsAsset(event, asset.assetId)
+        ) {
           void resolvePreview(true);
         }
       }),
@@ -1070,9 +1078,11 @@ const AssetPreviewModalContent = forwardRef<
                 }
                 if (
                   resolution?.mediaType === "video" &&
-                  resolution.playbackMode === "proxy"
+                  shouldShowProxyPlaybackNotice({
+                    playbackMode: resolution.playbackMode,
+                    dismissed: proxyNoticeDismissedRef.current,
+                  })
                 ) {
-                  setProxyNoticeAvailable(true);
                   setProxyNoticeVisible(true);
                 }
               }}
@@ -1133,6 +1143,18 @@ const AssetPreviewModalContent = forwardRef<
               onInfoNotice={onInfoNotice}
               onPresentationReady={notifyPresentationReady}
               preloadOnly={preloadOnly}
+              sourceUrl={resolution.url}
+            />
+          ) : ready && resolution?.mediaType === "font" && resolution.url ? (
+            // Serpent-485aeb: glyphs render in the Renderer with a FontFace;
+            // preview text/size are view-only and never written back.
+            <FontViewerSurface
+              api={api}
+              assetId={asset.assetId}
+              isFullscreen={isFullscreen}
+              key={`${libraryId}:${asset.assetId}`}
+              libraryId={libraryId}
+              onPresentationReady={notifyPresentationReady}
               sourceUrl={resolution.url}
             />
           ) : ready && resolution?.mediaType === "document" && resolution.url ? (
@@ -1258,11 +1280,12 @@ const AssetPreviewModalContent = forwardRef<
               </span>
             </div>
           ) : null}
-          {proxyNoticeAvailable ? (
+          {proxyNoticeVisible ? (
             <ProxyPlaybackNotice
-              visible={proxyNoticeVisible}
-              onHide={() => setProxyNoticeVisible(false)}
-              onShow={() => setProxyNoticeVisible(true)}
+              onHide={() => {
+                proxyNoticeDismissedRef.current = true;
+                setProxyNoticeVisible(false);
+              }}
             />
           ) : null}
           {viewerError && ready && (

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   MAX_VISIBLE_WINDOW_ASSETS,
   normalizeVisibleWindowAssetIds,
+  preserveVisibleWindowAssetIds,
   visibleWindowReportKey,
 } from '../../src/renderer/visible-window';
 
@@ -25,5 +26,13 @@ describe('visible-window reporting', () => {
       .toBe(visibleWindowReportKey('library-1', ['asset-a', 'asset-b']));
     expect(visibleWindowReportKey('library-1', ['asset-a']))
       .not.toBe(visibleWindowReportKey('library-2', ['asset-a']));
+  });
+
+  it('preserves visual order instead of sorting for Worker scheduling', () => {
+    expect(preserveVisibleWindowAssetIds(['b', 'a', 'c', 'a'])).toEqual([
+      'b',
+      'a',
+      'c',
+    ]);
   });
 });

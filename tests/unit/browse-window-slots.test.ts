@@ -10,6 +10,7 @@ import {
   nextUnfilledBrowsePageOffset,
   resolveBrowseCanvasLayout,
   assetSummaryFromLayoutEntry,
+  browseRankFromPublishedId,
   virtualSlotAsset,
 } from "../../src/renderer/browse-window-slots";
 
@@ -180,5 +181,16 @@ describe("browse window virtualization (Serpent-sa65)", () => {
     );
     expect(layout.map((entry) => entry.assetId)).toEqual(["a", "b", "c"]);
     expect(layout[0]?.width).toBe(8);
+  });
+
+  it("maps published placeholder ids to session ranks when compact layout is only the loaded prefix", () => {
+    const rankById = new Map([
+      ["first", 0],
+      ["second", 1],
+    ]);
+    expect(browseRankFromPublishedId("first", rankById)).toBe(0);
+    expect(browseRankFromPublishedId("__geometry__:150", rankById)).toBe(150);
+    expect(browseRankFromPublishedId("missing", rankById)).toBeUndefined();
+    expect(browseRankFromPublishedId("__geometry__:-1", rankById)).toBeUndefined();
   });
 });

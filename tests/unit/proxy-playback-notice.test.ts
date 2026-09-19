@@ -3,8 +3,34 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ProxyPlaybackNotice } from "../../src/renderer/ProxyPlaybackNotice";
+import {
+  ProxyPlaybackNotice,
+  shouldShowProxyPlaybackNotice,
+} from "../../src/renderer/ProxyPlaybackNotice";
 import { LocaleProvider } from "../../src/renderer/i18n";
+
+describe("shouldShowProxyPlaybackNotice", () => {
+  it("shows once for proxy playback and stays hidden after dismiss", () => {
+    expect(
+      shouldShowProxyPlaybackNotice({
+        playbackMode: "proxy",
+        dismissed: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldShowProxyPlaybackNotice({
+        playbackMode: "proxy",
+        dismissed: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldShowProxyPlaybackNotice({
+        playbackMode: "source",
+        dismissed: false,
+      }),
+    ).toBe(false);
+  });
+});
 
 describe("ProxyPlaybackNotice", () => {
   let root: Root | undefined;
@@ -17,9 +43,8 @@ describe("ProxyPlaybackNotice", () => {
     container = undefined;
   });
 
-  it("can be hidden and restored without losing the explanation", async () => {
+  it("hides without leaving a restore control", async () => {
     const onHide = vi.fn();
-    const onShow = vi.fn();
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -29,11 +54,7 @@ describe("ProxyPlaybackNotice", () => {
         createElement(
           LocaleProvider,
           null,
-          createElement(ProxyPlaybackNotice, {
-            visible: true,
-            onHide,
-            onShow,
-          }),
+          createElement(ProxyPlaybackNotice, { onHide }),
         ),
       );
     });
@@ -41,27 +62,10 @@ describe("ProxyPlaybackNotice", () => {
     expect(container.textContent).toContain(
       "The original video could not play; the proxy video is playing.",
     );
+    expect(container.textContent).not.toContain("Show proxy notice");
     const hide = container.querySelector<HTMLButtonElement>("button");
     expect(hide).toBeDefined();
     await act(async () => hide?.click());
     expect(onHide).toHaveBeenCalledTimes(1);
-
-    await act(async () => {
-      root?.render(
-        createElement(
-          LocaleProvider,
-          null,
-          createElement(ProxyPlaybackNotice, {
-            visible: false,
-            onHide,
-            onShow,
-          }),
-        ),
-      );
-    });
-    const restore = container.querySelector<HTMLButtonElement>("button");
-    expect(restore?.textContent).toContain("proxy");
-    await act(async () => restore?.click());
-    expect(onShow).toHaveBeenCalledTimes(1);
   });
 });

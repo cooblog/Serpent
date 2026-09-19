@@ -17,6 +17,7 @@ const MIME_BY_MEDIA_TYPE: Record<AssetSummary["mediaType"], string> = {
   text: "text/*",
   model: "model/*",
   document: "application/pdf",
+  font: "font/ttf",
   other: "application/octet-stream",
 };
 

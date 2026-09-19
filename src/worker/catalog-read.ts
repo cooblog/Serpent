@@ -2,8 +2,12 @@ import path from 'node:path';
 
 import type { AssetSummary, BrowseLayoutEntry, FilterClause, SearchScope, SortDefinition } from '../shared/asset-types';
 import { parseLinkedVirtualFolderId } from '../shared/linked-folder-tree';
-import { colorFilterSql, parseColorFilterIds } from '../shared/color-filter-presets';
-import { expandFormatFilterTokens } from '../shared/text-media';
+import { colorFilterSql, parseColorFilterValues } from '../shared/color-filter-presets';
+import { knownProductFormatExtensionsDotless } from '../shared/product-format-extensions';
+import {
+  expandFormatFilterTokens,
+  formatFilterHasUnknownToken,
+} from '../shared/text-media';
 import { IMAGE_EXTENSIONS, VIDEO_EXTENSIONS } from '../shared/media-formats';
 import { isSourceDirectPreview } from '../shared/preview-policy';
 import {
@@ -286,12 +290,22 @@ export function buildCatalogFilterWhere(
     switch (filter.field) {
       case 'format': {
         const formatValues = expandFormatFilterTokens(filter.values);
-        if (formatValues.length === 0) break;
-        const likes = formatValues.map(() => 'LOWER(a.relative_file_path) LIKE ?');
-        conditions.push(filter.exclude
-          ? `NOT (${likes.join(' OR ')})`
-          : `(${likes.join(' OR ')})`);
-        for (const value of formatValues) params.push(`%.${value.toLowerCase()}`);
+        const wantsUnknown = formatFilterHasUnknownToken(filter.values);
+        if (formatValues.length === 0 && !wantsUnknown) break;
+        const parts: string[] = [];
+        if (formatValues.length > 0) {
+          const likes = formatValues.map(() => 'LOWER(a.relative_file_path) LIKE ?');
+          parts.push(`(${likes.join(' OR ')})`);
+          for (const value of formatValues) params.push(`%.${value.toLowerCase()}`);
+        }
+        if (wantsUnknown) {
+          const known = knownProductFormatExtensionsDotless();
+          const knownLikes = known.map(() => 'LOWER(a.relative_file_path) LIKE ?');
+          parts.push(`NOT (${knownLikes.join(' OR ')})`);
+          for (const value of known) params.push(`%.${value}`);
+        }
+        const combined = parts.join(' OR ');
+        conditions.push(filter.exclude ? `NOT (${combined})` : `(${combined})`);
         break;
       }
       case 'tag': {
@@ -347,8 +361,16 @@ export function buildCatalogFilterWhere(
         break;
       }
       case 'color': {
-        const ids = parseColorFilterIds(filter.values.join(','));
-        const built = colorFilterSql('palette_meta.dominant_hue', ids, filter.exclude);
+        const values = parseColorFilterValues(filter.values.join(','));
+        const built = colorFilterSql({
+          hueColumn: 'palette_meta.dominant_hue',
+          saturationColumn: 'palette_meta.dominant_saturation',
+          lightnessColumn: 'palette_meta.dominant_lightness',
+          values,
+          exclude: filter.exclude,
+          similarity: filter.similarity,
+          swatches: filter.swatches,
+        });
         if (!built) {
           conditions.push('1 = 0');
           break;
@@ -686,7 +708,7 @@ export interface CatalogAssetSummaryRow {
   trashed_from_tombstone_id?: string | null;
   thumbnail_status?: 'ready' | 'pending' | 'failed' | null;
   thumbnail_artifact_id?: string | null;
-  media_type?: 'image' | 'video' | 'audio' | 'text' | 'model' | 'document' | 'other' | null;
+  media_type?: 'image' | 'video' | 'audio' | 'text' | 'model' | 'document' | 'font' | 'other' | null;
   artifact_width?: number | null;
   artifact_height?: number | null;
   artifact_duration_ms?: number | null;
@@ -758,7 +780,7 @@ export interface CatalogLayoutRow {
 
 export function catalogBrowseLayoutEntryFromRow(
   row: CatalogLayoutRow,
-  mediaType: 'image' | 'video' | 'audio' | 'text' | 'model' | 'document' | 'other',
+  mediaType: 'image' | 'video' | 'audio' | 'text' | 'model' | 'document' | 'font' | 'other',
 ): BrowseLayoutEntry {
   const width = row.layout_width ?? null;
   const height = row.layout_height ?? null;

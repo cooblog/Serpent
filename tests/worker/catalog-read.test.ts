@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import type { AssetSummary } from '../../src/shared/asset-types';
 import { encodeLinkedVirtualFolderId } from '../../src/shared/linked-folder-tree';
-import { TEXT_EXTENSIONS } from '../../src/shared/text-media';
+import { TEXT_EXTENSIONS, FORMAT_UNKNOWN_TOKEN } from '../../src/shared/text-media';
+import { knownProductFormatExtensionsDotless } from '../../src/shared/product-format-extensions';
 import {
   buildCatalogAssetVisibilityPredicates,
   buildCatalogCollectionScope,
@@ -137,6 +138,19 @@ describe('shared pure catalog reads', () => {
       ...TEXT_EXTENSIONS.map((extension) => `%.${extension.slice(1)}`),
       'warm', 'warm', 'soft', 'soft',
     ]);
+  });
+
+  it('matches unrecognized extensions for the unknown format token', () => {
+    const result = buildCatalogFilterWhere([
+      { field: 'format', values: [FORMAT_UNKNOWN_TOKEN], exclude: false },
+    ]);
+    const known = knownProductFormatExtensionsDotless();
+    expect(result.sql).toContain('NOT (');
+    expect(result.params).toEqual(known.map((extension) => `%.${extension}`));
+    expect(result.params).toContain('%.png');
+    expect(result.params).toContain('%.pdf');
+    expect(result.params).not.toContain('%.hdf');
+    expect(result.sql.match(/\?/g)).toHaveLength(result.params.length);
   });
 
   it('keeps resolution buckets to pixel media (Serpent-b1b0f2)', () => {

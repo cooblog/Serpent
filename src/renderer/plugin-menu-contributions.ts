@@ -183,6 +183,7 @@ const KNOWN_HOST_MENU_ANCHORS = new Set([
   "host.asset.open-with",
   "asset.open-external",
   "asset.reveal-in-folder",
+  "asset.show-in-library-folder",
   "folder.open-in-file-manager",
   "asset.remove-from-current-collection",
   "asset.relink",

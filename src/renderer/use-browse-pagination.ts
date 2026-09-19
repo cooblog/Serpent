@@ -337,6 +337,25 @@ export function isIgnorableBrowseWindowFailure(code: string | undefined): boolea
   return code === "CANCELLED";
 }
 
+/**
+ * A stale/missing BrowseSession must not freeze the canvas on the first
+ * window of 100. Later pages continue through the live search query for the
+ * same definition (offset/limit/filters/scope).
+ */
+export function browseWindowQueryMode(input: {
+  sessionId?: string;
+  sessionUnusable?: boolean;
+}): "session" | "live" {
+  if (input.sessionId && input.sessionUnusable !== true) return "session";
+  return "live";
+}
+
+export function isBrowseSessionPageUnusable(
+  result: { ok: boolean; value?: { stale?: boolean } },
+): boolean {
+  return result.ok === true && result.value?.stale === true;
+}
+
 export function useBrowsePagination(
   args: UseBrowsePaginationArgs,
 ): UseBrowsePaginationResult {
@@ -515,21 +534,15 @@ export function useBrowsePagination(
       }
       setLoadingMore(true);
       try {
-        const result = definition.sessionId
-            ? await api.fetchBrowseSessionPage({
+        const fetchLivePage = () =>
+          definition.kind === "smart-collection"
+            ? api.executeSmartCollection({
                 libraryId: definition.libraryId,
-                sessionId: definition.sessionId,
+                collectionId: definition.collectionId,
                 limit,
                 offset,
               })
-            : definition.kind === "smart-collection"
-              ? await api.executeSmartCollection({
-                  libraryId: definition.libraryId,
-                  collectionId: definition.collectionId,
-                  limit,
-                  offset,
-                })
-            : await api.searchAssets({
+            : api.searchAssets({
                 libraryId: definition.libraryId,
                 query: definition.query,
                 filters: definition.filters ?? undefined,
@@ -539,6 +552,25 @@ export function useBrowsePagination(
                 limit,
                 offset,
               });
+        let result =
+          browseWindowQueryMode({ sessionId: definition.sessionId }) === "session"
+            && definition.sessionId
+            ? await api.fetchBrowseSessionPage({
+                libraryId: definition.libraryId,
+                sessionId: definition.sessionId,
+                limit,
+                offset,
+              })
+            : await fetchLivePage();
+        if (isBrowseSessionPageUnusable(result)) {
+          // Background catalog writes (sequence frames, ignore paths, AI rows)
+          // bump browse_change_sequence and mark the snapshot stale. Stopping
+          // here froze All Assets / large folders on the first window of 100.
+          if (definitionRef.current) {
+            definitionRef.current = { ...definitionRef.current, sessionId: undefined };
+          }
+          result = await fetchLivePage();
+        }
         if (browseDiagnosticsEnabled) {
           window.dispatchEvent(new CustomEvent("serpent:e2e-browse-result", {
             detail: {
@@ -558,8 +590,7 @@ export function useBrowsePagination(
           onLoadMoreFailed?.();
           return;
         }
-        if ('stale' in result.value) {
-          setHasMorePages(false);
+        if ("stale" in result.value) {
           return;
         }
         const page = result.value as {

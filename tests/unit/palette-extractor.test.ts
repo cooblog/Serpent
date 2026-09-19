@@ -41,8 +41,21 @@ describe('extractRepresentativePalette', () => {
   });
 
   it('derives stable dominant hue and lightness for indexed colour sorting', () => {
-    expect(dominantColorMetrics('#FF0000')).toEqual({ hue: 0, lightness: 0.5 });
-    expect(dominantColorMetrics('#00FF00')).toEqual({ hue: 120, lightness: 0.5 });
-    expect(dominantColorMetrics('#0000FF')).toEqual({ hue: 240, lightness: 0.5 });
+    expect(dominantColorMetrics('#FF0000')).toEqual({
+      hue: 0,
+      saturation: 1,
+      lightness: 0.5,
+    });
+    expect(dominantColorMetrics('#00FF00')).toEqual({
+      hue: 120,
+      saturation: 1,
+      lightness: 0.5,
+    });
+    expect(dominantColorMetrics('#0000FF')).toEqual({
+      hue: 240,
+      saturation: 1,
+      lightness: 0.5,
+    });
+    expect(dominantColorMetrics('#808080').saturation).toBe(0);
   });
 });

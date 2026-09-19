@@ -18,6 +18,8 @@ export interface AssetCommandActions {
   readonly view: (assetId: string) => void;
   readonly openExternal: (assetId: string) => void;
   readonly revealInFolder: (assetId: string) => void;
+  /** Jump the browse canvas to the asset's library folder. */
+  readonly showInLibraryFolder: (assetId: string) => void;
   /** OS file clipboard (Finder/Explorer interoperable). */
   readonly copyFiles: (assetIds: string[]) => void;
   /** Paste OS clipboard into a managed folder (reuse folder.paste). */
@@ -137,6 +139,18 @@ export const assetCommandDefinitions: readonly AssetCommandDefinition[] = [
     visible: (ctx) => !ctx.assetDeleted,
     disabledReason: unavailableReason,
     run: (ctx) => withPrimaryAsset(ctx, (id) => ctx.actions.revealInFolder(id)),
+  },
+  {
+    id: 'asset.show-in-library-folder',
+    title: (ctx) => t(ctx, 'command.asset.showInLibraryFolder'),
+    group: 'open',
+    shortcut: {
+      mac: { label: '⌘B', key: 'b', metaKey: true },
+      windows: { label: 'Ctrl+B', key: 'b', ctrlKey: true },
+    },
+    visible: (ctx) => !ctx.assetDeleted,
+    run: (ctx) =>
+      withPrimaryAsset(ctx, (id) => ctx.actions.showInLibraryFolder(id)),
   },
   // ---- 组织 ----
   {

@@ -200,7 +200,7 @@ export const assetSummarySchema = z.strictObject({
   /** Card may use the bounded original source while no artifact is ready. */
   previewKind: z.enum(['source']).nullable().optional(),
   previewRevisionId: nonBlankString.nullable().optional(),
-  mediaType: z.enum(['image', 'video', 'audio', 'text', 'model', 'document', 'other']),
+  mediaType: z.enum(['image', 'video', 'audio', 'text', 'model', 'document', 'font', 'other']),
   width: z.number().int().positive().nullable(),
   height: z.number().int().positive().nullable(),
   durationMs: z.number().int().nonnegative().nullable().optional().default(null),
@@ -231,7 +231,7 @@ export const browseLayoutEntrySchema = z.strictObject({
    * Without it a synthesized slot would have to guess `other` and change the
    * card's appearance once the summary landed.
    */
-  mediaType: z.enum(['image', 'video', 'audio', 'text', 'model', 'document', 'other']).optional(),
+  mediaType: z.enum(['image', 'video', 'audio', 'text', 'model', 'document', 'font', 'other']).optional(),
 });
 
 export type BrowseLayoutEntry = z.infer<typeof browseLayoutEntrySchema>;
@@ -361,6 +361,43 @@ export const extractedVideoMetadataSchema = z.strictObject({
   meteringMode: probeNumericSchema.optional().default(null),
   flash: probeNumericSchema.optional().default(null),
   focalLength: probeNumericSchema.optional().default(null),
+  /**
+   * Serpent-485aeb: font facts read from the font file itself (`name`, `head`,
+   * `OS/2`, `maxp`). Only present for `font` assets; the Worker derives them on
+   * demand instead of persisting an `extracted_metadata` artifact.
+   */
+  fontFamily: z.string().nullable().optional(),
+  fontSubfamily: z.string().nullable().optional(),
+  fontFullName: z.string().nullable().optional(),
+  fontVersion: z.string().nullable().optional(),
+  fontManufacturer: z.string().nullable().optional(),
+  fontCopyright: z.string().nullable().optional(),
+  fontWeightClass: z.number().int().positive().nullable().optional(),
+  fontWidthClass: z.number().int().positive().nullable().optional(),
+  fontIsBold: z.boolean().optional(),
+  fontIsItalic: z.boolean().optional(),
+  fontUnitsPerEm: z.number().int().positive().nullable().optional(),
+  fontGlyphCount: z.number().int().nonnegative().nullable().optional(),
+  /**
+   * Single language we are willing to assert for the sample/cover; null when the
+   * file's own evidence is inconclusive (CJK fonts often declare several).
+   */
+  fontLanguage: z
+    .enum(['ja', 'zh-Hans', 'zh-Hant', 'ko', 'latin'])
+    .nullable()
+    .optional(),
+  /** CJK languages the file declares via OS/2 `ulCodePageRange` (may be several). */
+  fontLanguages: z.array(z.enum(['ja', 'zh-Hans', 'zh-Hant', 'ko'])).optional(),
+  /**
+   * Weights a variable font actually offers (`fvar` `wght` axis / named
+   * instances). Null/absent for static fonts — the viewer must not offer a
+   * fake 100–900 list for a single-weight file (Serpent-485aeb feedback).
+   */
+  fontVariableWeights: z
+    .array(z.number().finite().positive())
+    .nullable()
+    .optional(),
+  fontCoversLatin: z.boolean().optional(),
 });
 
 export type ExtractedVideoMetadata = z.infer<typeof extractedVideoMetadataSchema>;
@@ -393,6 +430,10 @@ export const sortDefinitionSchema = z.strictObject({
 
 export type SortDefinition = z.infer<typeof sortDefinitionSchema>;
 
+/** Tag / rating / color chips stay small; format can select every product extension. */
+export const CATEGORICAL_FILTER_VALUES_MAX = 32;
+export const FORMAT_FILTER_VALUES_MAX = 256;
+
 const categoricalFilterClauseSchema = z.strictObject({
   field: z.enum([
     'format',
@@ -403,10 +444,27 @@ const categoricalFilterClauseSchema = z.strictObject({
     'availability',
     'color',
   ]),
-  values: z.array(boundedSearchValue).max(32),
+  values: z.array(boundedSearchValue).max(FORMAT_FILTER_VALUES_MAX),
   exclude: z.boolean(),
   /** Include AI-derived values alongside human-authored values (default on). */
   includeAi: z.boolean().optional(),
+  /**
+   * Color filter only: 0–100 similarity. Higher is a tighter HSL box.
+   * Ignored for non-color clauses.
+   */
+  similarity: z.number().int().min(0).max(100).optional(),
+  /**
+   * Color filter only: preset-id → hex overlay for customized standard chips.
+   */
+  swatches: z.record(z.string().min(1).max(32), z.string().regex(/^#[0-9A-Fa-f]{6}$/u)).optional(),
+}).superRefine((filter, context) => {
+  if (filter.field === 'format') return;
+  if (filter.values.length <= CATEGORICAL_FILTER_VALUES_MAX) return;
+  context.addIssue({
+    code: 'custom',
+    path: ['values'],
+    message: `At most ${CATEGORICAL_FILTER_VALUES_MAX} values.`,
+  });
 });
 
 const numericRangeSchema = z.strictObject({

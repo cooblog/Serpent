@@ -1,4 +1,5 @@
 import { mkdtempSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -9,6 +10,14 @@ import {
   LibraryService,
   LibraryServiceError,
 } from "../../src/worker/library-service";
+
+const require = createRequire(import.meta.url);
+const TestDatabase = require("better-sqlite3") as new (filename: string) => {
+  close(): void;
+  prepare(source: string): {
+    all(...parameters: unknown[]): unknown[];
+  };
+};
 
 const roots: string[] = [];
 const services: LibraryService[] = [];
@@ -351,6 +360,55 @@ describe("image sequence persistence", () => {
     expect(restored[0]!.sequence?.frameCount).toBe(3);
   });
 
+  it("does not regroup dissolved frames when restoring them from trash", () => {
+    const { library, root, service } = fixture();
+    const frames = writeFrames(path.join(root, "source"), [
+      "clip_001.png",
+      "clip_002.png",
+      "clip_003.png",
+    ]);
+    const completion = service.prepareOrExecuteImport({
+      libraryId: library.libraryId,
+      sourceKind: "files",
+      sourcePaths: frames,
+      expandImageSequences: false,
+      imageSequenceFps: 30,
+    });
+    expect("importId" in completion).toBe(false);
+    if ("importId" in completion) return;
+    const [primary] = service.listAssets({
+      libraryId: library.libraryId,
+      recursive: true,
+    });
+    expect(primary?.sequence?.frameCount).toBe(3);
+    service.dissolveImageSequence({
+      libraryId: library.libraryId,
+      sequenceId: primary!.sequence!.sequenceId,
+    });
+    const singles = service.listAssets({
+      libraryId: library.libraryId,
+      recursive: true,
+    });
+    expect(singles).toHaveLength(3);
+
+    service.trashAssets({
+      libraryId: library.libraryId,
+      assetIds: singles.map((asset) => asset.assetId),
+    });
+    const trash = service.listTrash(library.libraryId);
+    expect(trash).toHaveLength(3);
+    service.restoreAssets({
+      libraryId: library.libraryId,
+      assetIds: trash.map((asset) => asset.assetId),
+    });
+
+    const restored = service
+      .listAssets({ libraryId: library.libraryId, recursive: true })
+      .filter((asset) => !asset.deletedAt);
+    expect(restored).toHaveLength(3);
+    expect(restored.every((asset) => asset.sequence == null)).toBe(true);
+  });
+
   it("splits folder-import gaps into separate visible sequence cards", () => {
     const { library, root, service } = fixture();
     const source = path.join(root, "source");
@@ -379,19 +437,14 @@ describe("image sequence persistence", () => {
     )).toEqual([[1, 2, 3], [5, 6, 7]]);
   });
 
-  it("groups linked frames that arrive across separate refreshes", () => {
+  it("groups linked frames that already exist when the folder is imported", () => {
     const { library, root, service } = fixture();
     const linkedRoot = path.join(root, "linked-sequence");
-    mkdirSync(linkedRoot, { recursive: true });
+    writeFrames(linkedRoot, ["capture_0.png", "capture_1.png", "capture_2.png"]);
     service.importFolderAsLinked({
       libraryId: library.libraryId,
       sourceRootPath: linkedRoot,
     });
-
-    for (let frame = 0; frame < 3; frame += 1) {
-      writeFrames(linkedRoot, [`capture_${frame}.png`]);
-      service.refreshManagedAssets(library.libraryId);
-    }
 
     const assets = service.listAssets({
       libraryId: library.libraryId,
@@ -400,6 +453,154 @@ describe("image sequence persistence", () => {
     expect(assets).toHaveLength(1);
     expect(assets[0]!.sequence?.frames.map((frame) => frame.frameNumber))
       .toEqual([0, 1, 2]);
+  });
+
+  it("does not auto-group linked frames that arrive after import", () => {
+    const { library, root, service } = fixture();
+    const linkedRoot = path.join(root, "linked-later");
+    mkdirSync(linkedRoot, { recursive: true });
+    service.importFolderAsLinked({
+      libraryId: library.libraryId,
+      sourceRootPath: linkedRoot,
+    });
+
+    writeFrames(linkedRoot, ["capture_0.png", "capture_1.png", "capture_2.png"]);
+    service.refreshManagedAssets(library.libraryId);
+
+    const afterRefresh = service.listAssets({
+      libraryId: library.libraryId,
+      recursive: true,
+    });
+    expect(afterRefresh).toHaveLength(3);
+    expect(afterRefresh.every((asset) => asset.sequence == null)).toBe(true);
+
+    const primary = service.createImageSequence({
+      libraryId: library.libraryId,
+      assetIds: afterRefresh.map((asset) => asset.assetId),
+      fps: 30,
+    });
+    expect(primary.sequence?.frameCount).toBe(3);
+  });
+
+  function importedThenDissolvedLinkedSequence(
+    folderName: string,
+    frames: readonly string[],
+  ) {
+    const { library, root, service } = fixture();
+    const linkedRoot = path.join(root, folderName);
+    writeFrames(linkedRoot, frames);
+    service.importFolderAsLinked({
+      libraryId: library.libraryId,
+      sourceRootPath: linkedRoot,
+    });
+    const grouped = service.listAssets({
+      libraryId: library.libraryId,
+      recursive: true,
+    });
+    expect(grouped).toHaveLength(1);
+    service.dissolveImageSequence({
+      libraryId: library.libraryId,
+      sequenceId: grouped[0]!.sequence!.sequenceId,
+    });
+    expect(service.listAssets({
+      libraryId: library.libraryId,
+      recursive: true,
+    })).toHaveLength(frames.length);
+    return { library, linkedRoot, service };
+  }
+
+  it("does not regroup dissolved frames when a linked folder later gains a file", () => {
+    const { library, linkedRoot, service } = importedThenDissolvedLinkedSequence(
+      "linked-sequence",
+      ["capture_0.png", "capture_1.png", "capture_2.png"],
+    );
+
+    writeFrames(linkedRoot, ["sidecar.png"]);
+    service.refreshManagedAssets(library.libraryId);
+
+    const after = service.listAssets({
+      libraryId: library.libraryId,
+      recursive: true,
+    });
+    expect(after).toHaveLength(4);
+    expect(after.every((asset) => asset.sequence == null)).toBe(true);
+  });
+
+  it("does not regroup dissolved frames after a disk content refresh", async () => {
+    const { library, root, service } = fixture();
+    const linkedRoot = path.join(root, "linked-content");
+    await writePngFrames(
+      linkedRoot,
+      ["clip_0.png", "clip_1.png", "clip_2.png"],
+      { height: 2, width: 2 },
+    );
+    service.importFolderAsLinked({
+      libraryId: library.libraryId,
+      sourceRootPath: linkedRoot,
+    });
+
+    const grouped = service.listAssets({
+      libraryId: library.libraryId,
+      recursive: true,
+    });
+    expect(grouped).toHaveLength(1);
+    service.dissolveImageSequence({
+      libraryId: library.libraryId,
+      sequenceId: grouped[0]!.sequence!.sequenceId,
+    });
+
+    await sharp({
+      create: {
+        background: { b: 8, g: 16, r: 240 },
+        channels: 3,
+        height: 2,
+        width: 2,
+      },
+    })
+      .png()
+      .toFile(path.join(linkedRoot, "clip_0.png"));
+    service.refreshManagedAssets(library.libraryId);
+
+    const after = service.listAssets({
+      libraryId: library.libraryId,
+      recursive: true,
+    });
+    expect(after).toHaveLength(3);
+    expect(after.every((asset) => asset.sequence == null)).toBe(true);
+  });
+
+  it("does not auto-group a new numbered run that appears after import", () => {
+    const { library, linkedRoot, service } = importedThenDissolvedLinkedSequence(
+      "linked-new-run",
+      ["capture_0.png", "capture_1.png", "capture_2.png"],
+    );
+
+    writeFrames(linkedRoot, ["other_0.png", "other_1.png", "other_2.png"]);
+    service.refreshManagedAssets(library.libraryId);
+
+    const after = service.listAssets({
+      libraryId: library.libraryId,
+      recursive: true,
+    });
+    expect(after).toHaveLength(6);
+    expect(after.every((asset) => asset.sequence == null)).toBe(true);
+  });
+
+  it("does not auto-group managed files discovered by a later refresh", () => {
+    const { library, service } = fixture();
+    writeFrames(path.join(library.libraryPath, "Assets"), [
+      "shot_0.png",
+      "shot_1.png",
+      "shot_2.png",
+    ]);
+    service.refreshManagedAssets(library.libraryId);
+
+    const assets = service.listAssets({
+      libraryId: library.libraryId,
+      recursive: true,
+    });
+    expect(assets).toHaveLength(3);
+    expect(assets.every((asset) => asset.sequence == null)).toBe(true);
   });
 
   it("creates and dissolves a manual sequence with a chosen fps", async () => {
@@ -715,5 +916,96 @@ describe("image sequence persistence", () => {
       caught = error;
     }
     expect(caught).toMatchObject({ code: "ASSET_STATE_CONFLICT" });
+  });
+
+  it("does not keep thumbnail jobs for hidden sequence frames", () => {
+    const { library, root, service } = fixture();
+    const source = path.join(root, "seq-thumbs");
+    mkdirSync(source, { recursive: true });
+    const requiredPng = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAACAEAAAABCAIAAAAqtLKbAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAOklEQVRYhe3YQQ0AAAgDMeRMImInBh+kySno8yZbESBAgAABAgQIECBAgAABAgQIECBAgAABAnk3zA9mXOIiDxU7WQAAAABJRU5ErkJggg==",
+      "base64",
+    );
+    for (const [index, name] of ["clip_001.png", "clip_002.png", "clip_003.png"].entries()) {
+      writeFileSync(path.join(source, name), Buffer.concat([requiredPng, Buffer.from([index])]));
+    }
+    const completion = service.prepareOrExecuteImport({
+      createImageSequence: false,
+      expandImageSequences: false,
+      libraryId: library.libraryId,
+      sourceKind: "folder",
+      sourcePaths: [source],
+    });
+    expect("importId" in completion).toBe(false);
+    const before = service.listAssets({ libraryId: library.libraryId, recursive: true });
+    expect(before).toHaveLength(3);
+    expect(service.enqueueThumbnailJobs(library.libraryId, {
+      assetIds: before.map((asset) => asset.assetId),
+    })).toBe(3);
+
+    const primary = service.createImageSequence({
+      libraryId: library.libraryId,
+      assetIds: before.map((asset) => asset.assetId),
+      fps: 12,
+    });
+    expect(primary.sequence?.frameCount).toBe(3);
+    const hiddenIds = new Set(
+      primary.sequence!.frames.slice(1).map((frame) => frame.assetId),
+    );
+    expect(hiddenIds.size).toBe(2);
+
+    expect(service.enqueueThumbnailJobs(library.libraryId)).toBe(0);
+    const jobs = service.listMediaJobs(library.libraryId).jobs
+      .filter((job) => job.kind === "generate_thumbnail");
+    expect(jobs.filter((job) => (
+      hiddenIds.has(job.assetId) && (job.status === "queued" || job.status === "running")
+    ))).toEqual([]);
+    const primaryJobs = jobs.filter((job) => job.assetId === primary.assetId);
+    expect(primaryJobs.some((job) => job.status === "queued" || job.status === "running")).toBe(true);
+  });
+
+  it("does not enqueue a thumbnail job per frame of a 30-frame imported sequence", () => {
+    const { library, root, service } = fixture();
+    const source = path.join(root, "seq-30");
+    mkdirSync(source, { recursive: true });
+    const requiredPng = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAACAEAAAABCAIAAAAqtLKbAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAOklEQVRYhe3YQQ0AAAgDMeRMImInBh+kySno8yZbESBAgAABAgQIECBAgAABAgQIECBAgAABAnk3zA9mXOIiDxU7WQAAAABJRU5ErkJggg==",
+      "base64",
+    );
+    for (let index = 1; index <= 30; index += 1) {
+      writeFileSync(
+        path.join(source, `clip_${String(index).padStart(3, "0")}.png`),
+        Buffer.concat([requiredPng, Buffer.from([index])]),
+      );
+    }
+    const completion = service.prepareOrExecuteImport({
+      libraryId: library.libraryId,
+      sourceKind: "folder",
+      sourcePaths: [source],
+      imageSequenceFps: 12,
+    });
+    expect("importId" in completion).toBe(false);
+    const assets = service.listAssets({ libraryId: library.libraryId, recursive: true });
+    expect(assets).toHaveLength(1);
+    expect(assets[0]!.sequence?.frameCount).toBe(30);
+    const hiddenIds = new Set(
+      assets[0]!.sequence!.frames.slice(1).map((frame) => frame.assetId),
+    );
+    expect(hiddenIds.size).toBe(29);
+
+    const frameIds = assets[0]!.sequence!.frames.map((frame) => frame.assetId);
+    expect(service.enqueueThumbnailJobs(library.libraryId, {
+      assetIds: frameIds,
+      limit: 500,
+    })).toBeLessThanOrEqual(1);
+
+    const db = new TestDatabase(path.join(library.libraryPath, ".serpent", "library.db"));
+    const thumbs = db.prepare(
+      "SELECT asset_id, status, error_code FROM jobs WHERE kind = 'generate_thumbnail'",
+    ).all() as Array<{ asset_id: string; status: string; error_code: string | null }>;
+    db.close();
+    expect(thumbs.length).toBeLessThanOrEqual(1);
+    expect(thumbs.every((job) => job.asset_id === assets[0]!.assetId)).toBe(true);
+    expect(thumbs.some((job) => hiddenIds.has(job.asset_id))).toBe(false);
   });
 });

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildMultiAssetMenuSkipReport,
+  browseScopeFromVirtualLayout,
   formatMenuActionSkipLine,
   formatMultiAssetMenuSkipFooter,
   type MenuSkipAssetSnapshot,
@@ -68,6 +69,59 @@ describe("buildMultiAssetMenuSkipReport", () => {
     expect(report.unresolvedCount).toBe(1);
     expect(report.move.skips).toEqual([{ reason: "unresolved", count: 1 }]);
     expect(report.trash.skips).toEqual([{ reason: "unresolved", count: 1 }]);
+  });
+
+  it("keeps paged-out in-scope ids in the process set", () => {
+    const selected = Array.from({ length: 151 }, (_, index) => `id-${index}`);
+    const loaded = selected.slice(0, 100).map((assetId) => asset({ assetId }));
+    const inScope = new Set(selected);
+    const report = buildMultiAssetMenuSkipReport(selected, loaded, [], {
+      inScopeAssetIds: inScope,
+    });
+    expect(report.unresolvedCount).toBe(0);
+    expect(report.move.processCount).toBe(151);
+    expect(report.trash.processCount).toBe(151);
+    expect(formatMultiAssetMenuSkipFooter(report, "zh-CN")).toBeNull();
+  });
+
+  it("treats missing snapshots as in-scope when the layout index is incomplete", () => {
+    const report = buildMultiAssetMenuSkipReport(
+      ["a", "b", "c"],
+      [asset({ assetId: "a" })],
+      [],
+      { assumeMissingAreInScope: true },
+    );
+    expect(report.unresolvedCount).toBe(0);
+    expect(report.move.processAssetIds).toEqual(["a", "b", "c"]);
+    expect(report.trash.processAssetIds).toEqual(["a", "b", "c"]);
+  });
+
+  it("still skips ids that are outside a complete browse scope", () => {
+    const report = buildMultiAssetMenuSkipReport(
+      ["in-folder", "stale"],
+      [asset({ assetId: "in-folder" })],
+      [],
+      { inScopeAssetIds: new Set(["in-folder"]) },
+    );
+    expect(report.unresolvedCount).toBe(1);
+    expect(report.move.processAssetIds).toEqual(["in-folder"]);
+    expect(report.trash.skips).toEqual([{ reason: "unresolved", count: 1 }]);
+  });
+
+  it("builds a complete layout scope from virtual index ids", () => {
+    const assetIdsByIndex = new Map([
+      [0, "a"],
+      [1, "b"],
+    ]);
+    expect(
+      browseScopeFromVirtualLayout({ assetIdsByIndex, total: 2 }),
+    ).toEqual({
+      inScopeAssetIds: new Set(["a", "b"]),
+      assumeMissingAreInScope: false,
+    });
+    expect(
+      browseScopeFromVirtualLayout({ assetIdsByIndex, total: 151 }),
+    ).toMatchObject({ assumeMissingAreInScope: true });
   });
 
   it("skips trashed assets and detects the all-trashed branch", () => {

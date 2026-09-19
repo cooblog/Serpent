@@ -62,6 +62,9 @@ export type UseFolderCommandShortcutsArgs = {
   readonly renameFolder: (folderId: string, currentName: string) => void;
   readonly trashManagedFolder: (folderId: string, name: string) => void;
   readonly deleteFolderFromDisk: (folderId: string, name: string) => void;
+  /** Serpent-d7acfa：多选文件夹卡片的批量目标。 */
+  readonly trashFolders?: (folderIds: readonly string[]) => void;
+  readonly deleteFolders?: (folderIds: readonly string[]) => void;
 };
 
 /**
@@ -84,6 +87,8 @@ export function useFolderCommandShortcuts(
     renameFolder,
     trashManagedFolder,
     deleteFolderFromDisk,
+    trashFolders,
+    deleteFolders,
   } = args;
 
   useEffect(() => {
@@ -131,6 +136,29 @@ export function useFolderCommandShortcuts(
           deleteFolderFromDisk(action.folderId, action.name);
           return;
         }
+        if (action.type === "trash-folders") {
+          // 没有批量回调时退回逐个执行，行为与旧版单目标路径一致。
+          if (trashFolders) {
+            trashFolders(action.folderIds);
+          } else {
+            for (const folderId of action.folderIds) {
+              const name = resolveManagedFolderName(folderId);
+              if (name !== undefined) trashManagedFolder(folderId, name);
+            }
+          }
+          return;
+        }
+        if (action.type === "delete-folders") {
+          if (deleteFolders) {
+            deleteFolders(action.folderIds);
+          } else {
+            for (const folderId of action.folderIds) {
+              const name = resolveManagedFolderName(folderId);
+              if (name !== undefined) deleteFolderFromDisk(folderId, name);
+            }
+          }
+          return;
+        }
         trashManagedFolder(action.folderId, action.name);
         return;
       }
@@ -151,5 +179,7 @@ export function useFolderCommandShortcuts(
     renameFolder,
     trashManagedFolder,
     deleteFolderFromDisk,
+    trashFolders,
+    deleteFolders,
   ]);
 }

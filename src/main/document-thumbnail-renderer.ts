@@ -40,8 +40,12 @@ export async function renderDocumentThumbnail(
   let window: BrowserWindow | null = null;
   try {
     window = new BrowserWindow({
+      // `useContentSize` makes width/height the *page* viewport: without it the
+      // window frame is subtracted from the height, so a 1024×576 (16:9)
+      // request captured 1024×520 and the font cover came out at ~1.97:1.
+      useContentSize: true,
       width: request.width,
-      height: 800,
+      height: request.height ?? 800,
       show: false,
       webPreferences: {
         sandbox: true,

@@ -51,6 +51,12 @@ export const TEXT_EXTENSIONS = [
 /** Format-filter token that expands to every TEXT_EXTENSIONS entry. */
 export const FORMAT_TEXT_TOKEN = "text";
 
+/**
+ * Format-filter token for extensions Serpent does not classify
+ * (`detectMediaType` → `other`). Not an extension itself.
+ */
+export const FORMAT_UNKNOWN_TOKEN = "unknown";
+
 export const TEXT_MIME_BY_EXTENSION: Record<string, string> = {
   ".txt": "text/plain",
   ".md": "text/markdown",
@@ -125,14 +131,34 @@ export function textMimeForExtension(extension: string): string | null {
 
 /**
  * Expand format-filter tokens for SQL. The special `text` token becomes every
- * known text/code extension (without a leading dot); other tokens pass through.
+ * known text/code extension (without a leading dot). `unknown` is skipped —
+ * catalog-read attaches a separate unrecognized-type predicate. Other tokens
+ * pass through as dotless extensions.
  */
+/**
+ * Normalize format-filter tokens for the IPC clause. Keep the unified `text`
+ * token compact — the Worker expands it. Expanding in the Renderer overflows
+ * the historical 32-value cap (TEXT_EXTENSIONS is larger than 32).
+ */
+export function compactFormatFilterTokens(tokens: readonly string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of tokens) {
+    const token = raw.trim().replace(/^\./, "").toLowerCase();
+    if (!token || seen.has(token)) continue;
+    seen.add(token);
+    out.push(token);
+  }
+  return out;
+}
+
 export function expandFormatFilterTokens(tokens: readonly string[]): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
   for (const raw of tokens) {
     const token = raw.trim().replace(/^\./, "").toLowerCase();
     if (!token) continue;
+    if (token === FORMAT_UNKNOWN_TOKEN) continue;
     if (token === FORMAT_TEXT_TOKEN) {
       for (const ext of TEXT_EXTENSIONS) {
         const bare = ext.slice(1);
@@ -149,13 +175,29 @@ export function expandFormatFilterTokens(tokens: readonly string[]): string[] {
   return out;
 }
 
-/** True when the free-text format field carries the unified text token. */
-export function formatFilterHasTextToken(formatFilter: string): boolean {
+function formatFilterTokens(formatFilter: string): string[] {
   return formatFilter
     .split(",")
     .map((token) => token.trim().replace(/^\./, "").toLowerCase())
-    .filter(Boolean)
-    .includes(FORMAT_TEXT_TOKEN);
+    .filter(Boolean);
+}
+
+/** True when the free-text format field carries the unified text token. */
+export function formatFilterHasTextToken(formatFilter: string): boolean {
+  return formatFilterTokens(formatFilter).includes(FORMAT_TEXT_TOKEN);
+}
+
+/** True when the format field asks for types Serpent does not recognize. */
+export function formatFilterHasUnknownToken(
+  formatFilter: string | readonly string[],
+): boolean {
+  const tokens =
+    typeof formatFilter === "string"
+      ? formatFilterTokens(formatFilter)
+      : formatFilter.map((token) =>
+          token.trim().replace(/^\./, "").toLowerCase(),
+        );
+  return tokens.includes(FORMAT_UNKNOWN_TOKEN);
 }
 
 /** Count lines the same way a textarea displays them (\\n, \\r\\n, and lone \\r). */
