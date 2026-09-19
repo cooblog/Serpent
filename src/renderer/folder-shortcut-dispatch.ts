@@ -34,6 +34,9 @@ export type FolderShortcutAction =
       readonly folderId: string;
       readonly name: string;
     }
+  /** Serpent-d7acfa：多选文件夹卡片时，快捷键对全部选中项生效。 */
+  | { readonly type: "trash-folders"; readonly folderIds: readonly string[] }
+  | { readonly type: "delete-folders"; readonly folderIds: readonly string[] }
   | { readonly type: "none" };
 
 export type FolderShortcutResolveInput = {
@@ -74,15 +77,21 @@ export function readFocusedNavFolder(
   return { folderId, locationKind };
 }
 
-function singleManagedCardTarget(
+/**
+ * 画布文件夹卡片目标。多选时返回全部有名字的托管文件夹（Serpent-d7acfa）；
+ * 重命名仍然只对单个目标生效，由调用方判断长度。
+ */
+function managedCardTargets(
   selectedFolderCardIds: readonly string[],
   resolveManagedFolderName: (folderId: string) => string | undefined,
-): { folderId: string; name: string } | null {
-  if (selectedFolderCardIds.length !== 1) return null;
-  const folderId = selectedFolderCardIds[0]!;
-  const name = resolveManagedFolderName(folderId);
-  if (name === undefined) return null;
-  return { folderId, name };
+): { folderId: string; name: string }[] {
+  const targets: { folderId: string; name: string }[] = [];
+  for (const folderId of selectedFolderCardIds) {
+    const name = resolveManagedFolderName(folderId);
+    if (name === undefined) continue;
+    targets.push({ folderId, name });
+  }
+  return targets;
 }
 
 export function resolveFolderShortcutAction(
@@ -114,6 +123,19 @@ export function resolveFolderShortcutAction(
   // Rename / trash: assets keep priority when any asset is selected.
   if (selectedAssetCount > 0) return { type: "none" };
 
+  // Serpent-d7acfa: a multi-folder selection (canvas cards or sidebar tree rows)
+  // outranks the focused row — Delete / Shift+Delete then act on every selected
+  // folder instead of only the one under focus.
+  const selection = managedCardTargets(
+    selectedFolderCardIds,
+    resolveManagedFolderName,
+  );
+  if (selection.length > 1 && commandId !== "folder.rename") {
+    return commandId === "folder.delete-from-disk"
+      ? { type: "delete-folders", folderIds: selection.map((card) => card.folderId) }
+      : { type: "trash-folders", folderIds: selection.map((card) => card.folderId) };
+  }
+
   // Linked and managed folders use the same F2 / Delete / Shift+Delete
   // targeting. Delete goes to trash with no confirmation (Serpent-g8u9).
   if (focusedNav) {
@@ -143,12 +165,15 @@ export function resolveFolderShortcutAction(
     };
   }
 
-  const card = singleManagedCardTarget(
+  const cards = managedCardTargets(
     selectedFolderCardIds,
     resolveManagedFolderName,
   );
-  if (card) {
+  if (cards.length > 0) {
     if (commandId === "folder.rename") {
+      // 重命名一次只能改一个名字：多选时不猜目标。
+      if (cards.length !== 1) return { type: "none" };
+      const card = cards[0]!;
       if (canRenameFolder && !canRenameFolder(card.folderId)) {
         return { type: "none" };
       }
@@ -158,9 +183,22 @@ export function resolveFolderShortcutAction(
         currentName: card.name,
       };
     }
-    return commandId === "folder.delete-from-disk"
-      ? { type: "delete-from-disk", folderId: card.folderId, name: card.name }
-      : { type: "move-to-trash", folderId: card.folderId, name: card.name };
+    if (commandId === "folder.delete-from-disk") {
+      return cards.length === 1
+        ? {
+            type: "delete-from-disk",
+            folderId: cards[0]!.folderId,
+            name: cards[0]!.name,
+          }
+        : { type: "delete-folders", folderIds: cards.map((card) => card.folderId) };
+    }
+    return cards.length === 1
+      ? {
+          type: "move-to-trash",
+          folderId: cards[0]!.folderId,
+          name: cards[0]!.name,
+        }
+      : { type: "trash-folders", folderIds: cards.map((card) => card.folderId) };
   }
 
   // Fallback: rename/trash the folder currently open in browse (Serpent-l0ow).

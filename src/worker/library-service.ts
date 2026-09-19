@@ -721,6 +721,7 @@ import {
   VIDEO_EXTENSIONS,
   MODEL_EXTENSIONS,
   DOCUMENT_EXTENSIONS,
+  FONT_EXTENSIONS,
   directImageMimeForExtension,
   imageDecoderForExtension,
   imageViewerDecoderForExtension,
@@ -728,6 +729,8 @@ import {
   isSupportedImageExtension,
   isSupportedModelExtension,
   isSupportedDocumentExtension,
+  isSupportedFontExtension,
+  fontMimeForExtension,
   isSupportedVideoExtension,
   modelMimeForExtension,
   isRawImageExtension,
@@ -764,6 +767,17 @@ import {
   MODEL_THUMBNAIL_GENERATOR_VERSION,
 } from '../shared/model-thumbnail-protocol';
 import { DOCUMENT_THUMBNAIL_GENERATOR_VERSION } from '../shared/document-thumbnail-protocol';
+import {
+  DOCUMENT_THUMBNAIL_WIDTH,
+  FONT_THUMBNAIL_GENERATOR_VERSION,
+  FONT_THUMBNAIL_HEIGHT,
+} from '../shared/document-thumbnail-protocol';
+import type { FontMetadata } from '../shared/font-metadata';
+import {
+  fontMetadataToExtractedFields,
+  fontSampleQuerySuffix,
+  readFontMetadata,
+} from './font-file-metadata';
 import {
   COMMON_IMAGE_COLOR_SPACE_OPTIONS,
   colorSpaceInfoFromName,
@@ -4814,6 +4828,9 @@ export interface LibraryServiceOptions {
     assetId: string;
     revisionId: string;
     url: string;
+    /** Capture viewport (px); height omitted → the document default. */
+    width: number;
+    height?: number;
     signal?: AbortSignal;
   }) => Promise<{ png: Uint8Array; width: number; height: number } | null>;
   /** Test-only override for deterministic SQLite writer-contention tests. */
@@ -19568,6 +19585,35 @@ export class LibraryService {
       .get(input.assetId) as { asset_id: string } | undefined;
     if (!assetRow) throw new LibraryServiceError('ASSET_NOT_FOUND');
 
+    // Serpent-485aeb: fonts have no `extracted_metadata` artifact — the facts
+    // live in the font file's own `name`/`head`/`OS-2`/`maxp` tables, so they
+    // are read on demand (a header parse, not a full decode).
+    const absolutePath = this.resolveAssetPath(input.libraryId, input.assetId);
+    if (LibraryService.detectMediaType(absolutePath) === 'font') {
+      const fontMetadata = this.readAssetFontMetadata(absolutePath);
+      if (!fontMetadata) {
+        return {
+          assetId: input.assetId,
+          status: 'failed',
+          metadata: null,
+          metadataCompleteness: 'complete',
+          errorCode: 'FONT_METADATA_UNREADABLE',
+        };
+      }
+      // Run the partial font facts through the shared schema so the result has
+      // exactly the same shape as every other extracted-metadata payload.
+      const parsedFont = extractedVideoMetadataSchema.safeParse(
+        fontMetadataToExtractedFields(fontMetadata),
+      );
+      return {
+        assetId: input.assetId,
+        status: parsedFont.success ? 'ready' : 'failed',
+        metadata: parsedFont.success ? parsedFont.data : null,
+        metadataCompleteness: 'complete',
+        errorCode: parsedFont.success ? null : 'EXTRACTED_METADATA_INVALID',
+      };
+    }
+
     const artifact = this.getCurrentArtifact(
       input.libraryId,
       input.assetId,
@@ -22139,7 +22185,7 @@ export class LibraryService {
    * `model` covers the T1 3D set. FBX/OBJ/glTF/GLB/STL preview and thumbnails
    * are renderer-side (slices C/E). `.blend` classifies as `other`.
    */
-  static detectMediaType(filenameOrMime: string): 'image' | 'video' | 'audio' | 'text' | 'model' | 'document' | 'other' {
+  static detectMediaType(filenameOrMime: string): 'image' | 'video' | 'audio' | 'text' | 'model' | 'document' | 'font' | 'other' {
     const lower = filenameOrMime.toLowerCase();
     if (isSupportedImageExtension(lower)) {
       return 'image';
@@ -22159,6 +22205,10 @@ export class LibraryService {
     if (isSupportedDocumentExtension(lower)) {
       return 'document';
     }
+    // Serpent-485aeb: fonts get their own media type (card sample + viewer).
+    if (isSupportedFontExtension(lower)) {
+      return 'font';
+    }
     if (isTextFileName(lower)) {
       return 'text';
     }
@@ -22173,13 +22223,14 @@ export class LibraryService {
    */
   static toSummaryMediaType(
     detected: ReturnType<typeof LibraryService.detectMediaType>,
-  ): 'image' | 'video' | 'audio' | 'text' | 'model' | 'document' | 'other' {
+  ): 'image' | 'video' | 'audio' | 'text' | 'model' | 'document' | 'font' | 'other' {
     return detected === 'image' ||
       detected === 'video' ||
       detected === 'audio' ||
       detected === 'text' ||
       detected === 'model' ||
-      detected === 'document'
+      detected === 'document' ||
+      detected === 'font'
       ? detected
       : 'other';
   }
@@ -22292,6 +22343,30 @@ export class LibraryService {
         revisionId,
         execution,
         renderer,
+      );
+    }
+
+    // Serpent-485aeb: font cards show a real sample line. Main serves a small
+    // sample sheet for the font (`sample=font`) and the existing offscreen
+    // capture turns it into an artifact, so the Renderer never touches paths.
+    // The sheet's label follows the script the font actually covers, which the
+    // Worker reads from the font's own `name`/`cmap` tables.
+    if (mediaType === 'font') {
+      const renderer = this.options.documentThumbnailRenderer;
+      if (!renderer) return null;
+      const fontMetadata = this.readAssetFontMetadata(assetPath);
+      return this.generateHtmlThumbnail(
+        input,
+        openLibrary,
+        assetPath,
+        revisionId,
+        execution,
+        renderer,
+        {
+          sample: 'font',
+          generatorVersion: FONT_THUMBNAIL_GENERATOR_VERSION,
+          fontMetadata,
+        },
       );
     }
 
@@ -22830,6 +22905,15 @@ export class LibraryService {
    * artifact; a null render or a failed record keeps the card on the generic
    * file icon (never `failed` for a benign missing renderer).
    */
+  /**
+   * Serpent-485aeb: font metadata for an asset path, or null when the file is
+   * unreadable/not a font. Never throws: an unparsable font only costs the
+   * sample sheet its label.
+   */
+  private readAssetFontMetadata(assetPath: string): FontMetadata | null {
+    return readFontMetadata(assetPath);
+  }
+
   private async generateHtmlThumbnail(
     input: { libraryId: string; assetId: string },
     openLibrary: OpenLibrary,
@@ -22837,8 +22921,17 @@ export class LibraryService {
     revisionId: string,
     execution: MediaExecutionContext,
     renderer: NonNullable<LibraryServiceOptions['documentThumbnailRenderer']>,
+    options?: {
+      readonly sample?: 'font';
+      readonly generatorVersion?: string;
+      readonly fontMetadata?: FontMetadata | null;
+    },
   ): Promise<{ artifactId: string } | null> {
-    const url = `serpent://source/${encodeURIComponent(input.libraryId)}/${encodeURIComponent(input.assetId)}?revision=${encodeURIComponent(revisionId)}`;
+    const sampleQuery =
+      options?.sample === 'font'
+        ? `&sample=font${fontSampleQuerySuffix(options.fontMetadata ?? null)}`
+        : '';
+    const url = `serpent://source/${encodeURIComponent(input.libraryId)}/${encodeURIComponent(input.assetId)}?revision=${encodeURIComponent(revisionId)}${sampleQuery}`;
     if (execution.signal?.aborted) {
       throw new DOMException('Media job cancelled before HTML render.', 'AbortError');
     }
@@ -22847,6 +22940,9 @@ export class LibraryService {
       assetId: input.assetId,
       revisionId,
       url,
+      width: DOCUMENT_THUMBNAIL_WIDTH,
+      // 字体样张按 16:9 采集（用户反馈：卡片封面不要 4:3）。
+      ...(options?.sample === 'font' ? { height: FONT_THUMBNAIL_HEIGHT } : {}),
       signal: execution.signal,
     });
     if (!rendered) return null;
@@ -22892,7 +22988,7 @@ export class LibraryService {
         artifactRelPath,
         rendered.width || null,
         rendered.height || null,
-        DOCUMENT_THUMBNAIL_GENERATOR_VERSION,
+        options?.generatorVersion ?? DOCUMENT_THUMBNAIL_GENERATOR_VERSION,
         new Date().toISOString(),
       );
     return { artifactId };
@@ -27971,7 +28067,7 @@ export class LibraryService {
     assetId: string,
     intent: 'viewer' | 'hover' | 'proxy-fallback' = 'viewer',
   ): {
-    mediaType: 'image' | 'video' | 'audio' | 'text' | 'model' | 'document' | 'other';
+    mediaType: 'image' | 'video' | 'audio' | 'text' | 'model' | 'document' | 'font' | 'other';
     status: 'ready' | 'pending' | 'failed' | 'missing';
     kind: 'thumbnail' | 'webm_proxy' | 'audio_proxy';
     artifactId?: string;
@@ -28057,6 +28153,22 @@ export class LibraryService {
         playbackMode: 'source',
         sourceRevisionId: asset.current_revision_id,
         sourceMimeType: documentMime,
+      };
+    }
+
+    // Serpent-485aeb: fonts open from the original source; the renderer loads
+    // them with @font-face and renders the sample text itself.
+    if (mediaType === 'font' && asset.current_revision_id) {
+      const fontMime = fontMimeForExtension(asset.relative_file_path)
+        ?? 'application/octet-stream';
+      return {
+        mediaType,
+        status: 'ready',
+        kind,
+        mimeType: fontMime,
+        playbackMode: 'source',
+        sourceRevisionId: asset.current_revision_id,
+        sourceMimeType: fontMime,
       };
     }
 
@@ -30200,6 +30312,9 @@ export class LibraryService {
         // 造成「生成成功→立即失效→重生成」的封面 churn。两者都应视为当前。
         return generatorVersion === DOCUMENT_THUMBNAIL_GENERATOR_VERSION
           || generatorVersion.startsWith('pdfjs@');
+      case 'font':
+        // Serpent-485aeb：字体样张由 offscreen 样张页生成，版本标签独立。
+        return generatorVersion === FONT_THUMBNAIL_GENERATOR_VERSION;
       default:
         return true;
     }
@@ -30509,6 +30624,8 @@ export class LibraryService {
       ...AUDIO_EXTENSION_NAMES,
       ...MODEL_EXTENSIONS.map((extension) => extension.slice(1)),
       ...DOCUMENT_EXTENSIONS.map((extension) => extension.slice(1)),
+      // Serpent-485aeb: font cards render a real sample line offscreen in Main.
+      ...FONT_EXTENSIONS.map((extension) => extension.slice(1)),
     ];
     const videoExtensions = ['mp4', 'webm', 'mov', 'avi', 'wmv', 'mkv', 'm4v'];
     const nowInvalidate = new Date().toISOString();

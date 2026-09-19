@@ -19,6 +19,8 @@ export type PostImportSequencePlan = {
   readonly sequences: readonly {
     readonly frameAssetIds: readonly string[];
     readonly frameNumbers: readonly number[];
+    /** 预览按修订取源文件：`serpent://source` 需要 revision。 */
+    readonly frameRevisionIds: readonly string[];
   }[];
 };
 
@@ -99,6 +101,7 @@ export function postImportSequencePlanFromAssets(
         )?.frameNumber;
         return number ?? 0;
       }),
+      frameRevisionIds: frames.map((frame) => frame.currentRevisionId),
     });
   }
   if (offerSequences.length === 0) return null;

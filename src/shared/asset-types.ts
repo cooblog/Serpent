@@ -200,7 +200,7 @@ export const assetSummarySchema = z.strictObject({
   /** Card may use the bounded original source while no artifact is ready. */
   previewKind: z.enum(['source']).nullable().optional(),
   previewRevisionId: nonBlankString.nullable().optional(),
-  mediaType: z.enum(['image', 'video', 'audio', 'text', 'model', 'document', 'other']),
+  mediaType: z.enum(['image', 'video', 'audio', 'text', 'model', 'document', 'font', 'other']),
   width: z.number().int().positive().nullable(),
   height: z.number().int().positive().nullable(),
   durationMs: z.number().int().nonnegative().nullable().optional().default(null),
@@ -231,7 +231,7 @@ export const browseLayoutEntrySchema = z.strictObject({
    * Without it a synthesized slot would have to guess `other` and change the
    * card's appearance once the summary landed.
    */
-  mediaType: z.enum(['image', 'video', 'audio', 'text', 'model', 'document', 'other']).optional(),
+  mediaType: z.enum(['image', 'video', 'audio', 'text', 'model', 'document', 'font', 'other']).optional(),
 });
 
 export type BrowseLayoutEntry = z.infer<typeof browseLayoutEntrySchema>;
@@ -361,6 +361,43 @@ export const extractedVideoMetadataSchema = z.strictObject({
   meteringMode: probeNumericSchema.optional().default(null),
   flash: probeNumericSchema.optional().default(null),
   focalLength: probeNumericSchema.optional().default(null),
+  /**
+   * Serpent-485aeb: font facts read from the font file itself (`name`, `head`,
+   * `OS/2`, `maxp`). Only present for `font` assets; the Worker derives them on
+   * demand instead of persisting an `extracted_metadata` artifact.
+   */
+  fontFamily: z.string().nullable().optional(),
+  fontSubfamily: z.string().nullable().optional(),
+  fontFullName: z.string().nullable().optional(),
+  fontVersion: z.string().nullable().optional(),
+  fontManufacturer: z.string().nullable().optional(),
+  fontCopyright: z.string().nullable().optional(),
+  fontWeightClass: z.number().int().positive().nullable().optional(),
+  fontWidthClass: z.number().int().positive().nullable().optional(),
+  fontIsBold: z.boolean().optional(),
+  fontIsItalic: z.boolean().optional(),
+  fontUnitsPerEm: z.number().int().positive().nullable().optional(),
+  fontGlyphCount: z.number().int().nonnegative().nullable().optional(),
+  /**
+   * Single language we are willing to assert for the sample/cover; null when the
+   * file's own evidence is inconclusive (CJK fonts often declare several).
+   */
+  fontLanguage: z
+    .enum(['ja', 'zh-Hans', 'zh-Hant', 'ko', 'latin'])
+    .nullable()
+    .optional(),
+  /** CJK languages the file declares via OS/2 `ulCodePageRange` (may be several). */
+  fontLanguages: z.array(z.enum(['ja', 'zh-Hans', 'zh-Hant', 'ko'])).optional(),
+  /**
+   * Weights a variable font actually offers (`fvar` `wght` axis / named
+   * instances). Null/absent for static fonts — the viewer must not offer a
+   * fake 100–900 list for a single-weight file (Serpent-485aeb feedback).
+   */
+  fontVariableWeights: z
+    .array(z.number().finite().positive())
+    .nullable()
+    .optional(),
+  fontCoversLatin: z.boolean().optional(),
 });
 
 export type ExtractedVideoMetadata = z.infer<typeof extractedVideoMetadataSchema>;

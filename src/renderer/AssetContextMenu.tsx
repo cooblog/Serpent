@@ -17,6 +17,7 @@ type RendererWindow = Window & {
 };
 import type { EntityAppearance, EntityAppearanceTarget } from "../shared/entity-appearance";
 import { EntityAppearancePicker } from "./EntityAppearancePicker";
+import { planFolderBatch } from "./folder-batch-actions";
 import {
   ContextMenu,
   ContextMenuBackdrop,
@@ -1429,6 +1430,25 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               .map((asset) => asset.assetId);
             const processFolderIds = [...skipReport.trash.processFolderIds];
             const moveFolderIds = [...skipReport.move.processFolderIds];
+            // Serpent-d7acfa：多选文件夹的「设置图标 / 忽略」资格与跳过原因由
+            // folder-batch-actions 统一计算（链接子目录、资源库根等会被跳过）。
+            const linkedRootFolders = linkedFolders.map((folder) => ({
+              folderId: folder.folderId,
+              name: folder.displayName,
+              relativePath: folder.relativePath ?? "",
+            }));
+            const appearancePlan = planFolderBatch({
+              folderIds: targetFolderIds,
+              managedFolders,
+              linkedFolders: linkedRootFolders,
+              action: "appearance",
+            });
+            const ignorePlan = planFolderBatch({
+              folderIds: targetFolderIds,
+              managedFolders,
+              linkedFolders: linkedRootFolders,
+              action: "ignore",
+            });
             const allTrashed = skipReport.allTrashed;
             const canCreateImageSequence =
               targetAssets.length >= 3 &&
@@ -1479,6 +1499,8 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               availableManagedAssetIds,
               availableAssetIds,
               pasteTargetFolderId,
+              appearanceFolderTargets: appearancePlan.targets,
+              ignoreFolderTargets: ignorePlan.targets,
               actions: {
                 openAssignTagPicker: (assetIds) =>
                   setTagPicker({ mode: "assign", assetIds, single: false }),
@@ -1500,6 +1522,43 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   onAnalyze(primary, assetIds);
                 },
                 clearAiContent: onClearAiContent,
+                setFolderAppearance: (targets, appearance) => {
+                  for (const target of targets) {
+                    onSetEntityAppearance(
+                      { kind: target.kind, id: target.folderId },
+                      appearance,
+                    );
+                  }
+                },
+                ignoreSelection: ({ assetIds, folderTargets }) => {
+                  const assetById = new Map(
+                    assets.map((asset) => [asset.assetId, asset]),
+                  );
+                  for (const assetId of assetIds) {
+                    const asset = assetById.get(assetId);
+                    if (!asset) continue;
+                    onSetIgnore({
+                      locationKind: asset.locationKind,
+                      linkedFolderId: asset.linkedFolderId ?? null,
+                      relativePath: asset.relativeFilePath,
+                      pathKind: "asset",
+                      ignored: true,
+                      name: asset.displayName,
+                    });
+                  }
+                  for (const target of folderTargets) {
+                    onSetIgnore({
+                      locationKind:
+                        target.kind === "linked-folder" ? "linked" : "managed",
+                      linkedFolderId:
+                        target.kind === "linked-folder" ? target.folderId : null,
+                      relativePath: target.relativePath,
+                      pathKind: "folder",
+                      ignored: true,
+                      name: target.name,
+                    });
+                  }
+                },
               },
             };
             const resolvedById = new Map(
@@ -1522,6 +1581,8 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
             const aiAnalyzeItem = resolvedById.get("assets.ai-analyze");
             const clearAiContentItem = resolvedById.get("assets.clear-ai-content");
             const moveToFolderItem = resolvedById.get("assets.move-to-folder");
+            const appearanceItem = resolvedById.get("assets.appearance");
+            const ignoreItem = resolvedById.get("assets.ignore");
             const copyItem = resolvedById.get("assets.copy");
             const pasteItem = resolvedById.get("assets.paste");
             const moveToTrashItem = resolvedById.get("assets.move-to-trash");
@@ -1654,7 +1715,10 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                 onRun={(item) => runPluginCommand(item, { assetIds: targetAssetIds })}
               />
             )}
-            {targetAssetIds.length > 0 && (
+            {/* Serpent-d7acfa：只选文件夹卡片时同样要有组织区（移动到文件夹 /
+                设置图标 / 忽略）；资产专属项（复制、粘贴、标签、合集、AI）各自
+                另有闸门，不会因为放宽这一层而冒出来。 */}
+            {(targetAssetIds.length > 0 || targetFolderIds.length > 0) && (
             <ContextMenuSection label={t("command.group.organize")}>
               <PluginMenuItems
                 items={multiAssetPluginPlacement.organizeBefore}
@@ -1760,36 +1824,34 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                   onAction={() => runMultiCommand("assets.move-to-folder")}
                 />
               )}
+              {appearanceItem && (
+                <ContextMenuSubmenu
+                  icon={<Icon name="palette" size={14} />}
+                  label={appearanceItem.label}
+                >
+                  <EntityAppearancePicker
+                    value={null}
+                    onChange={(appearance) =>
+                      commandContext.actions.setFolderAppearance?.(
+                        commandContext.appearanceFolderTargets,
+                        appearance,
+                      )
+                    }
+                  />
+                </ContextMenuSubmenu>
+              )}
               <PluginMenuItems
                 items={multiAssetPluginPlacement.organizeAfter}
                 onRun={(item) => runPluginCommand(item, { assetIds: targetAssetIds })}
               />
               <ContextMenuItem
                 icon={<Icon name="close" size={14} />}
-                label={t("menu.ignore")}
-                onAction={() => {
-                  targetAssets.forEach((asset) => onSetIgnore({
-                    locationKind: asset.locationKind,
-                    linkedFolderId: asset.linkedFolderId ?? null,
-                    relativePath: asset.relativeFilePath,
-                    pathKind: "asset",
-                    ignored: true,
-                    name: asset.displayName,
-                  }));
-                  targetFolderIds.forEach((folderId) => {
-                    const folder = managedFolders.find((item) => item.folderId === folderId);
-                    if (folder) onSetIgnore({
-                      locationKind: "managed",
-                      linkedFolderId: null,
-                      relativePath: folder.relativePath,
-                      pathKind: "folder",
-                      ignored: true,
-                      name: folder.name,
-                    });
-                  });
-                }}
+                label={ignoreItem?.label ?? t("menu.ignore")}
+                disabled={ignoreItem?.disabled ?? false}
+                disabledReason={ignoreItem?.disabledReason ?? undefined}
+                onAction={() => runMultiCommand("assets.ignore")}
               />
-                  {copyItem && (
+                  {copyItem && targetAssetIds.length > 0 && (
                     <ContextMenuItem
                       icon={<Icon name="clipboard" size={14} />}
                       label={copyItem.label}
@@ -1799,7 +1861,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
                       onAction={() => runMultiCommand("assets.copy")}
                     />
                   )}
-                  {pasteItem && (
+                  {pasteItem && targetAssetIds.length > 0 && (
                     <ContextMenuItem
                       icon={<Icon name="clipboard" size={14} />}
                       label={pasteItem.label}

@@ -6,7 +6,9 @@ import type {
   ImageSequenceImportOffer,
 } from "../shared/protocol/responses";
 import { Icon } from "./Icons";
+import { ImageSequenceImportPreview } from "./ImageSequenceImportPreview";
 import { shouldShowApplyToRest } from "./image-sequence-import-dialog";
+import type { SequencePreviewSource } from "./image-sequence-preview";
 import { isPostImportSequenceOfferId } from "./post-import-image-sequences";
 import { iconActionAttrs } from "./icon-action-attrs";
 import { useT } from "./i18n";
@@ -16,6 +18,8 @@ export interface ImageSequenceImportDialogProps {
   error?: string | null;
   offer: ImageSequenceImportOffer | null;
   sequenceIndex?: number;
+  /** 当前这一组的帧预览来源（Serpent-866c20）；为空时不显示预览。 */
+  previewSource?: SequencePreviewSource | null;
   onCancel(): void;
   onConfirm(input: {
     action: "import-sequence" | "import-selected";
@@ -65,6 +69,7 @@ function ImageSequenceImportDialogForm({
   onCancel,
   onConfirm,
   open,
+  previewSource,
   sequence,
   sequenceIndex,
   submitting = false,
@@ -276,6 +281,19 @@ function ImageSequenceImportDialogForm({
               <span>{t("dialog.imageSequenceImport.applyToRest")}</span>
             </label>
           ) : null}
+          </div>
+
+          <div className="image-sequence-dialog-section">
+            <span className="field-label">
+              {t("dialog.imageSequenceImport.preview")}
+            </span>
+            <ImageSequenceImportPreview
+              firstFrame={firstFrame}
+              fps={fpsValid ? fps : offer.defaultFps}
+              lastFrame={lastFrame}
+              paused={submitting}
+              source={previewSource ?? null}
+            />
           </div>
 
           {error ? <p className="field-error" role="alert">{error}</p> : null}

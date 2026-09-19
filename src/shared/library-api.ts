@@ -137,7 +137,7 @@ export interface ImportValidatedResult {
 
 export interface PreviewResolution {
   assetId: string;
-  mediaType: 'image' | 'video' | 'audio' | 'text' | 'model' | 'document' | 'other';
+  mediaType: 'image' | 'video' | 'audio' | 'text' | 'model' | 'document' | 'font' | 'other';
   status: 'ready' | 'pending' | 'failed' | 'missing';
   kind: 'thumbnail' | 'webm_proxy' | 'audio_proxy';
   url?: string;

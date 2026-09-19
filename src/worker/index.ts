@@ -427,11 +427,17 @@ async function renderDocumentThumbnailViaMain(input: {
   assetId: string;
   revisionId: string;
   url: string;
+  width: number;
+  height?: number;
   signal?: AbortSignal;
 }): Promise<{ png: Uint8Array; width: number; height: number } | null> {
   try {
     const result = await requestDocumentThumbnailRender(
-      { url: input.url, width: 1024 },
+      {
+        url: input.url,
+        width: input.width,
+        ...(input.height === undefined ? {} : { height: input.height }),
+      },
       input.signal,
     );
     if (result.status === 'ok') {

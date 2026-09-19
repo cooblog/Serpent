@@ -66,7 +66,9 @@ export type IconName =
   | "upload"
   | "warning"
   | "vault"
-  | "equal-approximately";
+  | "equal-approximately"
+  | "type"
+  | "text-size";
 
 const iconPaths: Record<IconName, ReactNode> = {
   activity: <path d="M22 12h-4l-3 9L9 3l-3 9H2" />,
@@ -482,6 +484,25 @@ const iconPaths: Record<IconName, ReactNode> = {
     <>
       <path d="M5 15a6.5 6.5 0 0 1 7 0 6.5 6.5 0 0 0 7 0" />
       <path d="M5 9a6.5 6.5 0 0 1 7 0 6.5 6.5 0 0 0 7 0" />
+    </>
+  ),
+  // Lucide `type` (https://lucide.dev/icons/type): the font viewer's preview
+  // text control (Serpent-485aeb — labels there are icons, not words).
+  type: (
+    <>
+      <path d="M4 7V4h16v3" />
+      <path d="M9 20h6" />
+      <path d="M12 4v16" />
+    </>
+  ),
+  // Lucide `case-sensitive` (https://lucide.dev/icons/case-sensitive): the
+  // preview size (font size) control.
+  "text-size": (
+    <>
+      <path d="m3 15 4-8 4 8" />
+      <path d="M4.5 12h5" />
+      <circle cx="16" cy="12.5" r="3.5" />
+      <path d="M19.5 9.5v6" />
     </>
   ),
 };

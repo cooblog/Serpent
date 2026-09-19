@@ -3,7 +3,7 @@ import type { PreviewResolution } from "../shared/library-api";
 
 /** GIF or video that can play in-place on the grid card via requestPreview. */
 export function isCardHoverPreviewable(asset: {
-  mediaType: "image" | "video" | "audio" | "text" | "model" | "document" | "other";
+  mediaType: "image" | "video" | "audio" | "text" | "model" | "document" | "font" | "other";
   displayName: string;
   availability?: "available" | "missing";
   deletedAt?: string | null;
@@ -83,7 +83,7 @@ export function sourceSrc(
 export function resolveAssetCardCoverUrl(input: {
   libraryId: string | undefined;
   assetId: string;
-  mediaType: "image" | "video" | "audio" | "text" | "model" | "document" | "other";
+  mediaType: "image" | "video" | "audio" | "text" | "model" | "document" | "font" | "other";
   availability?: "available" | "missing";
   deletedAt?: string | null;
   thumbnailStatus: "ready" | "pending" | "failed" | null;

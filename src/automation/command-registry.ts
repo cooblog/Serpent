@@ -1319,7 +1319,7 @@ const mediaThumbnailArtifactWorkerResultSchema = z.strictObject({
 });
 const mediaPreviewArtifactWorkerResultSchema = z.strictObject({
   ok: z.literal(true), type: z.literal('media.preview-artifact'),
-  assetId: nonBlankString, mediaType: z.enum(['image', 'video', 'audio', 'text', 'model', 'document', 'other']),
+  assetId: nonBlankString, mediaType: z.enum(['image', 'video', 'audio', 'text', 'model', 'document', 'font', 'other']),
   status: z.enum(['ready', 'pending', 'failed', 'missing']), kind: z.enum(['thumbnail', 'webm_proxy', 'audio_proxy']),
   artifactId: nonBlankString.optional(), posterArtifactId: nonBlankString.optional(), mimeType: nonBlankString,
   errorCode: nonBlankString.optional(), playbackMode: z.enum(['source', 'proxy']).optional(),

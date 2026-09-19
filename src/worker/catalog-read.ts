@@ -700,7 +700,7 @@ export interface CatalogAssetSummaryRow {
   trashed_from_tombstone_id?: string | null;
   thumbnail_status?: 'ready' | 'pending' | 'failed' | null;
   thumbnail_artifact_id?: string | null;
-  media_type?: 'image' | 'video' | 'audio' | 'text' | 'model' | 'document' | 'other' | null;
+  media_type?: 'image' | 'video' | 'audio' | 'text' | 'model' | 'document' | 'font' | 'other' | null;
   artifact_width?: number | null;
   artifact_height?: number | null;
   artifact_duration_ms?: number | null;
@@ -772,7 +772,7 @@ export interface CatalogLayoutRow {
 
 export function catalogBrowseLayoutEntryFromRow(
   row: CatalogLayoutRow,
-  mediaType: 'image' | 'video' | 'audio' | 'text' | 'model' | 'document' | 'other',
+  mediaType: 'image' | 'video' | 'audio' | 'text' | 'model' | 'document' | 'font' | 'other',
 ): BrowseLayoutEntry {
   const width = row.layout_width ?? null;
   const height = row.layout_height ?? null;

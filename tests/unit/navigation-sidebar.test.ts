@@ -100,6 +100,7 @@ function createNavigationProps(
     onAssetsDroppedOnFolder: noop,
     onFoldersDroppedOnFolder: noop,
     selectedFolderIds: [],
+    onToggleFolderSelection: noop,
     onAssetsDroppedOnTrash: noop,
     onFoldersDroppedOnTrash: noop,
     onAssetsDroppedOnCollection: noop,

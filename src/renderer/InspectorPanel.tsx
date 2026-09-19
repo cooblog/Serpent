@@ -43,6 +43,7 @@ import type {
   RendererLibrarySummary,
 } from "../shared/protocol/responses";
 import { formatAudioTechnicalLine, formatVideoTechnicalLine } from "./video-metadata-format";
+import { buildFontInspectorRows } from "./font-inspector-rows";
 import { isGifDisplayName } from "./gif-player-controls";
 import {
   isCardHoverPreviewable,
@@ -681,12 +682,14 @@ export function InspectorPanel(props: InspectorPanelProps) {
     const isRawImage =
       selectedAsset?.mediaType === "image"
       && isRawImageExtension(selectedAsset.relativeFilePath);
+    // Serpent-485aeb: font facts are read on demand from the font file itself.
+    const isFont = selectedAsset?.mediaType === "font";
     const shouldFetch =
       Boolean(
         api &&
           libraryId &&
           assetId &&
-          (isVideo || isAudio || isGif || isRawImage) &&
+          (isVideo || isAudio || isGif || isRawImage || isFont) &&
           selectionCount < 2,
       );
 
@@ -767,6 +770,13 @@ export function InspectorPanel(props: InspectorPanelProps) {
   const rawImageMetadata =
     selectedAsset?.mediaType === "image"
     && isRawImageExtension(selectedAsset.relativeFilePath)
+    && selectionCount < 2
+    && videoTechCache?.assetId === selectedAsset.assetId
+      ? videoTechCache.metadata
+      : null;
+
+  const fontExtractedMetadata =
+    selectedAsset?.mediaType === "font"
     && selectionCount < 2
     && videoTechCache?.assetId === selectedAsset.assetId
       ? videoTechCache.metadata
@@ -953,6 +963,14 @@ export function InspectorPanel(props: InspectorPanelProps) {
       const techLine = formatAudioTechnicalLine(audioTechMetadata);
       if (techLine) parts.push(techLine);
     }
+    // Serpent-485aeb：字体只写能从文件本身确定的格式；字重/样式无法可靠读取时
+    // 一律省略，不编造（读得到的字段留给后续解析器补）。
+    if (selectedAsset.mediaType === "font") {
+      const extension = selectedAsset.relativeFilePath.split(".").pop();
+      if (extension) {
+        parts.push(t("inspector.fontFormat", { format: extension.toUpperCase() }));
+      }
+    }
     return parts;
   }, [
     selectedAsset,
@@ -962,6 +980,22 @@ export function InspectorPanel(props: InspectorPanelProps) {
     audioTechMetadata,
     gifExtractedMetadata,
   ]);
+
+  // Serpent-485aeb：字体元信息行（家族/样式/版本/字重/字形数/字符集/厂商）。
+  const fontMetadataRows = useMemo(
+    () =>
+      buildFontInspectorRows(fontExtractedMetadata, {
+        scriptLabels: {
+          ja: t("inspector.fontScriptJa"),
+          "zh-Hans": t("inspector.fontScriptZhHans"),
+          "zh-Hant": t("inspector.fontScriptZhHant"),
+          ko: t("inspector.fontScriptKo"),
+          latin: t("inspector.fontScriptLatin"),
+        },
+        formatNumber: (value) => value.toLocaleString(locale),
+      }),
+    [fontExtractedMetadata, locale, t],
+  );
 
   const rawMetadataRows = useMemo(() => {
     if (
@@ -1533,7 +1567,9 @@ export function InspectorPanel(props: InspectorPanelProps) {
             </div>
           )}
 
-          {(technicalInfoParts.length > 0 || rawTechnicalMetadataRows.length > 0) && (
+          {(technicalInfoParts.length > 0
+            || rawTechnicalMetadataRows.length > 0
+            || fontMetadataRows.length > 0) && (
             <div
               aria-label={t("inspector.technicalMetadata")}
               className="inspector-tech-bar"
@@ -1542,6 +1578,19 @@ export function InspectorPanel(props: InspectorPanelProps) {
                 <span className="inspector-tech-part" key={part}>
                   {part}
                 </span>
+              ))}
+              {fontMetadataRows.map((row) => (
+                <div
+                  className="inspector-tech-part inspector-raw-tech-row"
+                  data-field={`font-${row.key}`}
+                  data-hover-tip={`${t(row.labelKey)}: ${row.value}`}
+                  key={row.key}
+                >
+                  <span className="inspector-raw-tech-label">
+                    {t(row.labelKey)}
+                  </span>
+                  <span className="inspector-raw-tech-value">{row.value}</span>
+                </div>
               ))}
               {rawTechnicalMetadataRows.map((row) => (
                 <div

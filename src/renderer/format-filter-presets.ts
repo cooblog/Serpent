@@ -11,6 +11,7 @@ import {
   MODEL_EXTENSIONS,
   VIDEO_EXTENSIONS,
   DOCUMENT_EXTENSIONS,
+  FONT_EXTENSIONS,
 } from "../shared/media-formats";
 import { AUDIO_EXTENSION_NAMES } from "../shared/audio-media";
 
@@ -52,6 +53,11 @@ export const FORMAT_FILTER_GROUPS: readonly FormatFilterGroup[] = [
   {
     labelKey: "filter.formatGroupDocument",
     extensions: documentFilterExtensions,
+  },
+  {
+    // Serpent-485aeb: fonts are their own category instead of falling into 其他.
+    labelKey: "filter.formatGroupFont",
+    extensions: dotless(FONT_EXTENSIONS),
   },
 ];
 

@@ -75,7 +75,7 @@ export const pluginInvocationAssetSchema = z.strictObject({
   id: boundedId,
   name: z.string().min(1).max(512),
   relativeFilePath: z.string().max(4096),
-  mediaType: z.enum(['image', 'video', 'audio', 'text', 'model', 'document', 'other']),
+  mediaType: z.enum(['image', 'video', 'audio', 'text', 'model', 'document', 'font', 'other']),
   byteSize: z.number().int().nonnegative(),
   durationMs: z.number().int().nonnegative().nullable().optional(),
   currentRevisionId: boundedId.optional(),

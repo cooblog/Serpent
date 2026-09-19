@@ -54,6 +54,15 @@ export const DOCUMENT_EXTENSIONS = [
   '.pdf', '.html', '.htm',
 ] as const;
 
+/**
+ * Serpent-485aeb: font formats with a card sample + viewer preview.
+ * TTC (collection) can be loaded by Chromium when it exposes a usable face;
+ * otherwise the surface reports a calm "cannot preview this collection".
+ */
+export const FONT_EXTENSIONS = [
+  '.ttf', '.otf', '.woff', '.woff2', '.ttc',
+] as const;
+
 export type ImageDecoder = 'sharp' | 'oiio';
 
 const sharpExtensions = new Set<string>(SHARP_IMAGE_EXTENSIONS);
@@ -67,6 +76,15 @@ const videoExtensions = new Set<string>(VIDEO_EXTENSIONS);
 const chromiumDirectPlayVideoExtensions = new Set<string>(CHROMIUM_DIRECT_PLAY_VIDEO_EXTENSIONS);
 const modelExtensions = new Set<string>(MODEL_EXTENSIONS);
 const documentExtensions = new Set<string>(DOCUMENT_EXTENSIONS);
+const fontExtensions = new Set<string>(FONT_EXTENSIONS);
+/** MIME types Chromium accepts for `@font-face` src. */
+const fontMimeByExtension: Record<string, string> = {
+  '.ttf': 'font/ttf',
+  '.otf': 'font/otf',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+  '.ttc': 'font/collection',
+};
 const audioProtocolMimeByExtension: Record<string, string> = {
   '.wav': 'audio/wav',
   '.mp3': 'audio/mpeg',
@@ -123,6 +141,7 @@ export function artifactProtocolMimeForExtension(extensionOrFilename: string): s
   return imageMimeForExtension(extension)
     ?? videoMimeForExtension(extension)
     ?? audioProtocolMimeByExtension[extension]
+    ?? fontMimeByExtension[extension]
     ?? (extension === '.json' ? 'application/json' : 'application/octet-stream');
 }
 
@@ -132,6 +151,15 @@ export function isSupportedModelExtension(extensionOrFilename: string): boolean 
 
 export function isSupportedDocumentExtension(extensionOrFilename: string): boolean {
   return documentExtensions.has(normalizedExtension(extensionOrFilename));
+}
+
+/** Serpent-485aeb: TTF / OTF / WOFF / WOFF2 / TTC are font assets. */
+export function isSupportedFontExtension(extensionOrFilename: string): boolean {
+  return fontExtensions.has(normalizedExtension(extensionOrFilename));
+}
+
+export function fontMimeForExtension(extensionOrFilename: string): string | null {
+  return fontMimeByExtension[normalizedExtension(extensionOrFilename)] ?? null;
 }
 
 export function imageDecoderForExtension(

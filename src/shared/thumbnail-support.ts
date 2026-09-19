@@ -19,6 +19,7 @@ export type ThumbnailSupportMediaType =
   | "text"
   | "model"
   | "document"
+  | "font"
   | "other";
 
 export function assetSupportsThumbnail(asset: {
@@ -29,6 +30,8 @@ export function assetSupportsThumbnail(asset: {
   // Documents (PDF etc.) get a first-page thumbnail; HTML thumbnails render
   // offscreen in Main (Serpent-8ca259).
   if (asset.mediaType === "document") return true;
+  // Fonts render a real sample line offscreen (Serpent-485aeb).
+  if (asset.mediaType === "font") return true;
   return asset.mediaType !== "other";
 }
 

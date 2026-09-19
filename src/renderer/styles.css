@@ -2042,6 +2042,14 @@ body.platform-darwin .app-shell.left-collapsed .toolbar-workspace-cluster {
   color: var(--text);
 }
 
+/* Serpent-d7acfa：侧栏 Ctrl/⌘ 多选的行。沿用与拖放目标相同的「accent 轻染 +
+   inset 细环」语言，但更轻，避免与当前浏览范围的 is-active 混淆。 */
+.nav-row.is-multi-selected {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 32%, transparent);
+  color: var(--text);
+}
+
 /* REQ-DND-001/002: asset-drag hover target — same background-only language as
    the active state, one shade stronger and accent-tinted. BUG-DND-001: the
    :hover companion keeps the accent tint above the plain hover shade
@@ -5273,6 +5281,147 @@ body.serpent-modal-open .app-shell {
   width: 100%;
   border: 0;
   background: white;
+}
+
+/* Serpent-485aeb：字体查看器。字形由 Renderer 自己用 FontFace 渲染（不是
+   iframe），设置面板沿用图片查看器底部 toolbar 的 chrome（可换行的浮动条）。 */
+.font-viewer {
+  position: relative;
+}
+
+.font-viewer-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 24px 32px 16px;
+}
+
+.font-viewer-specimen {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  color: var(--text);
+  word-break: break-word;
+}
+
+.font-viewer-specimen-row {
+  line-height: 1.25;
+  white-space: pre-wrap;
+}
+
+/* 复合选择器提高优先级：本块在 .preview-zoom-controls 之前，单类会被它的
+   position:absolute 覆盖。字体查看器控件多，改为在流内居中并允许换行，
+   否则窄窗口下 B/I/U 会被挤出可视区而点不到。 */
+.preview-zoom-controls.font-viewer-controls {
+  position: static;
+  align-self: center;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin: 0 16px 12px;
+  max-width: min(760px, calc(100% - 24px));
+  padding: 5px 12px;
+  transform: none;
+}
+
+.font-viewer-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--secondary);
+  font-size: calc(11px * var(--ui-font-scale));
+  white-space: nowrap;
+}
+
+/* 工具条上图标、输入框、下拉、滑杆、按钮的行高/内边距各不相同，曾出现看起来
+   没对齐（2026-09-19 反馈）。这里统一 24px 高并显式居中，让所有控件共用同一条
+   中心线；E2E 会量各控件的竖直中心并要求偏差 <= 1px。 */
+.preview-zoom-controls.font-viewer-controls {
+  align-items: center;
+}
+
+.font-viewer-control {
+  min-height: 24px;
+  line-height: 1.2;
+}
+
+.font-viewer-control > .icon,
+.font-viewer-control > .font-viewer-control-value,
+.font-viewer-control > input,
+.font-viewer-control > select {
+  align-self: center;
+  margin-block: 0;
+}
+
+.font-viewer-controls .font-viewer-text-input,
+.font-viewer-controls select {
+  height: 24px;
+  box-sizing: border-box;
+}
+
+.font-viewer-controls select {
+  padding: 0 3px;
+  line-height: 22px;
+}
+
+.font-viewer-control .icon {
+  color: var(--secondary);
+}
+
+.font-viewer-control-value {
+  min-width: 2.2em;
+  text-align: right;
+}
+
+.font-viewer-text-input {
+  width: min(200px, 28vw);
+  padding: 3px 6px;
+  border: 1px solid var(--divider);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+}
+
+.font-viewer-text-input:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.font-viewer-controls button.is-active {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  color: var(--text);
+}
+
+/* 预览文字撤回：只在有自定义文字时可点。 */
+.font-viewer-controls .font-viewer-text-reset:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.font-viewer-controls .font-viewer-text-reset:disabled:hover {
+  background: transparent;
+}
+
+.font-viewer-style-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(12px * var(--ui-font-scale));
+  line-height: 1;
+}
+
+.font-viewer-style-glyph[data-style="bold"] {
+  font-weight: 700;
+}
+
+.font-viewer-style-glyph[data-style="italic"] {
+  font-style: italic;
+}
+
+.font-viewer-style-glyph[data-style="underline"] {
+  text-decoration: underline;
 }
 
 .html-viewer-loading {
@@ -10623,10 +10772,15 @@ select.ai-config-input.ai-config-languages {
   color: var(--tertiary);
 }
 
+/* Serpent-485aeb：字体卡片封面是 16:9 的样张（不是 4:3），卡片框跟着一起变成
+   16:9，否则 contain 会在上下留出与样张底色不同的横条。 */
+.asset-card[data-media-type="font"] .asset-preview {
+  aspect-ratio: 16 / 9;
+}
+
 .asset-thumbnail {
   display: block;
-  width: 100%;
-  height: 100%;
+  width: 100%;  height: 100%;
   object-fit: contain;
   border-radius: inherit;
 }
@@ -10697,6 +10851,27 @@ select.ai-config-input.ai-config-languages {
 }
 
 .image-sequence-range-caption {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Serpent-866c20：序列帧确认面板的播放预览（只用主题 token，亮/暗一致）。 */
+.image-sequence-preview {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.image-sequence-preview-frame {
+  width: 100%;
+  max-height: 220px;
+  object-fit: contain;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--raised-2);
+}
+
+.image-sequence-preview-caption {
   font-variant-numeric: tabular-nums;
 }
 

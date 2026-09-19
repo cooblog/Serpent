@@ -51,6 +51,10 @@ import {
   inlineFolderEditDepth,
   type InlineFolderEditState,
 } from "./inline-folder-edit";
+import {
+  isToggleSelectionModifier,
+  resolveSelectionPlatform,
+} from "./selection-modifiers";
 import type { InlineSmartCollectionEditState } from "./inline-smart-collection-edit";
 import {
   buildUnifiedDirectoryNavEntries,
@@ -122,6 +126,7 @@ function NavRow({
   navFolderId,
   navFolderKind,
   navCollectionId,
+  multiSelected,
 }: {
   icon: IconName;
   appearance?: EntityAppearance | null;
@@ -129,7 +134,7 @@ function NavRow({
   label: string;
   count?: number;
   active?: boolean;
-  onClick?: () => void;
+  onClick?: (event: React.MouseEvent<HTMLButtonElement>) => void;
   onContextMenu?: (e: React.MouseEvent) => void;
   onDragOver?: (e: React.DragEvent<HTMLButtonElement>) => void;
   onDrop?: (e: React.DragEvent<HTMLButtonElement>) => void;
@@ -148,6 +153,8 @@ function NavRow({
   /** Serpent-vf8x: focus target for folder keyboard shortcuts. */
   navFolderId?: string;
   navFolderKind?: "managed" | "linked";
+  /** Serpent-d7acfa: row participates in the sidebar multi-folder selection. */
+  multiSelected?: boolean;
   /** Focus target for collection keyboard shortcuts. */
   navCollectionId?: string;
 }) {
@@ -160,7 +167,7 @@ function NavRow({
     <div className="nav-tree-row" style={{ paddingLeft: depth * 14 }}>
       {disclosure ?? <span className="nav-disclosure-spacer" aria-hidden="true" />}
       <button
-        className={`nav-row${active ? " is-active" : ""}${dropActive ? " is-drop-target" : ""}`}
+        className={`nav-row${active ? " is-active" : ""}${multiSelected ? " is-multi-selected" : ""}${dropActive ? " is-drop-target" : ""}`}
         data-nav-folder-id={navFolderId}
         data-nav-folder-kind={navFolderKind}
         data-nav-collection-id={navCollectionId}
@@ -857,6 +864,10 @@ export interface NavigationSidebarProps {
   ) => void;
   /** Canvas/sidebar folder selection for folder drag (Serpent-nno6). */
   selectedFolderIds: readonly string[];
+  /**
+   * Serpent-d7acfa：Ctrl/⌘+点击侧栏文件夹行时切换它是否加入多选（不导航）。
+   */
+  onToggleFolderSelection: (folderId: string) => void;
   onAssetsDroppedOnTrash: (assetIds: string[]) => void;
   onFoldersDroppedOnTrash: (folderIds: string[]) => void;
   onAssetsDroppedOnCollection: (
@@ -938,6 +949,18 @@ export interface NavigationSidebarProps {
 // NavigationSidebar — component
 // ---------------------------------------------------------------------------
 
+/** Serpent-d7acfa：侧栏多选与画布选择共用同一套平台修饰键（mac ⌘ / Windows Ctrl）。 */
+const SIDEBAR_SELECTION_PLATFORM = resolveSelectionPlatform(
+  typeof navigator === "undefined" ? "" : navigator.userAgent,
+);
+
+function isFolderMultiSelectClick(event: {
+  readonly metaKey: boolean;
+  readonly ctrlKey: boolean;
+}): boolean {
+  return isToggleSelectionModifier(event, SIDEBAR_SELECTION_PLATFORM);
+}
+
 export function NavigationSidebar(props: NavigationSidebarProps) {
   const t = useT();
   const {
@@ -984,6 +1007,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     onAssetsDroppedOnFolder,
     onFoldersDroppedOnFolder,
     selectedFolderIds,
+    onToggleFolderSelection,
     onAssetsDroppedOnTrash,
     onFoldersDroppedOnTrash,
     onAssetsDroppedOnCollection,
@@ -1642,7 +1666,16 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
             label={entry.name}
             navFolderId={entry.folderId}
             navFolderKind="managed"
-            onClick={() => void onChooseFolder(entry.folderId)}
+            multiSelected={selectedFolderIds.includes(entry.folderId)}
+            onClick={(event) => {
+              // Serpent-d7acfa：侧栏树里的文件夹也能 Ctrl/⌘ 多选，复用画布卡片的
+              // 同一份选择状态与同一个批量菜单入口（普通点击仍然进文件夹）。
+              if (isFolderMultiSelectClick(event)) {
+                onToggleFolderSelection(entry.folderId);
+                return;
+              }
+              void onChooseFolder(entry.folderId);
+            }}
             draggable
             onDragStart={(event) => {
               const ids = resolveDraggedFolderIds(
@@ -1660,6 +1693,23 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
             }}
             onContextMenu={(event) => {
               event.preventDefault();
+              // Serpent-d7acfa：右键的行属于多选时，直接开批量菜单（回收站/硬盘
+              // 删除/设置图标/忽略一次作用于全部选中文件夹）。
+              if (
+                selectedFolderIds.length > 1 &&
+                selectedFolderIds.includes(entry.folderId)
+              ) {
+                onOpenContextMenu(
+                  {
+                    type: "multi-asset",
+                    assetIds: [],
+                    folderIds: [...selectedFolderIds],
+                    count: selectedFolderIds.length,
+                  },
+                  { x: event.clientX, y: event.clientY },
+                );
+                return;
+              }
               onOpenContextMenu(
                 {
                   type: "folder",
@@ -1735,6 +1785,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           label={entry.name}
           navFolderId={entry.folderId}
           navFolderKind="linked"
+          multiSelected={selectedFolderIds.includes(entry.folderId)}
           count={entry.assetCount}
           title={linkedFolderHoverDetail(
             entry.status,
@@ -1748,7 +1799,14 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           onClick={
             offline
               ? () => void onRelinkFolder(entry.folderId)
-              : () => void onChooseFolder(entry.folderId)
+              : (event) => {
+                  // Serpent-d7acfa：链接根同样支持 Ctrl/⌘ 多选（离线时仍走重新指定）。
+                  if (isFolderMultiSelectClick(event)) {
+                    onToggleFolderSelection(entry.folderId);
+                    return;
+                  }
+                  void onChooseFolder(entry.folderId);
+                }
           }
           onContextMenu={(event) => {
             event.preventDefault();
@@ -1761,6 +1819,22 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
                 name: lf.displayName,
                 targetFolderId: "",
               });
+              return;
+            }
+            // Serpent-d7acfa：多选中的行开批量菜单（链接根也支持外观/忽略）。
+            if (
+              selectedFolderIds.length > 1 &&
+              selectedFolderIds.includes(entry.folderId)
+            ) {
+              onOpenContextMenu(
+                {
+                  type: "multi-asset",
+                  assetIds: [],
+                  folderIds: [...selectedFolderIds],
+                  count: selectedFolderIds.length,
+                },
+                { x: event.clientX, y: event.clientY },
+              );
               return;
             }
             onOpenContextMenu(

@@ -1,6 +1,7 @@
 import { AUDIO_EXTENSIONS } from "./audio-media";
 import {
   DOCUMENT_EXTENSIONS,
+  FONT_EXTENSIONS,
   IMAGE_EXTENSIONS,
   MODEL_EXTENSIONS,
   VIDEO_EXTENSIONS,
@@ -19,6 +20,7 @@ export function knownProductFormatExtensionsDotless(): string[] {
     ...VIDEO_EXTENSIONS,
     ...MODEL_EXTENSIONS,
     ...DOCUMENT_EXTENSIONS,
+    ...FONT_EXTENSIONS,
     ...AUDIO_EXTENSIONS,
     ...TEXT_EXTENSIONS,
   ]) {

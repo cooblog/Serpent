@@ -22,6 +22,15 @@ import { z } from 'zod';
 export const DOCUMENT_THUMBNAIL_WIDTH = 1024;
 /** generator_version tag for document thumbnail artifacts. */
 export const DOCUMENT_THUMBNAIL_GENERATOR_VERSION = 'offscreen-web-1';
+/**
+ * Serpent-485aeb: font sample cards use the same offscreen pipeline, but Main
+ * serves a generated sample sheet (`serpent://source/...&sample=font`). A
+ * distinct tag keeps font cards from being invalidated by the document check;
+ * `-2` re-renders them at 16:9 with a larger sample line.
+ */
+export const FONT_THUMBNAIL_GENERATOR_VERSION = 'offscreen-font-2';
+/** Font sample sheets are captured 16:9 (Serpent-485aeb feedback). */
+export const FONT_THUMBNAIL_HEIGHT = 576;
 /** Typed render failure codes (benign suppression in thumbnail-support.ts). */
 export const documentThumbnailErrorCodeSchema = z.enum([
   'DOCUMENT_LOAD_FAILED', // page failed to load (404, malformed file, …)
@@ -39,6 +48,11 @@ export const documentThumbnailRenderRequestSchema = z.strictObject({
   url: z.string().min(1),
   /** Capture viewport width (px). */
   width: z.number().int().positive(),
+  /**
+   * Capture viewport height (px). Omitted → the document default (800).
+   * Font sample sheets pass 16:9 so the card cover is 16:9, not 4:3.
+   */
+  height: z.number().int().positive().optional(),
 });
 
 export type DocumentThumbnailRenderRequest = z.infer<typeof documentThumbnailRenderRequestSchema>;

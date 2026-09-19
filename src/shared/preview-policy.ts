@@ -28,7 +28,7 @@ function extensionFor(fileName: string): string {
 
 export type SourceDirectPreviewInput = Readonly<{
   fileName: string;
-  mediaType: "image" | "video" | "audio" | "text" | "model" | "document" | "other";
+  mediaType: "image" | "video" | "audio" | "text" | "model" | "document" | "font" | "other";
   byteSize: number;
   width: number | null | undefined;
   height: number | null | undefined;

@@ -430,6 +430,15 @@ import {
   LibraryOperationError,
   libraryOpenBlockingTitleKey,
 } from "./error-utils";
+import {
+  isUserCancellation,
+  userCancellationNoticeKey,
+} from "./user-cancellation";
+import {
+  importedSequenceFrameUrl,
+  type SequencePreviewFrame,
+  type SequencePreviewSource,
+} from "./image-sequence-preview";
 
 import type { EntityAppearance, EntityAppearanceTarget } from "../shared/entity-appearance";
 import type {
@@ -983,6 +992,44 @@ function AppInner() {
       setImageSequenceImportIndex(0);
     }
   }, [imageSequenceImportOffer]);
+
+  /**
+   * Serpent-866c20：确认面板的预览来源。导入后成组时帧已经是库内资产（走 source
+   * 通道）；导入前的候选帧只交给 Main 的 offerId + 帧号解析，Renderer 不经手路径。
+   */
+  const imageSequencePreviewSource = useMemo((): SequencePreviewSource | null => {
+    const offer = imageSequenceImportOffer;
+    if (!offer) return null;
+    const index = Math.min(
+      imageSequenceImportIndex,
+      Math.max(0, offer.sequences.length - 1),
+    );
+    const sequence = offer.sequences[index];
+    if (!sequence) return null;
+    const planned = postImportSequencePlanRef.current?.sequences[index];
+    if (planned && planned.frameAssetIds.length > 0) {
+      const frames: SequencePreviewFrame[] = [];
+      planned.frameAssetIds.forEach((assetId, offset) => {
+        const revisionId = planned.frameRevisionIds[offset];
+        // 没有修订就无法按 source 协议取源文件，宁可少一帧也不给坏 URL。
+        if (!revisionId) return;
+        frames.push({
+          frameNumber:
+            planned.frameNumbers[offset] ?? sequence.firstFrame + offset,
+          url: importedSequenceFrameUrl(offer.libraryId, assetId, revisionId),
+        });
+      });
+      return frames.length > 0 ? { kind: "assets", frames } : null;
+    }
+    if (!offer.offerId || isPostImportSequenceOfferId(offer.offerId)) return null;
+    return {
+      kind: "pending",
+      offerId: offer.offerId,
+      sequenceIndex: index,
+      firstFrame: sequence.firstFrame,
+      frameCount: sequence.frameCount,
+    };
+  }, [imageSequenceImportIndex, imageSequenceImportOffer]);
   const [conflictPhase, setConflictPhase] = useState<ImportConflictPhase | null>(
     null,
   );
@@ -8006,6 +8053,14 @@ function AppInner() {
     trashManagedFolder: (folderId, name) => {
       requestTrashFolder(folderId, name);
     },
+    // Serpent-d7acfa：多选文件夹卡片时快捷键对全部选中项生效（复用既有的
+    // 混合选择入口，托管/链接/根目录的跳过规则保持一致）。
+    trashFolders: (folderIds) => {
+      void trashMixedSelection([], folderIds);
+    },
+    deleteFolders: (folderIds) => {
+      requestSelectionDiskDelete([], folderIds);
+    },
     deleteFolderFromDisk: (folderId, name) => {
       const virtual = parseLinkedVirtualFolderId(folderId);
       if (virtual) {
@@ -9315,6 +9370,10 @@ function AppInner() {
       const gone =
         caught instanceof LibraryOperationError &&
         (caught.code === "LIBRARY_NOT_FOUND" || caught.code === "NOT_A_LIBRARY");
+      if (cancelled) {
+        // 用户在确认窗点了取消：信息提示，不是失败。
+        setNotice(t(userCancellationNoticeKey("libraryDelete")));
+      }
       if (!cancelled) {
         playTaskCompletionSound(startedAt);
         setError(toMessage(caught, t("toast.libraryDeleteFailed"), locale));
@@ -9585,6 +9644,10 @@ function AppInner() {
       playTaskCompletionSound(startedAt);
     } catch (caught) {
       playTaskCompletionSound(startedAt);
+      if (isUserCancellation(caught)) {
+        setNotice(t(userCancellationNoticeKey("permanentDelete")));
+        return;
+      }
       setError(toMessage(caught, t("toast.permanentDeleteFailed"), locale));
     } finally {
       setUiState("ready");
@@ -9876,6 +9939,10 @@ function AppInner() {
       playTaskCompletionSound(startedAt);
     } catch (caught) {
       playTaskCompletionSound(startedAt);
+      if (isUserCancellation(caught)) {
+        setNotice(t(userCancellationNoticeKey("emptyTrash")));
+        return;
+      }
       setError(toMessage(caught, t("toast.emptyTrashFailed"), locale));
     } finally {
       setUiState("ready");
@@ -12365,6 +12432,7 @@ function AppInner() {
       error={imageSequenceImportError}
       offer={imageSequenceImportOffer}
       sequenceIndex={imageSequenceImportIndex}
+      previewSource={imageSequencePreviewSource}
       onCancel={() => {
         postImportSequencePlanRef.current = null;
         setImageSequenceImportOffer(null);
@@ -12683,6 +12751,14 @@ function AppInner() {
         }
         onFoldersDroppedOnFolder={handleFoldersDroppedOnFolder}
         selectedFolderIds={selectedFolderIds}
+        onToggleFolderSelection={(folderId) => {
+          // Serpent-d7acfa：侧栏 Ctrl/⌘+点击切换多选，与画布文件夹卡片共用状态。
+          setSelectedFolderIds((current) =>
+            current.includes(folderId)
+              ? current.filter((id) => id !== folderId)
+              : [...current, folderId],
+          );
+        }}
         onAssetsDroppedOnTrash={(assetIds) =>
           handleAssetsDroppedOnTrash(assetIds)
         }

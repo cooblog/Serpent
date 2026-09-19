@@ -3,7 +3,7 @@
  * Documents are currently PDF/HTML, and models are the supported 3D formats.
  */
 
-export type AssetMediaType = "image" | "video" | "audio" | "text" | "model" | "document" | "other";
+export type AssetMediaType = "image" | "video" | "audio" | "text" | "model" | "document" | "font" | "other";
 
 /** True when a single asset media kind may produce or show an auto palette. */
 export function mediaTypeSupportsAutoPalette(

@@ -12,6 +12,7 @@ import {
   MODEL_EXTENSIONS,
   VIDEO_EXTENSIONS,
   DOCUMENT_EXTENSIONS,
+  FONT_EXTENSIONS,
 } from "../../src/shared/media-formats";
 import {
   FORMAT_FILTER_GROUPS,
@@ -40,10 +41,21 @@ describe("format-filter-presets", () => {
       ...DOCUMENT_EXTENSIONS.map((extension) => extension.slice(1)).filter(
         (extension) => !otherFormatSet.has(extension),
       ),
+      // Serpent-485aeb: fonts have their own group, no longer 其他.
+      ...FONT_EXTENSIONS.map((extension) => extension.slice(1)),
       ...OTHER_FORMAT_EXTENSIONS,
     ];
     expect(new Set(chips)).toEqual(new Set(expected));
     expect(chips.length).toBe(new Set(chips).size);
+  });
+
+  it("keeps the font group aligned with the font registry", () => {
+    const fontGroup = FORMAT_FILTER_GROUPS.find(
+      (group) => group.labelKey === "filter.formatGroupFont",
+    );
+    expect(fontGroup?.extensions).toEqual(
+      FONT_EXTENSIONS.map((extension) => extension.slice(1)),
+    );
   });
 
   it("emits dotless tokens matching the comma-field format", () => {

@@ -41,6 +41,7 @@ import { AudioPlayerControls } from "./AudioPlayerControls";
 import { TextViewerControls, type TextViewerControlsHandle } from "./TextViewerControls";
 import { PdfViewerSurface } from "./PdfViewerSurface";
 import { HtmlViewerSurface } from "./HtmlViewerSurface";
+import { FontViewerSurface } from "./FontViewerSurface";
 import { useViewerVolume } from "./use-viewer-volume";
 import { ZoomableImage } from "./zoomable-preview-image";
 import { useViewerChromeContrast } from "./use-viewer-chrome-contrast";
@@ -1142,6 +1143,18 @@ const AssetPreviewModalContent = forwardRef<
               onInfoNotice={onInfoNotice}
               onPresentationReady={notifyPresentationReady}
               preloadOnly={preloadOnly}
+              sourceUrl={resolution.url}
+            />
+          ) : ready && resolution?.mediaType === "font" && resolution.url ? (
+            // Serpent-485aeb: glyphs render in the Renderer with a FontFace;
+            // preview text/size are view-only and never written back.
+            <FontViewerSurface
+              api={api}
+              assetId={asset.assetId}
+              isFullscreen={isFullscreen}
+              key={`${libraryId}:${asset.assetId}`}
+              libraryId={libraryId}
+              onPresentationReady={notifyPresentationReady}
               sourceUrl={resolution.url}
             />
           ) : ready && resolution?.mediaType === "document" && resolution.url ? (
