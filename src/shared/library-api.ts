@@ -374,6 +374,7 @@ export interface SerpentLibraryApi {
     folderId?: string;
     recursive: boolean;
     showIgnored?: boolean;
+    assetIds?: readonly string[];
   }): Promise<LibraryApiResult<AssetSummary[]>>;
   createImageSequence(input: {
     libraryId: string;

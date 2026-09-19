@@ -402,6 +402,7 @@ export const rendererRequestSchema = z.discriminatedUnion('type', [
     folderId: optionalIdentifierSchema,
     recursive: z.boolean(),
     showIgnored: z.boolean().optional(),
+    assetIds: z.array(identifierSchema).min(1).max(10_000).optional(),
   }),
   z.strictObject({
     type: z.literal('asset.sequence.create.request'),
@@ -1604,7 +1605,7 @@ export const workerCommandSchema = z.discriminatedUnion('type', [
     folderId: folderScopeIdSchema.optional(),
     recursive: z.boolean(),
     showIgnored: z.boolean().optional(),
-    assetIds: z.array(identifierSchema).min(1).max(200).optional(),
+    assetIds: z.array(identifierSchema).min(1).max(10_000).optional(),
   }),
   z.strictObject({
     type: z.literal('asset.sequence.create'),

@@ -895,6 +895,7 @@ export const zhCN = {
     imageSequence: {
       title: "创建序列图",
       summary: "将所选 {count} 张连续编号图片作为一个序列播放。",
+      detail: "检测到「{name}」（{count} 帧，{width}×{height}）。请确认范围与帧率。",
       updateTitle: "设置序列帧率",
       updateSummary: "修改这套 {count} 帧序列的播放速度。",
       fps: "帧率（FPS）",

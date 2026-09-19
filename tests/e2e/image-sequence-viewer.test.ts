@@ -103,6 +103,25 @@ test("auto-detects, manually rebuilds, persists, plays, rotates and mirrors an i
       .first()
       .click();
 
+    const importConfirm = window.getByRole("dialog", { name: "导入序列帧" });
+    await expect(window.locator(".asset-card").first()).toBeVisible({
+      timeout: 30_000,
+    });
+    await expect
+      .poll(
+        async () => {
+          if (await importConfirm.isVisible()) return "dialog";
+          const count = await window.locator(".asset-card").count();
+          return count === 1 ? "grouped" : `count:${count}`;
+        },
+        { timeout: 30_000 },
+      )
+      .toMatch(/^(dialog|grouped)$/);
+    if (await importConfirm.isVisible()) {
+      await expect(importConfirm.getByText("帧范围")).toBeVisible();
+      await importConfirm.getByRole("button", { name: "导入为序列帧" }).click();
+    }
+
     // A sequence is represented by one logical card whose display name is
     // derived from the complete frame range (for example motion_000~002),
     // not by the first source frame's filename.
@@ -142,6 +161,9 @@ test("auto-detects, manually rebuilds, persists, plays, rotates and mirrors an i
     // 13 FPS also proves that a non-default user value survives a restart.
     // It deliberately avoids an integer number of 3-frame loops per second,
     // which would make a background-throttled Electron window look static.
+    await expect(sequenceDialog.getByText("帧范围")).toBeVisible();
+    await expect(sequenceDialog.getByLabel("开始帧")).toBeVisible();
+    await expect(sequenceDialog.getByLabel("结束帧")).toBeVisible();
     await sequenceDialog.getByLabel("帧率（FPS）").fill("13");
     await sequenceDialog
       .getByRole("button", { name: "创建序列图", exact: true })
@@ -157,14 +179,11 @@ test("auto-detects, manually rebuilds, persists, plays, rotates and mirrors an i
     await fpsDialog.getByRole("button", { name: "保存帧率", exact: true }).click();
     await expect(primaryCard.getByText("3F · 17 FPS · 0.18s", { exact: true })).toBeVisible();
     await primaryCard.click();
-    await expect(window.locator(".inspector-hero-stack")).toHaveAttribute(
-      "data-layer-count",
-      "3",
+    await expect(window.locator(".inspector-hero-sequence-preview")).toBeVisible();
+    await expectPaintedSequenceCanvas(
+      window.locator(".inspector-hero-sequence-preview .sequence-frame-canvas"),
     );
-    await expect(window.locator(".inspector-hero-stack-layer[data-depth='1']")).toHaveCSS(
-      "transform",
-      "matrix(1, 0, 0, 1, 0, 0)",
-    );
+    await expect(window.locator(".inspector-hero-stack")).toHaveCount(0);
 
     await primaryCard.dblclick();
     const viewer = window.getByRole("region", {

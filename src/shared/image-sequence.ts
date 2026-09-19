@@ -130,6 +130,55 @@ export function formatImageSequenceDisplayName(input: {
 }
 
 /**
+ * Digit count actually written in the filename. Zero-padded names keep their
+ * pad width; unpadded names use the decimal width of the frame number.
+ */
+function writtenDigitCount(frame: ImageSequenceFrameCandidate): number {
+  return frame.numericWidth > 0
+    ? frame.numericWidth
+    : String(frame.frameNumber).length;
+}
+
+/**
+ * Split one prefix/style/extension group into padding conventions.
+ *
+ * `01`–`09` carry an explicit pad width of 2, but `10`–`99` are written
+ * without a leading zero. Those later frames still belong to the same
+ * two-digit run. Unpadded `0`–`35` have no explicit pad and stay together
+ * even when the digit count grows. Distinct pad widths (`01` vs `001`)
+ * never merge.
+ */
+function partitionImageSequenceNumbering(
+  frames: readonly ImageSequenceFrameCandidate[],
+): { numericWidth: number; frames: ImageSequenceFrameCandidate[] }[] {
+  const explicitWidths = new Set<number>();
+  for (const frame of frames) {
+    if (frame.numericWidth > 0) explicitWidths.add(frame.numericWidth);
+  }
+  const assigned = new Set<ImageSequenceFrameCandidate>();
+  const partitions: { numericWidth: number; frames: ImageSequenceFrameCandidate[] }[] =
+    [];
+  for (const width of [...explicitWidths].sort((left, right) => left - right)) {
+    const bucket: ImageSequenceFrameCandidate[] = [];
+    for (const frame of frames) {
+      if (assigned.has(frame)) continue;
+      const matchesExplicitPad = frame.numericWidth === width;
+      const continuesPaddedRun =
+        frame.numericWidth === 0 && writtenDigitCount(frame) === width;
+      if (!matchesExplicitPad && !continuesPaddedRun) continue;
+      bucket.push(frame);
+      assigned.add(frame);
+    }
+    if (bucket.length > 0) partitions.push({ numericWidth: width, frames: bucket });
+  }
+  const remainder = frames.filter((frame) => !assigned.has(frame));
+  if (remainder.length > 0) {
+    partitions.push({ numericWidth: 0, frames: [...remainder] });
+  }
+  return partitions;
+}
+
+/**
  * Split filenames into maximal consecutive numbered image runs.
  *
  * Values may be bare filenames or relative paths. Grouping is always scoped by
@@ -137,7 +186,8 @@ export function formatImageSequenceDisplayName(input: {
  * when a caller accidentally passes a mixed-directory list.
  *
  * Unpadded runs (`_0`…`_35`) share one group even when digit width grows.
- * Zero-padded runs (`_0001`…`_0035`) stay width-strict.
+ * Zero-padded runs stay width-strict (`_01` vs `_001`), but a padded width
+ * continues after the leading zeros run out (`_01`…`_12`, `_00001`…`_10000`).
  * Parentheses style never merges with trailing-digit style.
  */
 export function detectImageSequences(
@@ -160,7 +210,6 @@ export function detectImageSequences(
       parsed.prefix.normalize("NFC").toLocaleLowerCase("en-US"),
       parsed.extension,
       parsed.numberStyle,
-      parsed.numericWidth,
     ].join("\u0000");
     const group = groups.get(key) ?? [];
     group.push({
@@ -175,34 +224,36 @@ export function detectImageSequences(
 
   const result: ImageSequenceCandidate[] = [];
   for (const frames of groups.values()) {
-    frames.sort(
-      (left, right) =>
-        left.frameNumber - right.frameNumber || left.name.localeCompare(right.name),
-    );
-    let run: ImageSequenceFrameCandidate[] = [];
-    const emit = () => {
-      if (run.length < minimumFrameCount) return;
-      const head = run[0]!;
-      const parsed = parseImageSequenceFileName(head.name);
-      if (!parsed) return;
-      result.push({
-        extension: parsed.extension,
-        frames: run,
-        numberStyle: head.numberStyle,
-        numericWidth: head.numericWidth,
-        prefix: parsed.prefix,
-      });
-    };
-    for (const frame of frames) {
-      const previous = run.at(-1);
-      if (!previous || frame.frameNumber === previous.frameNumber + 1) {
-        run = [...run, frame];
-        continue;
+    for (const partition of partitionImageSequenceNumbering(frames)) {
+      const sorted = [...partition.frames].sort(
+        (left, right) =>
+          left.frameNumber - right.frameNumber || left.name.localeCompare(right.name),
+      );
+      let run: ImageSequenceFrameCandidate[] = [];
+      const emit = () => {
+        if (run.length < minimumFrameCount) return;
+        const head = run[0]!;
+        const parsed = parseImageSequenceFileName(head.name);
+        if (!parsed) return;
+        result.push({
+          extension: parsed.extension,
+          frames: run,
+          numberStyle: head.numberStyle,
+          numericWidth: partition.numericWidth,
+          prefix: parsed.prefix,
+        });
+      };
+      for (const frame of sorted) {
+        const previous = run.at(-1);
+        if (!previous || frame.frameNumber === previous.frameNumber + 1) {
+          run = [...run, frame];
+          continue;
+        }
+        emit();
+        run = [frame];
       }
       emit();
-      run = [frame];
     }
-    emit();
   }
   return result.sort((left, right) =>
     left.frames[0]!.value.localeCompare(right.frames[0]!.value),

@@ -1874,6 +1874,23 @@ describe('batch rating protocol', () => {
       sourcePath: '/private/library/asset.png',
     })).toThrow();
   });
+
+  it('accepts asset.list.request with an explicit id set larger than the old 200 cap', () => {
+    const assetIds = Array.from({ length: 151 }, (_, index) => `asset-${index + 1}`);
+    expect(
+      parseRendererRequest({
+        type: 'asset.list.request',
+        libraryId: 'library-01',
+        recursive: true,
+        assetIds,
+      }),
+    ).toEqual({
+      type: 'asset.list.request',
+      libraryId: 'library-01',
+      recursive: true,
+      assetIds,
+    });
+  });
 });
 
 describe('worker request protocol', () => {
@@ -3096,5 +3113,25 @@ describe('library deletion deferred-cleanup protocol (Serpent-65d837)', () => {
         command: { type: 'system.cleanup-pending-deletions', asidePaths: [] },
       }),
     ).toThrow();
+  });
+
+  it('accepts asset.list by 151 ids so create-sequence can resolve a paged-out folder', () => {
+    const assetIds = Array.from({ length: 151 }, (_, index) => `asset-${index + 1}`);
+    expect(
+      parseWorkerRequest({
+        requestId: 'list-by-ids-01',
+        command: {
+          type: 'asset.list',
+          libraryId: 'library-01',
+          recursive: true,
+          assetIds,
+        },
+      }).command,
+    ).toEqual({
+      type: 'asset.list',
+      libraryId: 'library-01',
+      recursive: true,
+      assetIds,
+    });
   });
 });

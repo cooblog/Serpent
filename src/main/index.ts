@@ -2680,6 +2680,9 @@ async function commandFor(
         folderId: request.folderId,
         recursive: request.recursive,
         showIgnored: request.showIgnored,
+        ...(request.assetIds && request.assetIds.length > 0
+          ? { assetIds: request.assetIds }
+          : {}),
       };
     case "asset.import-files.request": {
       const sourcePaths = await selectImportSources("files");

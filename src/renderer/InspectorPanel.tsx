@@ -55,6 +55,10 @@ import { PluginInspectorSections } from "./plugin-inspector-sections";
 import { PluginInspectorViews } from "./plugin-inspector-views";
 import { createPluginMenuContributionContext } from "./plugin-contribution-context";
 import { splitFilenameForDisplay } from "./filename-display";
+import { SequenceFrameCanvas } from "./SequenceFrameCanvas";
+import { advanceImageSequenceFrame } from "./image-sequence-playback";
+import { sequencePreviewIntervalMs } from "./image-sequence-preview";
+import { inspectorHeroPreviewKind } from "./inspector-hero-preview";
 import { PaneSurface } from "./ui/surfaces";
 import { isCorruptAsset } from "./availability-affordance";
 import {
@@ -274,6 +278,62 @@ function InspectorHeroSinglePreview({
   );
 }
 
+function InspectorHeroSequencePreview({
+  asset,
+  library,
+  cardFeelEnabled = false,
+}: {
+  asset: AssetSummary;
+  library: RendererLibrarySummary | null;
+  cardFeelEnabled?: boolean;
+}) {
+  const sequence = asset.sequence;
+  const [frameIndex, setFrameIndex] = useState(0);
+  const cardFeelTiltProps = cardFeelEnabled
+    ? ({ "data-card-feel-tilt": "" } as const)
+    : {};
+
+  useEffect(() => {
+    setFrameIndex(0);
+  }, [sequence?.sequenceId]);
+
+  useEffect(() => {
+    if (!sequence || sequence.frames.length < 2) return undefined;
+    const timer = window.setInterval(
+      () =>
+        setFrameIndex((current) =>
+          advanceImageSequenceFrame(current, sequence.frames.length, true),
+        ),
+      sequencePreviewIntervalMs(sequence.fps),
+    );
+    return () => window.clearInterval(timer);
+  }, [sequence]);
+
+  if (!sequence || sequence.frames.length < 2 || !library) {
+    return (
+      <InspectorHeroSinglePreview
+        asset={asset}
+        cardFeelEnabled={cardFeelEnabled}
+        library={library}
+      />
+    );
+  }
+
+  return (
+    <div className="inspector-hero-preview inspector-hero-sequence-preview">
+      <div className="inspector-hero-face" {...cardFeelTiltProps}>
+        <SequenceFrameCanvas
+          alt={asset.displayName}
+          fallbackUrl={resolveInspectorPreviewSrc(asset, library)}
+          frameIndex={frameIndex % sequence.frames.length}
+          frames={sequence.frames}
+          libraryId={library.libraryId}
+        />
+      </div>
+    </div>
+  );
+}
+
 function InspectorHeroStackLayer({
   asset,
   library,
@@ -423,33 +483,16 @@ function InspectorHero({
 }) {
   const { t } = useLocale();
   const isMulti = selectionCount >= 2;
-  const sequenceAssets = useMemo(() => {
-    const frames = asset.sequence?.frames;
-    if (!frames || frames.length < 3) return null;
-    const picked = [
-      frames[0]!,
-      frames[Math.floor((frames.length - 1) / 2)]!,
-      frames.at(-1)!,
-    ];
-    return picked.map((frame) => ({
-      ...asset,
-      assetId: frame.assetId,
-      displayName: frame.displayName,
-      relativeFilePath: frame.relativeFilePath,
-      currentRevisionId: frame.currentRevisionId,
-      thumbnailStatus: frame.thumbnailArtifactId ? "ready" as const : null,
-      thumbnailArtifactId: frame.thumbnailArtifactId,
-      previewKind: frame.previewKind ?? null,
-      previewRevisionId: frame.previewRevisionId ?? null,
-      sequence: undefined,
-    }));
-  }, [asset]);
+  const heroKind = inspectorHeroPreviewKind({
+    selectionCount,
+    sequenceFrameCount: asset.sequence?.frames.length,
+  });
   const stackAssets = useMemo(
     () =>
-      isMulti
+      heroKind === "multi-stack"
         ? pickInspectorStackAssets(asset, selectedAssets, 3)
         : [asset],
-    [asset, isMulti, selectedAssets],
+    [asset, heroKind, selectedAssets],
   );
   const title = isMulti
     ? t("inspector.multiSelectionTitle", {
@@ -463,7 +506,7 @@ function InspectorHero({
 
   return (
     <div className={`inspector-hero-compact${isMulti ? " is-multi" : ""}`}>
-      {isMulti ? (
+      {heroKind === "multi-stack" ? (
         <InspectorHeroMultiStack
           key={`${asset.assetId}:${selectionCount}:${stackAssets
             .map((item) => item.assetId)
@@ -473,13 +516,11 @@ function InspectorHero({
           stackAssets={stackAssets}
           title={title}
         />
-      ) : sequenceAssets ? (
-        <InspectorHeroMultiStack
-          key={asset.sequence!.sequenceId}
+      ) : heroKind === "sequence-playback" ? (
+        <InspectorHeroSequencePreview
+          asset={asset}
+          cardFeelEnabled={cardFeelEnabled}
           library={library}
-          primary={sequenceAssets[0]!}
-          stackAssets={sequenceAssets}
-          title={title}
         />
       ) : (
         <InspectorHeroSinglePreview

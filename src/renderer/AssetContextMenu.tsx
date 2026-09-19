@@ -54,7 +54,9 @@ import {
 import {
   buildMultiAssetMenuSkipReport,
   formatMultiAssetMenuSkipFooter,
+  type MenuSkipScopeOptions,
 } from "./menu-skip-report";
+import { canCreateImageSequenceFromSelection } from "./image-sequence-selection";
 import type { SerpentPluginManagerApi } from "../shared/plugin-manager-api";
 import type { PluginContributionContext } from "../plugins/plugin-context";
 import {
@@ -296,6 +298,8 @@ interface AssetContextMenuProps {
   smartCollections: SmartCollectionSummary[];
   activeCollectionId: string | null;
   assets: AssetSummary[];
+  /** Current browse-scope IDs so select-all is not treated as "out of scope". */
+  menuSkipScope?: MenuSkipScopeOptions;
   onRenameSmartCollection: (id: string, name: string) => void;
   onUpdateSmartCollection: (id: string) => void;
   onDeleteSmartCollection: (id: string, name: string) => void;
@@ -406,6 +410,7 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
     smartCollections,
     activeCollectionId,
     assets,
+    menuSkipScope,
     onRenameSmartCollection,
     onUpdateSmartCollection,
     onDeleteSmartCollection,
@@ -1432,28 +1437,33 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               targetAssetIds,
               targetAssets,
               targetFolderIds,
+              menuSkipScope,
             );
             const trashAssetIds = [...skipReport.trash.processAssetIds];
-            const managedAssetIds = targetAssets
-              .filter(
-                (asset) =>
-                  trashAssetIds.includes(asset.assetId) &&
-                  asset.locationKind === "managed",
-              )
-              .map((asset) => asset.assetId);
-            const linkedAssetIds = targetAssets
-              .filter(
-                (asset) =>
-                  trashAssetIds.includes(asset.assetId) &&
-                  asset.locationKind === "linked",
-              )
-              .map((asset) => asset.assetId);
+            const linkedIdSet = new Set(
+              targetAssets
+                .filter((asset) => asset.locationKind === "linked")
+                .map((asset) => asset.assetId),
+            );
+            const linkedAssetIds = trashAssetIds.filter((assetId) =>
+              linkedIdSet.has(assetId),
+            );
+            const managedAssetIds = trashAssetIds.filter(
+              (assetId) => !linkedIdSet.has(assetId),
+            );
             const availableManagedAssetIds = [
               ...skipReport.move.processAssetIds,
             ];
-            const availableAssetIds = targetAssets
+            const loadedAvailableIds = targetAssets
               .filter((asset) => asset.availability === "available")
               .map((asset) => asset.assetId);
+            const loadedAvailableSet = new Set(loadedAvailableIds);
+            const availableAssetIds = [
+              ...loadedAvailableIds,
+              ...availableManagedAssetIds.filter(
+                (assetId) => !loadedAvailableSet.has(assetId),
+              ),
+            ];
             const processFolderIds = [...skipReport.trash.processFolderIds];
             const moveFolderIds = [...skipReport.move.processFolderIds];
             // Serpent-d7acfa：多选文件夹的「设置图标 / 忽略」资格与跳过原因由
@@ -1476,15 +1486,10 @@ export function AssetContextMenu(props: AssetContextMenuProps) {
               action: "ignore",
             });
             const allTrashed = skipReport.allTrashed;
-            const canCreateImageSequence =
-              targetAssets.length >= 3 &&
-              targetAssets.length === targetAssetIds.length &&
-              targetAssets.every(
-                (asset) =>
-                  asset.mediaType === "image" &&
-                  asset.availability === "available" &&
-                  !asset.sequence,
-              );
+            const canCreateImageSequence = canCreateImageSequenceFromSelection({
+              selectedCount: targetAssetIds.length,
+              loadedSelectedAssets: targetAssets,
+            });
             const sequenceIdsToDissolve = targetAssets
               .map((asset) => asset.sequence?.sequenceId)
               .filter((sequenceId): sequenceId is string => sequenceId !== undefined);

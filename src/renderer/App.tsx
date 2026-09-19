@@ -290,6 +290,8 @@ import {
   postImportSequencePlanFromAssets,
   type PostImportSequencePlan,
 } from "./post-import-image-sequences";
+import type { ImageSequenceConfirmPurpose } from "./image-sequence-import-dialog";
+import { resolveAssetSummariesForSelection } from "./image-sequence-selection";
 import {
   SmartCollectionSettingsDialog,
   type SmartCollectionSettingsTarget,
@@ -320,7 +322,7 @@ import {
   useContextMenu,
 } from "./context-menu";
 import { resolveBrowseContextMenuIntent } from "./browse-selection-menu";
-import { buildMultiAssetMenuSkipReport } from "./menu-skip-report";
+import { buildMultiAssetMenuSkipReport, browseScopeFromVirtualLayout } from "./menu-skip-report";
 import { useAssetSelection } from "./useAssetSelection";
 import { buildMarqueeLayoutKey } from "./marquee-layout-key";
 import {
@@ -989,6 +991,8 @@ function AppInner() {
   const [imageSequenceImportSubmitting, setImageSequenceImportSubmitting] =
     useState(false);
   const postImportSequencePlanRef = useRef<PostImportSequencePlan | null>(null);
+  const [imageSequenceConfirmPurpose, setImageSequenceConfirmPurpose] =
+    useState<ImageSequenceConfirmPurpose>("import");
 
   useEffect(() => {
     const offerId = imageSequenceImportOffer?.offerId ?? null;
@@ -3457,22 +3461,28 @@ function AppInner() {
     [selectedIdSet, visibleAssets],
   );
   const diskDeleteKeyboardTargets = useMemo(() => {
+    const menuSkipScope = browseScopeFromVirtualLayout(virtualBrowseLayout);
     const report = buildMultiAssetMenuSkipReport(
       selectedAssetIds,
       visibleAssets,
       selectedFolderIds,
+      menuSkipScope,
     );
-    const trashIdSet = new Set(report.trash.processAssetIds);
+    const visibleById = new Map(
+      visibleAssets.map((asset) => [asset.assetId, asset]),
+    );
     return {
-      assetIds: visibleAssets
-        .filter(
-          (asset) =>
-            trashIdSet.has(asset.assetId) && asset.locationKind === "managed",
-        )
-        .map((asset) => asset.assetId),
+      assetIds: report.trash.processAssetIds.filter((assetId) => {
+        const asset = visibleById.get(assetId);
+        return !asset || asset.locationKind === "managed";
+      }),
       folderIds: [...report.trash.processFolderIds],
     };
-  }, [selectedAssetIds, visibleAssets, selectedFolderIds]);
+  }, [selectedAssetIds, visibleAssets, selectedFolderIds, virtualBrowseLayout]);
+  const menuSkipScope = useMemo(
+    () => browseScopeFromVirtualLayout(virtualBrowseLayout),
+    [virtualBrowseLayout],
+  );
   const resizeAssetCards = useCallback(
     (requestedSize: number, clientX?: number, clientY?: number) => {
       const root = workspaceCanvasRef.current;
@@ -7573,6 +7583,35 @@ function AppInner() {
     setSelectedAssetIds([result.value.assetId]);
   }
 
+  async function openCreateImageSequenceDialog(assetIds: readonly string[]) {
+    if (!library || !api) return;
+    const resolved = await resolveAssetSummariesForSelection({
+      listAssets: (input) => api.listAssets(input),
+      libraryId: library.libraryId,
+      assetIds,
+      loadedAssets: visibleAssets,
+    });
+    if (!resolved.ok) {
+      setError(messageForPublicError(resolved.error, locale));
+      return;
+    }
+    const plan = postImportSequencePlanFromAssets(library.libraryId, resolved.value);
+    if (!plan) {
+      setImageSequenceDialog({
+        assetIds: [...assetIds],
+        mode: "create",
+        fps: DEFAULT_IMAGE_SEQUENCE_FPS,
+        submitting: false,
+        error: null,
+      });
+      return;
+    }
+    postImportSequencePlanRef.current = plan;
+    setImageSequenceConfirmPurpose("create");
+    setImageSequenceImportError(null);
+    setImageSequenceImportOffer(plan.offer);
+  }
+
   async function updateImageSequenceFps() {
     if (
       !api ||
@@ -7762,6 +7801,7 @@ function AppInner() {
         presentImportSourceFailure(plan);
       },
       onPasteSequenceOffer: (offer) => {
+        setImageSequenceConfirmPurpose("import");
         setImageSequenceImportOffer(offer);
       },
       onPasteCompleted: (completion) => revealAfterImportRef.current(completion),
@@ -8588,6 +8628,7 @@ function AppInner() {
     );
     if (!plan) return;
     postImportSequencePlanRef.current = plan;
+    setImageSequenceConfirmPurpose("import");
     setImageSequenceImportError(null);
     setImageSequenceImportOffer(plan.offer);
   }
@@ -8626,7 +8667,10 @@ function AppInner() {
       const completion = applyImportPrepareResult(result.value, {
         onConflicts: presentImportConflicts,
         onSourceFailure: presentImportSourceFailure,
-        onSequenceOffer: setImageSequenceImportOffer,
+        onSequenceOffer: (offer) => {
+          setImageSequenceConfirmPurpose("import");
+          setImageSequenceImportOffer(offer);
+        },
       });
       if (!completion) return;
       setNotice(importSummaryMessage(completion, locale));
@@ -8735,6 +8779,7 @@ function AppInner() {
           sequenceIndex: input.sequenceIndex,
           plan,
         });
+        let createdAssetId: string | null = null;
         for (const assetIds of groups) {
           const result = await api.createImageSequence({
             libraryId: library.libraryId,
@@ -8742,6 +8787,7 @@ function AppInner() {
             fps: input.fps,
           });
           if (!result.ok) throw new LibraryOperationError(result.error);
+          createdAssetId = result.value.assetId;
         }
         if (nextSequenceIndex !== null) {
           setImageSequenceImportIndex(nextSequenceIndex);
@@ -8749,7 +8795,13 @@ function AppInner() {
           postImportSequencePlanRef.current = null;
           setImageSequenceImportOffer(null);
         }
-        await reloadCurrentContent({ blockingNavigation: true });
+        if (imageSequenceConfirmPurpose === "create" && createdAssetId) {
+          clearAssetSelection();
+          await reloadCurrentContent({ blockingNavigation: true });
+          setSelectedAssetIds([createdAssetId]);
+        } else {
+          await reloadCurrentContent({ blockingNavigation: true });
+        }
       } catch (caught) {
         setImageSequenceImportError(
           toMessage(caught, t("toast.importFailed"), locale),
@@ -8788,7 +8840,10 @@ function AppInner() {
           setImportProgress(null);
           presentImportSourceFailure(plan);
         },
-        onSequenceOffer: setImageSequenceImportOffer,
+        onSequenceOffer: (offer) => {
+          setImageSequenceConfirmPurpose("import");
+          setImageSequenceImportOffer(offer);
+        },
       });
       if (!completion) return;
       setNotice(importSummaryMessage(completion, locale));
@@ -8896,6 +8951,7 @@ function AppInner() {
         onSourceFailure: presentImportSourceFailure,
         onSequenceOffer: (offer) => {
           clearImportSourceFailureUi();
+          setImageSequenceConfirmPurpose("import");
           setImageSequenceImportOffer(offer);
         },
       });
@@ -10803,9 +10859,12 @@ function AppInner() {
     snapshot: dialogEscapeSnapshot,
     cancelAssetRename,
     cancelImageSequenceImport: () => {
+      postImportSequencePlanRef.current = null;
       setImageSequenceImportOffer(null);
       setImageSequenceImportError(null);
-      setImportProgress(null);
+      if (imageSequenceConfirmPurpose === "import") {
+        setImportProgress(null);
+      }
     },
     cancelImageSequenceDialog: () => setImageSequenceDialog(null),
     cancelBatchRelink,
@@ -12447,11 +12506,14 @@ function AppInner() {
       offer={imageSequenceImportOffer}
       sequenceIndex={imageSequenceImportIndex}
       previewSource={imageSequencePreviewSource}
+      purpose={imageSequenceConfirmPurpose}
       onCancel={() => {
         postImportSequencePlanRef.current = null;
         setImageSequenceImportOffer(null);
         setImageSequenceImportError(null);
-        setImportProgress(null);
+        if (imageSequenceConfirmPurpose === "import") {
+          setImportProgress(null);
+        }
       }}
       onConfirm={(input) => void confirmImageSequenceImportOffer(input)}
       open={imageSequenceImportOffer !== null}
@@ -14944,6 +15006,7 @@ function AppInner() {
         smartCollections={smartCollections}
         activeCollectionId={activeCollectionId}
         assets={visibleAssets}
+        menuSkipScope={menuSkipScope}
         onCloseWorkspaceTab={(tabId) => void closeWorkspaceTab(tabId)}
         onCloseOtherWorkspaceTabs={(tabId) =>
           void closeOtherWorkspaceTabs(tabId)
@@ -15120,15 +15183,9 @@ function AppInner() {
         onSetAssetColorSpace={(assetId, colorSpace) => {
           void persistAssetColorSpace(assetId, colorSpace);
         }}
-        onCreateImageSequence={(assetIds) =>
-          setImageSequenceDialog({
-            assetIds: [...assetIds],
-            mode: "create",
-            fps: DEFAULT_IMAGE_SEQUENCE_FPS,
-            submitting: false,
-            error: null,
-          })
-        }
+        onCreateImageSequence={(assetIds) => {
+          void openCreateImageSequenceDialog(assetIds);
+        }}
         onSetImageSequenceFps={(sequenceId, frameCount, fps) => {
           setImageSequenceDialog({
             assetIds: [],

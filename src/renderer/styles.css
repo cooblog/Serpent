@@ -11708,6 +11708,36 @@ select.ai-config-input.ai-config-languages {
   box-shadow: var(--shadow-card);
 }
 
+.inspector-hero-sequence-preview {
+  position: relative;
+  width: 100%;
+  height: min(360px, 45vh);
+  min-height: 112px;
+  overflow: hidden;
+  border-radius: 8px;
+}
+
+.inspector-hero-sequence-preview .inspector-hero-face {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 112px;
+  border-radius: 8px;
+}
+
+.inspector-hero-sequence-preview .sequence-frame-canvas {
+  position: relative;
+  inset: auto;
+  width: 100%;
+  height: 100%;
+  min-height: 112px;
+}
+
+:root:not([data-elevation="0"]) .inspector-hero-sequence-preview .inspector-hero-face {
+  box-shadow: var(--shadow-card);
+}
+
 .inspector-hero-image.is-loading {
   position: absolute;
   opacity: 0;
@@ -11730,6 +11760,15 @@ select.ai-config-input.ai-config-languages {
   /* Shrink-wrap the contain-fit media so the face box == visible card. */
   width: fit-content;
   height: fit-content;
+}
+
+.inspector-pane[data-inspector-card-feel="on"] .inspector-hero-sequence-preview .inspector-hero-face {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 112px;
+  max-width: none;
+  max-height: none;
 }
 
 .inspector-pane[data-inspector-card-feel="on"] .inspector-hero-face > .inspector-hero-image {

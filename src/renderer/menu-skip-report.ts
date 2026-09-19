@@ -104,10 +104,58 @@ function buildScope(
   };
 }
 
+export type MenuSkipScopeOptions = {
+  /**
+   * Asset IDs that belong to the current browse scope even when their
+   * summary has not been paged into `assets` yet (virtual layout index).
+   */
+  readonly inScopeAssetIds?: ReadonlySet<string> | readonly string[];
+  /**
+   * When the compact index is incomplete, a selected ID without a snapshot
+   * is still in this folder (Ctrl+A / first-page summaries). It is not
+   * "out of scope".
+   */
+  readonly assumeMissingAreInScope?: boolean;
+};
+
+function toInScopeSet(
+  ids: ReadonlySet<string> | readonly string[] | undefined,
+): ReadonlySet<string> {
+  if (!ids) return new Set();
+  return ids instanceof Set ? ids : new Set(ids);
+}
+
+function inScopePlaceholder(assetId: string): MenuSkipAssetSnapshot {
+  return {
+    assetId,
+    locationKind: "managed",
+    availability: "available",
+    deletedAt: null,
+  };
+}
+
+export function browseScopeFromVirtualLayout(layout: {
+  readonly assetIdsByIndex: ReadonlyMap<number, string>;
+  readonly total: number;
+} | null | undefined): MenuSkipScopeOptions {
+  if (!layout) return { assumeMissingAreInScope: true };
+  const inScopeAssetIds = new Set<string>();
+  for (const assetId of layout.assetIdsByIndex.values()) {
+    inScopeAssetIds.add(assetId);
+  }
+  const complete =
+    layout.total > 0 && inScopeAssetIds.size >= layout.total;
+  return {
+    inScopeAssetIds,
+    assumeMissingAreInScope: !complete,
+  };
+}
+
 /**
  * Classify the multi-select snapshot into move/trash process sets and skip
- * reason buckets. `assets` is the currently loaded scope; ids present in
- * `selectedAssetIds` but missing from `assets` count as unresolved.
+ * reason buckets. `assets` is the currently loaded summary page. IDs that
+ * belong to the current browse scope but are not yet paged in stay in the
+ * process set; only IDs outside that scope count as unresolved.
  * Canvas folder cards are managed folders and join trash/disk-delete and
  * move (reparent). Mixed selections still skip folders for asset-only ops.
  */
@@ -115,17 +163,24 @@ export function buildMultiAssetMenuSkipReport(
   selectedAssetIds: readonly string[],
   assets: readonly MenuSkipAssetSnapshot[],
   selectedFolderIds: readonly string[] = [],
+  scope: MenuSkipScopeOptions = {},
 ): MultiAssetMenuSkipReport {
   const byId = new Map(assets.map((asset) => [asset.assetId, asset]));
+  const inScope = toInScopeSet(scope.inScopeAssetIds);
+  const assumeMissing = scope.assumeMissingAreInScope === true;
   const resolved: MenuSkipAssetSnapshot[] = [];
   let unresolvedCount = 0;
   for (const assetId of selectedAssetIds) {
     const asset = byId.get(assetId);
-    if (!asset) {
-      unresolvedCount += 1;
+    if (asset) {
+      resolved.push(asset);
       continue;
     }
-    resolved.push(asset);
+    if (assumeMissing || inScope.has(assetId)) {
+      resolved.push(inScopePlaceholder(assetId));
+      continue;
+    }
+    unresolvedCount += 1;
   }
 
   const folderIds = [...selectedFolderIds];

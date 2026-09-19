@@ -800,6 +800,7 @@ const library: SerpentLibraryApi = Object.freeze({
     folderId?: string;
     recursive: boolean;
     showIgnored?: boolean;
+    assetIds?: readonly string[];
   }): Promise<LibraryApiResult<AssetSummary[]>> {
     const result = await request({ type: 'asset.list.request', ...input });
     if (!result.ok) return failure(result);

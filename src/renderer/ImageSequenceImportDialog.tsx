@@ -7,7 +7,13 @@ import type {
 } from "../shared/protocol/responses";
 import { Icon } from "./Icons";
 import { ImageSequenceImportPreview } from "./ImageSequenceImportPreview";
-import { shouldShowApplyToRest } from "./image-sequence-import-dialog";
+import {
+  imageSequenceConfirmPrimaryKey,
+  imageSequenceConfirmSummaryKey,
+  imageSequenceConfirmTitleKey,
+  shouldShowApplyToRest,
+  type ImageSequenceConfirmPurpose,
+} from "./image-sequence-import-dialog";
 import type { SequencePreviewSource } from "./image-sequence-preview";
 import { isPostImportSequenceOfferId } from "./post-import-image-sequences";
 import { iconActionAttrs } from "./icon-action-attrs";
@@ -20,6 +26,8 @@ export interface ImageSequenceImportDialogProps {
   sequenceIndex?: number;
   /** 当前这一组的帧预览来源（Serpent-866c20）；为空时不显示预览。 */
   previewSource?: SequencePreviewSource | null;
+  /** Manual create reuses this form; copy stays create-specific. */
+  purpose?: ImageSequenceConfirmPurpose;
   onCancel(): void;
   onConfirm(input: {
     action: "import-sequence" | "import-selected";
@@ -70,6 +78,7 @@ function ImageSequenceImportDialogForm({
   onConfirm,
   open,
   previewSource,
+  purpose = "import",
   sequence,
   sequenceIndex,
   submitting = false,
@@ -128,11 +137,7 @@ function ImageSequenceImportDialogForm({
           </button>
         }
         style={{ padding: 0 }}
-        title={t(
-          grouping
-            ? "dialog.imageSequenceImport.groupTitle"
-            : "dialog.imageSequenceImport.title",
-        )}
+        title={t(imageSequenceConfirmTitleKey(purpose, grouping))}
         description={
           <span className="field-help">
             {offer.sequences.length > 1 ? (
@@ -143,17 +148,12 @@ function ImageSequenceImportDialogForm({
                 })}{" "}
               </>
             ) : null}
-            {t(
-              grouping
-                ? "dialog.imageSequenceImport.groupSummary"
-                : "dialog.imageSequenceImport.summary",
-              {
+            {t(imageSequenceConfirmSummaryKey(purpose, grouping), {
               name: sequence.displayName,
               count: sequence.frameCount,
               width: sequence.width ?? "—",
               height: sequence.height ?? "—",
-              },
-            )}
+            })}
           </span>
         }
       >
@@ -298,43 +298,46 @@ function ImageSequenceImportDialogForm({
 
           {error ? <p className="field-error" role="alert">{error}</p> : null}
           <div className="dialog-actions">
-          <button
-            className="secondary-button"
-            disabled={submitting}
-            onClick={() =>
-              onConfirm({
-                action: "import-selected",
-                firstFrame: sequence.firstFrame,
-                fps,
-                lastFrame: sequence.lastFrame,
-                sequenceIndex,
-                applyToRest,
-              })
-            }
-            type="button"
-          >
-            {t(
-              grouping
-                ? "dialog.imageSequenceImport.keepSeparate"
-                : "dialog.imageSequenceImport.importSelected",
-            )}
-          </button>
+          {purpose === "create" ? (
+            <button
+              className="secondary-button"
+              disabled={submitting}
+              onClick={onCancel}
+              type="button"
+            >
+              {t("common.cancel")}
+            </button>
+          ) : (
+            <button
+              className="secondary-button"
+              disabled={submitting}
+              onClick={() =>
+                onConfirm({
+                  action: "import-selected",
+                  firstFrame: sequence.firstFrame,
+                  fps,
+                  lastFrame: sequence.lastFrame,
+                  sequenceIndex,
+                  applyToRest,
+                })
+              }
+              type="button"
+            >
+              {t(
+                grouping
+                  ? "dialog.imageSequenceImport.keepSeparate"
+                  : "dialog.imageSequenceImport.importSelected",
+              )}
+            </button>
+          )}
           <button
             className="primary-button"
             disabled={!valid || submitting}
             type="submit"
           >
-            {submitting
-              ? t(
-                  grouping
-                    ? "dialog.imageSequenceImport.grouping"
-                    : "dialog.imageSequenceImport.importing",
-                )
-              : grouping
-                ? t("dialog.imageSequenceImport.makeSequence")
-                : t("dialog.imageSequenceImport.importSequence", {
-                    count: frameCount,
-                  })}
+            {t(imageSequenceConfirmPrimaryKey(purpose, grouping, submitting), {
+              count: frameCount,
+            })}
           </button>
           </div>
         </form>

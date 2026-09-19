@@ -909,6 +909,8 @@ export const en = {
     imageSequence: {
       title: "Create image sequence",
       summary: "Play the selected {count} consecutively numbered images as one sequence.",
+      detail:
+        "Detected “{name}” ({count} frames, {width}×{height}). Confirm the frame range and playback rate.",
       updateTitle: "Set sequence frame rate",
       updateSummary: "Change playback rate for this {count}-frame sequence.",
       fps: "Frame rate (FPS)",
