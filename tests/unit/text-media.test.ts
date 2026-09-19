@@ -1,12 +1,14 @@
 import { expect, test } from "vitest";
 
 import {
+  compactFormatFilterTokens,
   countTextLines,
   expandFormatFilterTokens,
   FORMAT_TEXT_TOKEN,
   FORMAT_UNKNOWN_TOKEN,
   formatFilterHasUnknownToken,
   isTextFileName,
+  TEXT_EXTENSIONS,
   textCardPreviewSnippet,
   textMimeForExtension,
 } from "../../src/shared/text-media";
@@ -57,4 +59,15 @@ test("expandFormatFilterTokens skips the unrecognized-type token", () => {
   expect(expandFormatFilterTokens([FORMAT_UNKNOWN_TOKEN, "png"])).toEqual(["png"]);
   expect(formatFilterHasUnknownToken("unknown, png")).toBe(true);
   expect(formatFilterHasUnknownToken(["png"])).toBe(false);
+});
+
+test("compactFormatFilterTokens keeps the unified text token instead of expanding it", () => {
+  expect(compactFormatFilterTokens([FORMAT_TEXT_TOKEN, ".PNG", "png"])).toEqual([
+    "text",
+    "png",
+  ]);
+  expect(TEXT_EXTENSIONS.length).toBeGreaterThan(32);
+  expect(expandFormatFilterTokens([FORMAT_TEXT_TOKEN])).toHaveLength(
+    TEXT_EXTENSIONS.length,
+  );
 });

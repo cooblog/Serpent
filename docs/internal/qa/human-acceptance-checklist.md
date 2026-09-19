@@ -44,6 +44,18 @@
 
 > 2026-08-27 P0：从硬盘删除后再导入同一份 Serpent ZIP，导入库 ID 不变；删除时的 `serpent://` 读取拦住若泄漏，全部卡片会变成裂开图标。见 LIB-ZIP-001（已通过）。
 
+### 2026-09-19 文本编码
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| TEXT-ENCODING-001 | 文本预览自动识别非 UTF-8 编码 | 人类验收通过 | ① **完全退出**后再打开含这次改动的构建。② 打开含 Windows 中文说明类 `.txt`（常见为 GBK，用记事本打开是正常中文、Serpent 里曾是乱码）的资源库。③ 看卡片预览、Inspector 预览、双击查看器。④ 对照一份 UTF-8 中文 txt。 | GBK 说明应显示正常中文，不应是「����」，也不应被认成韩文。UTF-8 中文仍正常。 | [开发日志](../development/2026-09-19-text-encoding-detection-development-log.md) / `text-encoding.ts` / [单测](../../../tests/unit/text-encoding.test.ts) / [Worker](../../../tests/worker/text-encoding.test.ts) | 2026-09-19 用户报告文本查看乱码。根因是 `readTextAsset` 一律 `toString('utf8')`。自制 CJK 打分把 GBK 判成 EUC-KR/Big5。用户原话「完全不通过。所有gb都识别为韩文了」。已改为 VS Code 同结构：BOM/UTF-16 之后走 MIT `chardet`（ICU）。**2026-09-19 用户本人验收通过**（用户原话「验收通过」）。 |
+
+### 2026-09-19 格式过滤文本
+
+| ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |
+| --- | --- | --- | --- | --- | --- | --- |
+| FILTER-TEXT-001 | 格式过滤勾选「文本」能出结果 | 待人类验收 | ① **完全退出**后再打开含这次改动的构建。② 打开含 txt/md 等文本文件的资源库。③ 打开格式过滤，勾选「文本」（不要先勾一堆别的格式）。④ 看浏览结果与错误条。 | 应只留下文本类资产，不应出现「未能分类的内部错误」。 | [开发日志](../development/2026-09-19-format-filter-text-token-development-log.md) / `text-media.ts` / [单测](../../../tests/unit/text-media.test.ts) [filter-clause](../../../tests/unit/filter-clause.test.ts) | 2026-09-19 用户报告勾选文本后 Zod `filters[0].values` 超过 32。Renderer 曾把 `text` 展开成全部文本扩展名再过协议。 |
+
 ### 2026-09-19 序列图确认、Inspector 播放、全选范围与两位补零
 
 | ID | 功能 | 状态 | 人类操作 | 预期结果 | 证据 | 结果/反馈 |

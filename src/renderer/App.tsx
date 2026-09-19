@@ -469,7 +469,7 @@ import { LIBRARY_ROOT_FOLDER_ID, isLibraryRootFolderId } from "../shared/library
 import { DEFAULT_COLOR_SIMILARITY } from "../shared/color-filter-presets";
 import { loadColorFilterPreferences } from "./color-filter-preferences";
 import { hasMeaningfulSmartCollectionCondition } from "../shared/smart-collection-query";
-import { expandFormatFilterTokens, formatFilterHasUnknownToken, FORMAT_UNKNOWN_TOKEN } from "../shared/text-media";
+import { compactFormatFilterTokens } from "../shared/text-media";
 import type {
   SerpentLibraryApi,
   LibraryApiResult,
@@ -7149,10 +7149,7 @@ function AppInner() {
       .split(",")
       .map((value) => value.trim().replace(/^\./, ""))
       .filter(Boolean);
-    const formats = expandFormatFilterTokens(formatTokens);
-    const formatValues = formatFilterHasUnknownToken(formatTokens)
-      ? [...formats, FORMAT_UNKNOWN_TOKEN]
-      : formats;
+    const formatValues = compactFormatFilterTokens(formatTokens);
     const selectedTags = (overrides.tagFilter ?? filtersState.tagFilter)
       .split(",")
       .map((value) => value.trim())

@@ -430,6 +430,10 @@ export const sortDefinitionSchema = z.strictObject({
 
 export type SortDefinition = z.infer<typeof sortDefinitionSchema>;
 
+/** Tag / rating / color chips stay small; format can select every product extension. */
+export const CATEGORICAL_FILTER_VALUES_MAX = 32;
+export const FORMAT_FILTER_VALUES_MAX = 256;
+
 const categoricalFilterClauseSchema = z.strictObject({
   field: z.enum([
     'format',
@@ -440,7 +444,7 @@ const categoricalFilterClauseSchema = z.strictObject({
     'availability',
     'color',
   ]),
-  values: z.array(boundedSearchValue).max(32),
+  values: z.array(boundedSearchValue).max(FORMAT_FILTER_VALUES_MAX),
   exclude: z.boolean(),
   /** Include AI-derived values alongside human-authored values (default on). */
   includeAi: z.boolean().optional(),
@@ -453,6 +457,14 @@ const categoricalFilterClauseSchema = z.strictObject({
    * Color filter only: preset-id → hex overlay for customized standard chips.
    */
   swatches: z.record(z.string().min(1).max(32), z.string().regex(/^#[0-9A-Fa-f]{6}$/u)).optional(),
+}).superRefine((filter, context) => {
+  if (filter.field === 'format') return;
+  if (filter.values.length <= CATEGORICAL_FILTER_VALUES_MAX) return;
+  context.addIssue({
+    code: 'custom',
+    path: ['values'],
+    message: `At most ${CATEGORICAL_FILTER_VALUES_MAX} values.`,
+  });
 });
 
 const numericRangeSchema = z.strictObject({

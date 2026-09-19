@@ -135,6 +135,23 @@ export function textMimeForExtension(extension: string): string | null {
  * catalog-read attaches a separate unrecognized-type predicate. Other tokens
  * pass through as dotless extensions.
  */
+/**
+ * Normalize format-filter tokens for the IPC clause. Keep the unified `text`
+ * token compact — the Worker expands it. Expanding in the Renderer overflows
+ * the historical 32-value cap (TEXT_EXTENSIONS is larger than 32).
+ */
+export function compactFormatFilterTokens(tokens: readonly string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of tokens) {
+    const token = raw.trim().replace(/^\./, "").toLowerCase();
+    if (!token || seen.has(token)) continue;
+    seen.add(token);
+    out.push(token);
+  }
+  return out;
+}
+
 export function expandFormatFilterTokens(tokens: readonly string[]): string[] {
   const out: string[] = [];
   const seen = new Set<string>();

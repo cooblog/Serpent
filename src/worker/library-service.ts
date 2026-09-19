@@ -794,6 +794,7 @@ import {
   TEXT_VIEWER_MAX_BYTES,
   textMimeForExtension,
 } from '../shared/text-media';
+import { decodeTextBytes } from '../shared/text-encoding';
 import { canOverrideImageColorSpace } from '../shared/image-color-space';
 import { inferRelinkBatchRoot } from '../shared/infer-relink-batch-root';
 import {
@@ -35394,13 +35395,20 @@ export class LibraryService {
       });
     }
 
-    if (buffer.includes(0)) {
-      throw new LibraryServiceError('ASSET_CONTENT_INVALID');
-    }
-
     const truncated = buffer.length > maxBytes;
     const slice = truncated ? buffer.subarray(0, maxBytes) : buffer;
-    const content = slice.toString('utf8');
+    const decoded = decodeTextBytes(slice);
+    if (
+      decoded.binary
+      || (
+        slice.includes(0)
+        && decoded.encoding !== 'utf-16le'
+        && decoded.encoding !== 'utf-16be'
+      )
+    ) {
+      throw new LibraryServiceError('ASSET_CONTENT_INVALID');
+    }
+    const content = decoded.text;
     const extension = path.extname(row.relative_file_path).toLowerCase();
     const value = {
       assetId: row.asset_id,
