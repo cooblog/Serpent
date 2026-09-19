@@ -1170,12 +1170,13 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     saveNavTreePreferences(next);
   }
 
-  if (folderTreeActionsRef) {
+  useLayoutEffect(() => {
+    if (!folderTreeActionsRef) return;
     folderTreeActionsRef.current = {
       collapseSubtree: (folderId) => applyFolderSubtree(folderId, true),
       expandSubtree: (folderId) => applyFolderSubtree(folderId, false),
     };
-  }
+  });
 
   // Serpent-c42eb1: collection subtree collapse, mirroring folder collapse.
   const persistedCollapsedCollectionIds = new Set(

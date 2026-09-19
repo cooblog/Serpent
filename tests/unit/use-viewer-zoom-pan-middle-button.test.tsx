@@ -15,8 +15,8 @@ type HarnessProps = {
 function PanHarness({ onApi }: HarnessProps): ReactElement {
   const api = useViewerZoomPan({});
   useLayoutEffect(() => {
-    const viewport = api.viewportRef.current;
-    if (!viewport) return;
+    const viewport = document.querySelector("[data-pan-harness]");
+    if (!(viewport instanceof HTMLElement)) return;
     Object.defineProperty(viewport, "clientWidth", {
       configurable: true,
       value: 200,
@@ -25,22 +25,26 @@ function PanHarness({ onApi }: HarnessProps): ReactElement {
       configurable: true,
       value: 200,
     });
-    viewport.getBoundingClientRect = () =>
-      ({
-        x: 0,
-        y: 0,
-        top: 0,
-        left: 0,
-        bottom: 200,
-        right: 200,
-        width: 200,
-        height: 200,
-        toJSON() {},
-      }) as DOMRect;
+    Object.defineProperty(viewport, "getBoundingClientRect", {
+      configurable: true,
+      value: () =>
+        ({
+          x: 0,
+          y: 0,
+          top: 0,
+          left: 0,
+          bottom: 200,
+          right: 200,
+          width: 200,
+          height: 200,
+          toJSON() {},
+        }) as DOMRect,
+    });
     onApi(api);
   });
   return createElement("div", {
     ...api.viewportPointerHandlers,
+    "data-pan-harness": "",
     "data-x": String(api.view.x),
     "data-y": String(api.view.y),
     ref: api.viewportRef,

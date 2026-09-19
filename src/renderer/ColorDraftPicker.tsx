@@ -42,9 +42,12 @@ export function ColorDraftPicker(props: {
   const { disabled, value, onChange, onConfirm, onCancel } = props;
   const [hsv, setHsv] = useState<ColorHsv>(() => hexToHsv(value) ?? FALLBACK_HSV);
   const hsvRef = useRef(hsv);
-  hsvRef.current = hsv;
   const panelRef = useRef<HTMLDivElement>(null);
   const rgb = hsvToRgb(hsv);
+
+  useEffect(() => {
+    hsvRef.current = hsv;
+  }, [hsv]);
 
   useEffect(() => {
     panelRef.current?.focus();

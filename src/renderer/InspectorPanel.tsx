@@ -294,10 +294,6 @@ function InspectorHeroSequencePreview({
     : {};
 
   useEffect(() => {
-    setFrameIndex(0);
-  }, [sequence?.sequenceId]);
-
-  useEffect(() => {
     if (!sequence || sequence.frames.length < 2) return undefined;
     const timer = window.setInterval(
       () =>
@@ -518,6 +514,7 @@ function InspectorHero({
         />
       ) : heroKind === "sequence-playback" ? (
         <InspectorHeroSequencePreview
+          key={asset.sequence?.sequenceId ?? asset.assetId}
           asset={asset}
           cardFeelEnabled={cardFeelEnabled}
           library={library}

@@ -47,8 +47,6 @@ export function useCardHoverScrub(input: {
 
   useEffect(() => {
     if (!enabled) {
-      setIntent("seek");
-      setRatio(0);
       return;
     }
 
@@ -120,7 +118,7 @@ export function useCardHoverScrub(input: {
   }, [enabled, hostRef, mediaRef]);
 
   return {
-    playheadPercent: playheadLeftPercent(ratio),
+    playheadPercent: enabled ? playheadLeftPercent(ratio) : 0,
     showPlayhead: enabled && shouldShowCardHoverPlayhead(intent),
   };
 }

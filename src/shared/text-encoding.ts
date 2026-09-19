@@ -159,7 +159,7 @@ function pickLegacyEncoding(bytes: Uint8Array): DetectedTextEncoding {
     bytes.length > AUTO_ENCODING_GUESS_MAX_BYTES
       ? bytes.subarray(0, AUTO_ENCODING_GUESS_MAX_BYTES)
       : bytes;
-  let mapped: MappedMatch[] = [];
+  let mapped: MappedMatch[];
   try {
     mapped = analyse(sample).flatMap((match) => {
       if (IGNORE_CHARDET_NAMES.has(match.name)) return [];

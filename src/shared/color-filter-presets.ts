@@ -65,9 +65,9 @@ export function parseColorFilterValues(raw: string): string[] {
   for (const token of raw.split(",")) {
     const trimmed = token.trim();
     if (!trimmed) continue;
-    let normalized: string | null = null;
-    if (isColorPresetId(trimmed)) normalized = trimmed;
-    else normalized = normalizeColorHex(trimmed);
+    const normalized = isColorPresetId(trimmed)
+      ? trimmed
+      : normalizeColorHex(trimmed);
     if (!normalized || seen.has(normalized)) continue;
     seen.add(normalized);
     values.push(normalized);
