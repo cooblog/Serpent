@@ -312,3 +312,19 @@ Windows 与 macOS 的真机字形观感列入人类验收。
 **② 顺序**：语言从中间移到工具条最后，现在是「预览文字 → 撤回 → 字号 → （可变字体才有）字重 → B → I → U → 语言」。E2E 断言最后一个控件里是语言下拉。
 
 **验证**：`node scripts/run-e2e.mjs tests/e2e/font-preview.test.ts` → **1 passed（6.8 s）**（含中心线 <=1px 与「语言在最后」断言）；全量单测 **504 files / 3726 passed / 5 skipped / 0 failed**；`tsc` 仅剩 4 条预存在错误；lint 0 error。
+
+## 8. `Serpent-d7acfa` 追加：Ctrl 多选要把「正在浏览的文件夹」一起选上
+
+**用户口径**：「如果当前文件夹是 A，然后我按 Ctrl 选择了 B，那么应该是 A 和 B 同时被选中」。
+
+**改动**
+
+| 位置 | 内容 |
+| --- | --- |
+| `src/renderer/folder-selection-toggle.ts`（新） | 纯函数 `toggleFolderMultiSelection(current, folderId, { openFolderId, isSelectable })`：已选中 → 取消；未选中且**当前选区为空**且正在浏览的 A 可选且 A≠被点项 → 返回 `[A, 被点项]`；否则追加。不满足条件时不把 A 塞进选区（未知 id 会被批量动作记为跳过） |
+| `src/renderer/App.tsx` | 侧栏 Ctrl/⌘ 点击改走该函数：`openFolderId` 取当前 `assetScope`（`all`/`root` 视为没有当前文件夹），`isSelectable` 校验它确实在托管文件夹或链接根列表里；**普通点击（进入文件夹）会把文件夹多选清空**，回到「只隐式选中当前文件夹」的状态；`AppContextMenu` 之前的批量菜单入口不变 |
+| 测试 | `tests/unit/folder-selection-toggle.test.ts`（6 例：追加/取消/首次 Ctrl 带上当前文件夹/已有选区不重复带/点在当前文件夹上不带/当前文件夹不可选时不带）；`tests/e2e/folder-batch-actions.test.ts` 新增用例「ctrl-click includes the folder currently being browsed」（进入 CurA → Ctrl 点 CurB → 两行都是 `is-multi-selected` → 右键批量菜单显示「忽略（2 项）」与「移入回收站（2 项）」→ 再 Ctrl 点 CurA 取消只剩 CurB → 普通点击 CurC 后多选清空） |
+
+**验证**：`node scripts/run-e2e.mjs tests/e2e/folder-batch-actions.test.ts` → **3 passed（34.9 s，含新用例 9.6 s）**；`npx vitest run tests/unit/folder-selection-toggle.test.ts` → 6 passed；全量单测与 font/critical-confirmation E2E 见下（同一提交内复跑）。
+
+**边界**：链接**子目录**的 id 由侧栏按规则派生，`isSelectable` 只认托管文件夹与链接根，因此「正在浏览链接子目录时 Ctrl 点 B」不会把该子目录带进选区（宁可不选，也不塞未知 id）；如需覆盖，需要把侧栏的链接子目录 id 一并回传给 App。

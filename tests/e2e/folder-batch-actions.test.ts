@@ -99,6 +99,83 @@ test("ctrl-click multi-selects sidebar folder rows and batches the action", asyn
   }
 });
 
+// Serpent-d7acfa（用户口径）：正在浏览的文件夹是隐式选中的——当前文件夹是 A 时
+// Ctrl 点 B，应当 A 与 B 同时被选中。
+test("ctrl-click includes the folder currently being browsed", async () => {
+  const temporaryRoot = mkdtempSync(
+    path.join(tmpdir(), "serpent-folder-browse-anchor-e2e-"),
+  );
+  const libraryName = "当前文件夹多选验收";
+  const libraryPath = path.join(temporaryRoot, libraryName);
+  const applicationDirectory =
+    process.env.SERPENT_E2E_APP_DIRECTORY ?? process.cwd();
+  const application = await electron.launch({
+    args: [applicationDirectory],
+    cwd: applicationDirectory,
+    executablePath: resolveElectronExecutablePath(),
+    env: {
+      ...process.env,
+      SERPENT_E2E: "1",
+      SERPENT_E2E_USER_DATA_PATH: path.join(temporaryRoot, "user-data"),
+      SERPENT_E2E_CREATE_PARENT_PATH: temporaryRoot,
+      SERPENT_E2E_OPEN_LIBRARY_PATH: libraryPath,
+    },
+  });
+
+  try {
+    const window = await application.firstWindow();
+    await window.getByRole("button", { name: "创建资源库" }).click();
+    await window.getByRole("textbox", { name: "名称" }).fill(libraryName);
+    await window.getByRole("button", { name: "创建", exact: true }).click();
+    await waitForLibraryLoadingToFinish(window);
+    await window.waitForTimeout(2500);
+    for (const name of ["CurA", "CurB", "CurC"]) {
+      await createFolderViaSidebar(window, name);
+    }
+
+    const row = (name: string) =>
+      window.locator(`.navigation-pane button.nav-row[title="${name}"]`);
+    const multiSelected = window.locator(
+      ".navigation-pane button.nav-row.is-multi-selected",
+    );
+
+    // 普通点击进入 CurA：没有多选项。
+    await row("CurA").click();
+    await expect(window.getByRole("navigation", { name: "当前浏览范围" })).toContainText(
+      "CurA",
+    );
+    await expect(multiSelected).toHaveCount(0);
+
+    // 此刻 Ctrl 点 CurB：CurA（正在浏览）与 CurB 同时被选中。
+    await row("CurB").click({ modifiers: [selectionModifier] });
+    await expect(multiSelected).toHaveCount(2);
+    await expect(row("CurA")).toHaveClass(/is-multi-selected/u);
+    await expect(row("CurB")).toHaveClass(/is-multi-selected/u);
+    // 批量菜单一次覆盖两个文件夹（不去执行，避免删掉正在浏览的 CurA）。
+    await row("CurB").click({ button: "right" });
+    await expect(window.getByRole("menuitem", { name: "忽略（2 项）" })).toBeVisible();
+    await expect(
+      window.getByRole("menuitem", { name: "移入回收站（2 项）" }),
+    ).toBeVisible();
+    await window.keyboard.press("Escape");
+
+    // 再 Ctrl 点 CurA：取消它，只留 CurB。
+    await row("CurA").click({ modifiers: [selectionModifier] });
+    await expect(multiSelected).toHaveCount(1);
+    await expect(row("CurB")).toHaveClass(/is-multi-selected/u);
+
+    // 普通点击进入 CurC：多选清空（只隐式选中当前文件夹）。
+    await row("CurC").click();
+    await expect(multiSelected).toHaveCount(0);
+    await expect(window.getByRole("navigation", { name: "当前浏览范围" })).toContainText(
+      "CurC",
+    );
+  } finally {
+    await application.close();
+    rmSync(temporaryRoot, { force: true, recursive: true });
+  }
+});
+
 // Serpent-d7acfa：多选画布文件夹卡片后，批量回收站与忽略对全部选中项生效。
 test("multi-selected folder cards trash and ignore every selected folder", async () => {
   const temporaryRoot = mkdtempSync(

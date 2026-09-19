@@ -113,6 +113,7 @@ import {
   buildManagedFolderBreadcrumbTrail,
 } from "./folder-breadcrumb-trail";
 import { folderBrowseScope, folderSearchScope } from "./folder-browse-scope";
+import { toggleFolderMultiSelection } from "./folder-selection-toggle";
 import {
   linkedDirectoryName,
   linkedRevealFolderId,
@@ -12717,7 +12718,11 @@ function AppInner() {
         }}
         onEnterTagManagement={() => void enterTagManagement()}
         onChoosePluginSidebarView={(viewId) => void enterPluginSidebarView(viewId)}
-        onChooseFolder={(folderId) => void chooseFolder(folderId)}
+        onChooseFolder={(folderId) => {
+          // 普通点击 = 进入该文件夹：选区回到「只隐式选中当前文件夹」的状态。
+          setSelectedFolderIds([]);
+          void chooseFolder(folderId);
+        }}
         onChooseCollection={(collectionId, recursive) =>
           void chooseCollection(collectionId, recursive)
         }
@@ -12753,10 +12758,17 @@ function AppInner() {
         selectedFolderIds={selectedFolderIds}
         onToggleFolderSelection={(folderId) => {
           // Serpent-d7acfa：侧栏 Ctrl/⌘+点击切换多选，与画布文件夹卡片共用状态。
+          // 正在浏览的文件夹是「隐式选中」的：第一次 Ctrl+点击应得到 {当前, 点击}。
+          const openFolderId =
+            assetScope === "all" || assetScope === "root" ? null : assetScope;
+          const isSelectableFolder = (candidate: string) =>
+            folders.some((folder) => folder.folderId === candidate) ||
+            linkedFolders.some((folder) => folder.linkedFolderId === candidate);
           setSelectedFolderIds((current) =>
-            current.includes(folderId)
-              ? current.filter((id) => id !== folderId)
-              : [...current, folderId],
+            toggleFolderMultiSelection(current, folderId, {
+              openFolderId,
+              isSelectable: isSelectableFolder,
+            }),
           );
         }}
         onAssetsDroppedOnTrash={(assetIds) =>
