@@ -1,6 +1,7 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useT } from "./i18n";
+import { bindIframeWorkspaceMouseNav } from "./workspace-mouse-navigation";
 
 export type HtmlViewerSurfaceProps = {
   sourceUrl: string;
@@ -34,6 +35,12 @@ export function HtmlViewerSurface({
     setError(t("viewer.htmlLoadFailed"));
     onPresentationReady?.();
   };
+
+  useEffect(() => {
+    const iframe = iframeRef.current;
+    if (!iframe) return;
+    return bindIframeWorkspaceMouseNav(iframe);
+  }, [sourceUrl]);
 
   return (
     <div className="html-viewer" data-fullscreen={isFullscreen ? "true" : undefined}>

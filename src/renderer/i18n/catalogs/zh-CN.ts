@@ -1689,6 +1689,7 @@ export const zhCN = {
     textSaveFailedWithDetail: "无法保存该文本资产：{detail}",
     textSave: "保存",
     textSaving: "保存中…",
+    textWrap: "自动换行",
     textLineCount: "{count} 行",
     textTruncated: "预览已截断",
     textReadOnly: "只读（链接资产）",

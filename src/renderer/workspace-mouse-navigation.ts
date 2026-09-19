@@ -2,17 +2,37 @@
  * Workspace back/forward via mouse side buttons (Serpent-1xmk / REQ-NAV-007).
  *
  * Pure helpers — useWorkspaceMouseNavigation owns the window listener.
+ * Search / Inspector / dialog fields still skip; viewer surfaces do not.
  */
 
 export type WorkspaceMouseNavAction = "back" | "forward";
 
+const WORKSPACE_VIEWER_SELECTOR = ".workspace-viewer";
+
+const NON_TYPING_INPUT_TYPES = new Set([
+  "button",
+  "checkbox",
+  "color",
+  "file",
+  "hidden",
+  "image",
+  "radio",
+  "range",
+  "reset",
+  "submit",
+]);
+
+export function isInsideWorkspaceViewer(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest(WORKSPACE_VIEWER_SELECTOR) !== null;
+}
+
 export function isEditableMouseNavTarget(target: EventTarget | null): boolean {
-  return (
-    target instanceof HTMLInputElement ||
-    target instanceof HTMLTextAreaElement ||
-    target instanceof HTMLSelectElement ||
-    (target instanceof HTMLElement && target.isContentEditable)
-  );
+  if (isInsideWorkspaceViewer(target)) return false;
+  if (target instanceof HTMLTextAreaElement) return true;
+  if (target instanceof HTMLInputElement) {
+    return !NON_TYPING_INPUT_TYPES.has((target.type || "text").toLowerCase());
+  }
+  return target instanceof HTMLElement && target.isContentEditable;
 }
 
 export function isModalDialogOpen(doc: Document = document): boolean {
@@ -36,4 +56,45 @@ export function resolveWorkspaceMouseNavAction(
   if (isModalOpen) return null;
   if (isEditableMouseNavTarget(event.target)) return null;
   return resolveWorkspaceMouseNavButton(event.button);
+}
+
+/**
+ * Iframe documents do not bubble pointer events to the host window.
+ * Same-origin viewer frames (HTML preview) re-dispatch side buttons.
+ */
+export function bindIframeWorkspaceMouseNav(iframe: HTMLIFrameElement): () => void {
+  let boundDoc: Document | null = null;
+  const onPointerDown = (event: PointerEvent) => {
+    if (!resolveWorkspaceMouseNavButton(event.button)) return;
+    event.preventDefault();
+    window.dispatchEvent(
+      new PointerEvent("pointerdown", {
+        bubbles: true,
+        button: event.button,
+        cancelable: true,
+      }),
+    );
+  };
+  const unbind = () => {
+    boundDoc?.removeEventListener("pointerdown", onPointerDown, true);
+    boundDoc = null;
+  };
+  const bind = () => {
+    let doc: Document | null = null;
+    try {
+      doc = iframe.contentDocument;
+    } catch {
+      doc = null;
+    }
+    if (doc === boundDoc) return;
+    unbind();
+    boundDoc = doc;
+    boundDoc?.addEventListener("pointerdown", onPointerDown, true);
+  };
+  iframe.addEventListener("load", bind);
+  bind();
+  return () => {
+    iframe.removeEventListener("load", bind);
+    unbind();
+  };
 }

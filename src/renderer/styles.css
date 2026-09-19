@@ -4903,27 +4903,36 @@ body.serpent-modal-open .app-shell {
   align-items: center;
   gap: 4px;
 }
-.preview-text-action-chip {
-  padding: 6px 12px;
+.preview-text-action {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  place-items: center;
   border: 0;
   border-radius: 8px;
   background: transparent;
   color: var(--text);
-  font-size: calc(12px * var(--ui-font-scale));
   cursor: pointer;
   opacity: 0.85;
 }
-.preview-text-action-chip:hover,
-.preview-text-action-chip:focus-visible {
+.preview-text-action:hover,
+.preview-text-action:focus-visible {
   opacity: 1;
+  background: var(--menu-item-hover-background);
   outline: none;
 }
-.preview-text-action-chip:focus-visible {
+.preview-text-action:focus-visible {
   box-shadow: 0 0 0 2px var(--accent);
 }
-.preview-text-action-chip:disabled {
+.preview-text-action:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+.preview-text-action.is-active {
+  background: var(--accent-soft);
+  color: var(--accent-soft-fg);
+  opacity: 1;
 }
 .preview-text-scroll {
   flex: 1;
@@ -4937,6 +4946,17 @@ body.serpent-modal-open .app-shell {
   min-height: 100%;
   width: max-content;
   min-width: 100%;
+}
+.preview-text-line-layer.is-wrap {
+  width: 100%;
+  grid-template-columns: 1fr;
+}
+.preview-text-line-layer.is-wrap .preview-text-gutter {
+  display: none;
+}
+.preview-text-line-layer.is-wrap .preview-text-input {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .preview-text-gutter {
   margin: 0;

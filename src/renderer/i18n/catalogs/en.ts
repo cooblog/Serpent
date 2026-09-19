@@ -1709,6 +1709,7 @@ export const en = {
     textSaveFailedWithDetail: "Could not save this text asset: {detail}",
     textSave: "Save",
     textSaving: "Saving…",
+    textWrap: "Auto wrap",
     textLineCount: "{count} lines",
     textTruncated: "preview truncated",
     textReadOnly: "read-only (linked)",

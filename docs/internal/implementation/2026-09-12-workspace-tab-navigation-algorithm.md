@@ -266,7 +266,13 @@ stateDiagram-v2
 - 打开查看器：push `preview(assetId)`；查看器内切资产 replace 当前 preview。
 - 查看器 X/Esc：dismiss 当前 preview 并恢复其下浏览条目的视口。
 - 在查看器内用 Back：history 先退到浏览条目，关闭查看器时不得再次 dismiss 新的
-  current entry。
+  current entry。同标签 Back 落到该 preview 之下的浏览条目时，只关查看器并恢复
+  视口，不得当成一次新的 `chooseFolder` / 无 `browseState` 重载。
+- 搜索与格式/颜色/标签等 discovery 属于**当前标签**，不属于单条历史 location。
+  同标签 `push` / `replay` 未携带 `browseState` 时沿用 live chips 与同一套查询；
+  不得把「请求里没有 browseState」写成空快照并 `clearDiscoveryControls`。
+  只有切标签 / 恢复标签（`historyMode: "none"`）才替换：有快照则 apply 快照，
+  无快照则用空 discovery，不能沿用上一标签的过滤。
 
 验收数据必须使用两个不同位置：例如根目录 73%、文件夹 41%。只检查页面标题不能
 证明 forward 的视口语义。

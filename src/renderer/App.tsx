@@ -165,6 +165,11 @@ import type { HistoryStatus } from "../shared/protocol/responses";
 import { isEditableTextTarget } from "../shared/edit-context-menu";
 import type { SearchQuery } from "../shared/asset-types";
 import {
+  browseStateForWorkspaceNavigation,
+  historyReplayClosesPreview,
+  workspaceNavigationKeepsLiveDiscovery,
+} from "./workspace-discovery-navigation";
+import {
   browseEntryUnderPreview,
   type WorkspaceNavLocation,
   type WorkspaceNavViewport,
@@ -5430,6 +5435,12 @@ function AppInner() {
     // Sync the outgoing tab's cached location to the pre-replay cursor before
     // moving it, so a later switch/replay back to that tab lands where it was.
     saveWorkspaceTabContext();
+    const leavingLocation = navHistoryRef.current.current;
+    const leavingTabId = navHistoryRef.current.currentTabId;
+    const browseUnderPreview =
+      leavingLocation.kind === "preview"
+        ? browseEntryUnderPreview(navHistoryRef.current, leavingTabId).location
+        : null;
     const location =
       direction === "back"
         ? navHistoryRef.current.back()
@@ -5448,6 +5459,19 @@ function AppInner() {
           location,
           viewport: targetViewport,
         });
+      } else if (
+        historyReplayClosesPreview({
+          direction,
+          leaving: leavingLocation,
+          arriving: location,
+          previewOpen: previewAsset != null,
+          sameTab: true,
+          browseUnderPreview,
+        })
+      ) {
+        // REQ-VIEW-004: Back from the viewer is close-viewer, not a fresh
+        // folder load. Reloading without browseState used to wipe tab filters.
+        await closeAssetPreview(true, false);
       } else {
         replayRequest = {
           ...beginWorkspaceNavigationRequest("replay"),
@@ -5975,9 +5999,7 @@ function AppInner() {
       await loadContent({ ...library, libraryId: targetLibraryId }, scope, {
         showIgnored: request.browseState?.showIgnoredItems ?? showIgnoredItems,
         folderRecursive: recursive,
-        discovery: request.browseState
-          ? queryDefinitionForWorkspaceBrowseState(request.browseState)
-          : { sort: { field: sortField, order: sortOrder } },
+        discovery: queryDefinitionForNavigationRequest(request),
         // Ordinary navigation keeps sidebar queries out of the hot path for
         // large libraries. A destructive mutation that removed the current
         // folder opts in once so the deleted row cannot remain visible.
@@ -6013,7 +6035,7 @@ function AppInner() {
       setActiveTagId(null);
       setActiveCollectionId(null);
       setActiveSmartCollectionId(null);
-      if (!request.browseState) clearDiscoveryControls();
+      resetDiscoveryIfNavigationReplacesLive(request);
       managedImportTargetFolderIdRef.current = folderId;
       api?.setActiveContext(targetLibraryId, folderId);
       setUiState("ready");
@@ -6072,9 +6094,7 @@ function AppInner() {
         // unlike ordinary folder navigation, this transition must refresh
         // that list after a destructive mutation.
         refreshSidebar: true,
-        ...(request.browseState
-          ? { discovery: queryDefinitionForWorkspaceBrowseState(request.browseState) }
-          : {}),
+        discovery: queryDefinitionForNavigationRequest(request),
         navigationIsCurrent: request.isCurrent,
         deferCommit: true,
         onPrepared: (commit) => {
@@ -6096,11 +6116,7 @@ function AppInner() {
       setActiveTagId(null);
       setActiveCollectionId(null);
       setActiveSmartCollectionId(null);
-      if (!request.browseState) {
-        setSearchTotal(null);
-        setSearchSnippets(new Map());
-        clearDiscoveryControls();
-      }
+      resetDiscoveryIfNavigationReplacesLive(request);
       clearAssetSelection();
       setAssetScope("all");
       api?.setActiveContext(targetLibraryId);
@@ -6146,11 +6162,7 @@ function AppInner() {
       setActiveSmartCollectionId(null);
       setAssetScope("all");
       clearAssetSelection();
-      if (!request.browseState) {
-        clearDiscoveryControls();
-        setSearchTotal(null);
-        setSearchSnippets(new Map());
-      }
+      resetDiscoveryIfNavigationReplacesLive(request);
       api.setActiveContext(targetLibraryId);
       setUiState("ready");
       recordNavigation({ kind: "tag-management" }, request);
@@ -6189,11 +6201,7 @@ function AppInner() {
     setActiveTagId(null);
     setActiveCollectionId(null);
     setActiveSmartCollectionId(null);
-    if (!request.browseState) {
-      clearDiscoveryControls();
-      setSearchTotal(null);
-      setSearchSnippets(new Map());
-    }
+    resetDiscoveryIfNavigationReplacesLive(request);
     api?.setActiveContext(targetLibraryId);
     recordNavigation({ kind: "plugin-sidebar", viewId }, request);
     if (!request.deferReveal) finishWorkspaceNavigation(request);
@@ -6942,21 +6950,19 @@ function AppInner() {
     await closeAssetPreview(false);
     if (!request.isCurrent() || !isCurrentLibraryView(viewSession)) return;
     try {
-      const definition = request.browseState
-        ? queryDefinitionForWorkspaceBrowseState(request.browseState)
-        : null;
+      const definition = queryDefinitionForNavigationRequest(request);
       const includeIgnored =
         request.browseState?.showIgnoredItems ?? showIgnoredItems;
       const result = await api.openBrowseSession({
         libraryId: targetLibraryId,
-        query: definition?.search ?? null,
-        ...(definition?.filters ? { filters: definition.filters } : {}),
+        query: definition.search ?? null,
+        ...(definition.filters ? { filters: definition.filters } : {}),
         scope: {
           kind: "collection",
           collectionId,
           recursive,
         },
-        ...(definition?.sort ? { sort: definition.sort } : {}),
+        ...(definition.sort ? { sort: definition.sort } : {}),
         // Serpent-87pd: first window only; scrollbar jumps fetch other offsets.
         limit: BROWSE_PAGE_SIZE,
         showIgnored: includeIgnored,
@@ -6979,15 +6985,15 @@ function AppInner() {
         setCollectionRecursive(request.browseState.collectionRecursive);
       }
       clearAssetSelection();
-      if (!request.browseState) clearDiscoveryControls();
+      resetDiscoveryIfNavigationReplacesLive(request);
       api.setActiveContext(targetLibraryId);
       applySearchResult(result.value);
       registerBrowseSearchPage(beginBrowsePage, {
         libraryId: targetLibraryId,
-        query: definition?.search ?? null,
+        query: definition.search ?? null,
         scope: { kind: "collection", collectionId, recursive },
-        sort: definition?.sort ?? null,
-        filters: definition?.filters ?? null,
+        sort: definition.sort ?? null,
+        filters: definition.filters ?? null,
         showIgnored: includeIgnored,
         target: "assets",
         items: result.value.items,
@@ -7325,6 +7331,33 @@ function AppInner() {
         durationRange: state.filters.durationRange,
       },
     });
+  }
+
+  function queryDefinitionForNavigationRequest(
+    request: WorkspaceNavigationRequest,
+  ): SearchDefinition {
+    return queryDefinitionForWorkspaceBrowseState(
+      browseStateForWorkspaceNavigation({
+        requestBrowseState: request.browseState,
+        liveBrowseState: captureWorkspaceTabBrowseState(),
+        emptyBrowseState: createDefaultWorkspaceTabBrowseState(sortField, sortOrder),
+        historyMode: request.historyMode,
+      }),
+    );
+  }
+
+  function resetDiscoveryIfNavigationReplacesLive(
+    request: WorkspaceNavigationRequest,
+  ): void {
+    if (
+      workspaceNavigationKeepsLiveDiscovery({
+        hasRequestBrowseState: request.browseState !== undefined,
+        historyMode: request.historyMode,
+      })
+    ) {
+      return;
+    }
+    if (!request.browseState) clearDiscoveryControls();
   }
 
   function applySearchResult(
@@ -8401,17 +8434,15 @@ function AppInner() {
     await closeAssetPreview(false);
     if (!request.isCurrent() || !isCurrentLibraryView(viewSession)) return;
     try {
-      const definition = request.browseState
-        ? queryDefinitionForWorkspaceBrowseState(request.browseState)
-        : null;
+      const definition = queryDefinitionForNavigationRequest(request);
       const includeIgnored =
         request.browseState?.showIgnoredItems ?? showIgnoredItems;
       const result = await api.openBrowseSession({
         libraryId: targetLibraryId,
-        query: definition?.search ?? null,
-        ...(definition?.filters ? { filters: definition.filters } : {}),
+        query: definition.search ?? null,
+        ...(definition.filters ? { filters: definition.filters } : {}),
         smartCollectionId: collectionId,
-        ...(definition?.sort ? { sort: definition.sort } : {}),
+        ...(definition.sort ? { sort: definition.sort } : {}),
         limit: BROWSE_PAGE_SIZE,
         showIgnored: includeIgnored,
       });
@@ -8429,7 +8460,7 @@ function AppInner() {
       setActiveSmartCollectionId(collectionId);
       setAssetScope("all");
       clearAssetSelection();
-      if (!request.browseState) clearDiscoveryControls();
+      resetDiscoveryIfNavigationReplacesLive(request);
       api.setActiveContext(targetLibraryId);
       setSmartCollections((current) =>
         current.map((collection) =>
