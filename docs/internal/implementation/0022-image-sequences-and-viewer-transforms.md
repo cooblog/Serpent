@@ -9,6 +9,7 @@
 - 每帧保留独立 `Asset` 和 `Revision`。
 - `asset_sequences` 保存主资产、FPS 和时间；`asset_sequence_frames` 保存有序帧关系与原始帧号。
 - 普通浏览/search/collection 返回主资产；主资产的 `AssetSummary.sequence` 携带序列 ID、FPS、帧数与轻量帧预览信息。
+- 自动检测只发生在显式导入（文件/文件夹导入、链接文件夹导入当时已经在磁盘上的文件）。磁盘对账、监视器发现的新文件、恢复回收站都不得再自动组织；之后只能多选后手动创建序列图。
 - 解散关系后所有帧恢复为普通可见资产。删除任一成员前先解散其序列，避免剩余帧被隐藏。
 
 ## 识别规则
@@ -33,7 +34,7 @@
 
 | 需求条目 | 实现位置 | 自动化测试 | 人工/平台证据 |
 |---|---|---|---|
-| 单文件、文件夹与链接目录连续段识别 | [`image-sequence.ts`](../../../src/shared/image-sequence.ts)、[`library-service.ts`](../../../src/worker/library-service.ts) | [`image-sequence.test.ts`](../../../tests/unit/image-sequence.test.ts)、[`Worker 集成`](../../../tests/worker/image-sequence.test.ts) | macOS Electron E2E：单选中间帧后自动导入并折叠为 3 帧序列 |
+| 单文件、文件夹与链接目录连续段识别 | [`image-sequence.ts`](../../../src/shared/image-sequence.ts)、[`library-service.ts`](../../../src/worker/library-service.ts) | [`image-sequence.test.ts`](../../../tests/unit/image-sequence.test.ts)、[`Worker 集成`](../../../tests/worker/image-sequence.test.ts) | 自动检测只发生在显式导入（含链接文件夹导入当时已有的文件）；磁盘对账/监视器/恢复不再成组。macOS Electron E2E：单选中间帧后自动导入并折叠为 3 帧序列 |
 | 手动创建、解散与 FPS | [`ImageSequenceDialog.tsx`](../../../src/renderer/ImageSequenceDialog.tsx)、[`AssetContextMenu.tsx`](../../../src/renderer/AssetContextMenu.tsx)、Worker API/SQLite v23 | [`Worker 集成`](../../../tests/worker/image-sequence.test.ts)、[`真实 Electron E2E`](../../../tests/e2e/image-sequence-viewer.test.ts) | E2E 解散自动序列后多选三帧，以 13 FPS 重建；完整退出重启后仍为 13 FPS |
 | 序列卡片、Inspector 堆叠和播放 | [`AssetCardMedia.tsx`](../../../src/renderer/AssetCardMedia.tsx)、[`InspectorPanel.tsx`](../../../src/renderer/InspectorPanel.tsx)、[`ImageSequencePlayer.tsx`](../../../src/renderer/ImageSequencePlayer.tsx) | [`真实 Electron E2E`](../../../tests/e2e/image-sequence-viewer.test.ts) | macOS 开发态截图检查：卡片帧数角标、三帧居中堆叠、帧滑块与播放状态正常 |
 | 图片/视频旋转与镜像仅影响预览 | [`AssetPreviewModal.tsx`](../../../src/renderer/AssetPreviewModal.tsx)、[`ViewerContextMenu.tsx`](../../../src/renderer/ViewerContextMenu.tsx)、[`zoomable-preview-image.tsx`](../../../src/renderer/zoomable-preview-image.tsx)、[`VideoPlayerControls.tsx`](../../../src/renderer/VideoPlayerControls.tsx) | [`显示变换单测`](../../../tests/unit/viewer-display-transform.test.ts)、[`变换动作单测`](../../../tests/unit/viewer-display-transform-actions.test.ts)、[`真实 Electron E2E`](../../../tests/e2e/image-sequence-viewer.test.ts) | macOS 开发态截图检查：90° 后画面保持原比例并转为竖向；双镜像可见启用态；旋转在底部 toolbar；右键菜单提供同款操作；未产生源文件写入（Windows/packaged 待验） |

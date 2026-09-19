@@ -18047,6 +18047,7 @@ export class LibraryService {
       emitLinkedProgress('copy', 0, entries.length, 0, totalBytes, true);
       const now = new Date().toISOString();
       const sourceDeviceHintValue = sourceDeviceHint(rootStat.dev, rootStat.ino);
+      const importedAssetIds: string[] = [];
 
       openLibrary.connection.transaction(() => {
         openLibrary.connection
@@ -18116,6 +18117,7 @@ export class LibraryService {
           );
           setCurrentRevision.run(revisionId, now, assetId);
           this.syncAssetSearchContent(openLibrary.connection, assetId);
+          importedAssetIds.push(assetId);
           filesProcessed += 1;
           bytesProcessed += entry.byteSize;
           emitLinkedProgress(
@@ -18139,6 +18141,7 @@ export class LibraryService {
         totalBytes,
         true,
       );
+      this.createDetectedImageSequences(openLibrary, importedAssetIds);
       // Header probes stay on the visible-window / dimension-backfill lanes.
       // Watcher reconcile is optional here so the Worker RPC can return as soon
       // as the catalog is committed (GitHub #45): overlay and later commands
@@ -37606,14 +37609,9 @@ export class LibraryService {
         if (assetRow) restoredAssets.push(this.assetSummaryFromRow(assetRow));
       }
 
-      this.createDetectedImageSequences(
-        openLibrary,
-        restoredAssets.map((asset) => asset.assetId),
-      );
-
       // Restore changes the library-wide Trash count even when the caller is
-      // browsing another scope. Publish only after the committed operation
-      // and sequence reconstruction have completed.
+      // browsing another scope. Sequence membership is already on the restored
+      // rows; disk reconcile must not invent a new sequence.
       if (restoredAssets.length > 0) {
         this.options.onAssetsChanged?.({
           type: 'asset.changed',
@@ -44950,7 +44948,6 @@ export class LibraryService {
     })();
     markStage('transaction');
     this.persistSourceImageDimensionsForAssets(openLibrary, discoveredAssetIds);
-    this.createDetectedImageSequences(openLibrary, discoveredAssetIds);
     this.reconcileLinkedWatchers(openLibrary);
     markStage('post-phases');
 

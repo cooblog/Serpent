@@ -360,6 +360,55 @@ describe("image sequence persistence", () => {
     expect(restored[0]!.sequence?.frameCount).toBe(3);
   });
 
+  it("does not regroup dissolved frames when restoring them from trash", () => {
+    const { library, root, service } = fixture();
+    const frames = writeFrames(path.join(root, "source"), [
+      "clip_001.png",
+      "clip_002.png",
+      "clip_003.png",
+    ]);
+    const completion = service.prepareOrExecuteImport({
+      libraryId: library.libraryId,
+      sourceKind: "files",
+      sourcePaths: frames,
+      expandImageSequences: false,
+      imageSequenceFps: 30,
+    });
+    expect("importId" in completion).toBe(false);
+    if ("importId" in completion) return;
+    const [primary] = service.listAssets({
+      libraryId: library.libraryId,
+      recursive: true,
+    });
+    expect(primary?.sequence?.frameCount).toBe(3);
+    service.dissolveImageSequence({
+      libraryId: library.libraryId,
+      sequenceId: primary!.sequence!.sequenceId,
+    });
+    const singles = service.listAssets({
+      libraryId: library.libraryId,
+      recursive: true,
+    });
+    expect(singles).toHaveLength(3);
+
+    service.trashAssets({
+      libraryId: library.libraryId,
+      assetIds: singles.map((asset) => asset.assetId),
+    });
+    const trash = service.listTrash(library.libraryId);
+    expect(trash).toHaveLength(3);
+    service.restoreAssets({
+      libraryId: library.libraryId,
+      assetIds: trash.map((asset) => asset.assetId),
+    });
+
+    const restored = service
+      .listAssets({ libraryId: library.libraryId, recursive: true })
+      .filter((asset) => !asset.deletedAt);
+    expect(restored).toHaveLength(3);
+    expect(restored.every((asset) => asset.sequence == null)).toBe(true);
+  });
+
   it("splits folder-import gaps into separate visible sequence cards", () => {
     const { library, root, service } = fixture();
     const source = path.join(root, "source");
@@ -388,19 +437,14 @@ describe("image sequence persistence", () => {
     )).toEqual([[1, 2, 3], [5, 6, 7]]);
   });
 
-  it("groups linked frames that arrive across separate refreshes", () => {
+  it("groups linked frames that already exist when the folder is imported", () => {
     const { library, root, service } = fixture();
     const linkedRoot = path.join(root, "linked-sequence");
-    mkdirSync(linkedRoot, { recursive: true });
+    writeFrames(linkedRoot, ["capture_0.png", "capture_1.png", "capture_2.png"]);
     service.importFolderAsLinked({
       libraryId: library.libraryId,
       sourceRootPath: linkedRoot,
     });
-
-    for (let frame = 0; frame < 3; frame += 1) {
-      writeFrames(linkedRoot, [`capture_${frame}.png`]);
-      service.refreshManagedAssets(library.libraryId);
-    }
 
     const assets = service.listAssets({
       libraryId: library.libraryId,
@@ -409,6 +453,154 @@ describe("image sequence persistence", () => {
     expect(assets).toHaveLength(1);
     expect(assets[0]!.sequence?.frames.map((frame) => frame.frameNumber))
       .toEqual([0, 1, 2]);
+  });
+
+  it("does not auto-group linked frames that arrive after import", () => {
+    const { library, root, service } = fixture();
+    const linkedRoot = path.join(root, "linked-later");
+    mkdirSync(linkedRoot, { recursive: true });
+    service.importFolderAsLinked({
+      libraryId: library.libraryId,
+      sourceRootPath: linkedRoot,
+    });
+
+    writeFrames(linkedRoot, ["capture_0.png", "capture_1.png", "capture_2.png"]);
+    service.refreshManagedAssets(library.libraryId);
+
+    const afterRefresh = service.listAssets({
+      libraryId: library.libraryId,
+      recursive: true,
+    });
+    expect(afterRefresh).toHaveLength(3);
+    expect(afterRefresh.every((asset) => asset.sequence == null)).toBe(true);
+
+    const primary = service.createImageSequence({
+      libraryId: library.libraryId,
+      assetIds: afterRefresh.map((asset) => asset.assetId),
+      fps: 30,
+    });
+    expect(primary.sequence?.frameCount).toBe(3);
+  });
+
+  function importedThenDissolvedLinkedSequence(
+    folderName: string,
+    frames: readonly string[],
+  ) {
+    const { library, root, service } = fixture();
+    const linkedRoot = path.join(root, folderName);
+    writeFrames(linkedRoot, frames);
+    service.importFolderAsLinked({
+      libraryId: library.libraryId,
+      sourceRootPath: linkedRoot,
+    });
+    const grouped = service.listAssets({
+      libraryId: library.libraryId,
+      recursive: true,
+    });
+    expect(grouped).toHaveLength(1);
+    service.dissolveImageSequence({
+      libraryId: library.libraryId,
+      sequenceId: grouped[0]!.sequence!.sequenceId,
+    });
+    expect(service.listAssets({
+      libraryId: library.libraryId,
+      recursive: true,
+    })).toHaveLength(frames.length);
+    return { library, linkedRoot, service };
+  }
+
+  it("does not regroup dissolved frames when a linked folder later gains a file", () => {
+    const { library, linkedRoot, service } = importedThenDissolvedLinkedSequence(
+      "linked-sequence",
+      ["capture_0.png", "capture_1.png", "capture_2.png"],
+    );
+
+    writeFrames(linkedRoot, ["sidecar.png"]);
+    service.refreshManagedAssets(library.libraryId);
+
+    const after = service.listAssets({
+      libraryId: library.libraryId,
+      recursive: true,
+    });
+    expect(after).toHaveLength(4);
+    expect(after.every((asset) => asset.sequence == null)).toBe(true);
+  });
+
+  it("does not regroup dissolved frames after a disk content refresh", async () => {
+    const { library, root, service } = fixture();
+    const linkedRoot = path.join(root, "linked-content");
+    await writePngFrames(
+      linkedRoot,
+      ["clip_0.png", "clip_1.png", "clip_2.png"],
+      { height: 2, width: 2 },
+    );
+    service.importFolderAsLinked({
+      libraryId: library.libraryId,
+      sourceRootPath: linkedRoot,
+    });
+
+    const grouped = service.listAssets({
+      libraryId: library.libraryId,
+      recursive: true,
+    });
+    expect(grouped).toHaveLength(1);
+    service.dissolveImageSequence({
+      libraryId: library.libraryId,
+      sequenceId: grouped[0]!.sequence!.sequenceId,
+    });
+
+    await sharp({
+      create: {
+        background: { b: 8, g: 16, r: 240 },
+        channels: 3,
+        height: 2,
+        width: 2,
+      },
+    })
+      .png()
+      .toFile(path.join(linkedRoot, "clip_0.png"));
+    service.refreshManagedAssets(library.libraryId);
+
+    const after = service.listAssets({
+      libraryId: library.libraryId,
+      recursive: true,
+    });
+    expect(after).toHaveLength(3);
+    expect(after.every((asset) => asset.sequence == null)).toBe(true);
+  });
+
+  it("does not auto-group a new numbered run that appears after import", () => {
+    const { library, linkedRoot, service } = importedThenDissolvedLinkedSequence(
+      "linked-new-run",
+      ["capture_0.png", "capture_1.png", "capture_2.png"],
+    );
+
+    writeFrames(linkedRoot, ["other_0.png", "other_1.png", "other_2.png"]);
+    service.refreshManagedAssets(library.libraryId);
+
+    const after = service.listAssets({
+      libraryId: library.libraryId,
+      recursive: true,
+    });
+    expect(after).toHaveLength(6);
+    expect(after.every((asset) => asset.sequence == null)).toBe(true);
+  });
+
+  it("does not auto-group managed files discovered by a later refresh", () => {
+    const { library, service } = fixture();
+    writeFrames(path.join(library.libraryPath, "Assets"), [
+      "shot_0.png",
+      "shot_1.png",
+      "shot_2.png",
+    ]);
+    service.refreshManagedAssets(library.libraryId);
+
+    const assets = service.listAssets({
+      libraryId: library.libraryId,
+      recursive: true,
+    });
+    expect(assets).toHaveLength(3);
+    expect(assets.every((asset) => asset.sequence == null)).toBe(true);
   });
 
   it("creates and dissolves a manual sequence with a chosen fps", async () => {
